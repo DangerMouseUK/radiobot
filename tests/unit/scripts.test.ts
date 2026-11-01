@@ -33,7 +33,7 @@ describe('scripts/validate-catalogue', () => {
     const r = run('validate-catalogue.ts');
     expect(r.err).toBe('');
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/Pack "fg" \(Radio FG \/ Maison FG\) OK: 63 stations, \d+ sources/);
+    expect(r.out).toMatch(/Pack "fg" \(Radio FG\) OK: 63 stations, \d+ sources/);
     expect(r.out).toMatch(/63 stations with at least one enabled source/);
     expect(r.out).not.toMatch(/No enabled source/);
   });

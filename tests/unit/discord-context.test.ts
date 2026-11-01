@@ -81,7 +81,7 @@ describe('station visibility', () => {
 
   it('names groups after their pack', () => {
     const { ctx } = setup();
-    expect(groupName(ctx, 'fg')).toBe('Radio FG / Maison FG');
+    expect(groupName(ctx, 'fg')).toBe('Radio FG');
     expect(groupName(ctx, 'custom')).toBe('Custom (this server)');
     expect(groupName(ctx, 'unknown-pack')).toBe('unknown-pack');
   });

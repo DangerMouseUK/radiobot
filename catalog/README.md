@@ -156,5 +156,5 @@ Pack files are re-read and re-seeded into the database on every start. Station I
 
 - Only publicly accessible streams. Never signed, expiring, authenticated or geo-restricted URLs, and nothing that requires imitating a browser or app.
 - Every source needs provenance and a date. Station-to-URL mappings must come from the broadcaster's own site or player, or be reviewed against it.
-- Unofficial packs carry a `disclaimer` and no logos or artwork.
+- Packs carry no logos or artwork. Radio Bot always shows its own "not affiliated with or endorsed by any broadcaster" notice with station lists, so a pack's `disclaimer` is optional; if you add one, don't use it to name the broadcaster.
 - Read [docs/rights-and-disclaimer.md](../docs/rights-and-disclaimer.md) before proposing a pack.

@@ -217,16 +217,18 @@ describe('browse and list views', () => {
     expect(none.components.every((r) => r.toJSON().components.every((c) => c.type === 2))).toBe(true);
   });
 
-  it('lists packs 20 per page with numbered ids, coverage and the pack disclaimer', () => {
+  it('lists packs 20 per page with numbered ids, coverage and the generic disclaimer', () => {
     const { ctx, ids } = context({ stale: true });
     const v = listView(ctx, GUILD, 'packs', 'fg', 0);
     const e = v.embeds[0]!.toJSON();
-    expect(e.title).toBe('Station pack: Radio FG / Maison FG');
-    expect(e.description).toMatch(/^\*\*Radio FG \/ Maison FG\*\*\n1\. /);
+    expect(e.title).toBe('Station pack: Radio FG');
+    expect(e.description).toMatch(/^\*\*Radio FG\*\*\n1\. /);
     expect(e.description).toContain('`fg:fg-dj-radio`');
     expect(e.footer?.text).toMatch(/Page 1\/4 · 63 stations · 63 with a known stream/);
     expect(e.footer?.text).toMatch(/list may be out of date/);
-    expect(e.footer?.text).toMatch(/Unofficial/);
+    // Only the generic notice: the bundled pack's footer never names its broadcaster.
+    expect(e.footer?.text).toContain('not affiliated with or endorsed by any broadcaster');
+    expect(e.footer?.text).not.toMatch(/Radio FG|Maison/);
     embedSize(v.embeds[0]!);
     const nav = checkComponents(v);
     expect(ids.parse(GUILD, String(nav[1]!.custom_id))).toMatchObject({ arg: 'packs_fg:p1' });

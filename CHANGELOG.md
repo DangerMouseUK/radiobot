@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- The bundled starter pack is called "Radio FG" (in `/radio browse`, `/radio list` and `/radio stats`), and no longer adds its own disclaimer naming the broadcaster: station lists show only Radio Bot's generic "not affiliated with or endorsed by any broadcaster" notice. Station IDs, favourites and settings are unaffected.
+
 ## [1.0.2] - 2026-11-01
 
 ### Changed

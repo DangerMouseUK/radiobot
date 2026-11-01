@@ -1,8 +1,8 @@
-# Source provenance: Radio FG / Maison FG starter pack (`fg`)
+# Source provenance: Radio FG starter pack (`fg`)
 
 This file records where every entry in this pack's `stations.json` and `sources.json` (in `catalog/packs/fg/`) came from, what was checked, and what was not. Each source's `provenanceDetail` field in the JSON repeats the relevant facts.
 
-> Radio Bot is **unofficial**. It is not affiliated with, endorsed by or sponsored by Radio FG, Maison FG, Les Indes Radios or any other broadcaster. Station names are used only to identify the stations. No logos, artwork or audio are included in this repository. Distributing or operating a playable catalogue is subject to the rights review described in [docs/rights-and-disclaimer.md](../../../docs/rights-and-disclaimer.md).
+> Radio Bot is **unofficial**. It is not affiliated with, endorsed by or sponsored by any broadcaster. Station names are used only to identify the stations. No logos, artwork or audio are included in this repository. Distributing or operating a playable catalogue is subject to the rights review described in [docs/rights-and-disclaimer.md](../../../docs/rights-and-disclaimer.md).
 
 ## Summary
 

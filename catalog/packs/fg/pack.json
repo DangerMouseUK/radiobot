@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "fg",
-  "name": "Radio FG / Maison FG",
+  "name": "Radio FG",
   "description": "The webradios listed on radiofg.com: the flagship FG DJ RADIO plus the FG CHIC, FG DANCE, MAXXIMUM and specialist streams.",
-  "disclaimer": "Unofficial: Radio Bot is not affiliated with or endorsed by Radio FG / Maison FG. Station names identify the stations only.",
+  "disclaimer": null,
   "order": 10,
   "enabledByDefault": true,
   "brandLabels": ["Radio FG", "FG", "Maison FG", "FG Radio", "RadioFG", "Les Indes Radios"],
