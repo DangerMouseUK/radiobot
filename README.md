@@ -283,7 +283,7 @@ The module map and data flow are in [docs/architecture.md](docs/architecture.md)
 
 ## Project status
 
-Version **1.0.3** is the current release; 1.0.0 was the first public release. Lint, the strict typecheck and the full unit and integration suite pass, and CI runs them on every push and pull request. The integration tests run against a local fixture radio server with synthetic audio, never real stations or Discord. The following have **not** been verified yet, and are listed here so you can judge for yourself:
+Version **1.0.4** is the current release; 1.0.0 was the first public release. Lint, the strict typecheck and the full unit and integration suite pass, and CI runs them on every push and pull request. The integration tests run against a local fixture radio server with synthetic audio, never real stations or Discord. The following have **not** been verified yet, and are listed here so you can judge for yourself:
 
 - **Only one live Discord test so far.** On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played a bundled station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Not yet tested on a live call: the owner, DJ and member permission scenarios, station switching, and kick, move and channel-delete handling.
 - **No 72-hour soak test** has been run, so long-run memory growth and FFmpeg process clean-up over days are unmeasured.
@@ -293,7 +293,7 @@ Version **1.0.3** is the current release; 1.0.0 was the first public release. Li
 - **Encoding above the channel's bitrate setting:** in the live test the bot sent 128 kbps into a channel set to 96 kbps and it sounded right, but the bitrate a listener's client actually receives hasn't been measured.
 - **Resource use is measured for one stream only** (see [Requirements](#requirements)): about 8% of one CPU core and about 200 MB of memory at 128 kbps. Several streams at once, long runs, and a Raspberry Pi haven't been measured yet.
 - **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
-- **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker. `radio-bot update` has also taken a real Docker install from 1.0.1 to 1.0.3 (backup first, healthy straight away, settings kept); that run found the old-image clean-up bug fixed in the next release. A fresh install hasn't yet been run against real Docker on a Linux server, a Raspberry Pi, macOS or Windows.
+- **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker. `radio-bot update` has also taken a real Docker install from 1.0.1 to 1.0.3 (backup first, healthy straight away, settings kept); that run found the old-image clean-up bug fixed in 1.0.4. A fresh install hasn't yet been run against real Docker on a Linux server, a Raspberry Pi, macOS or Windows.
 - **Rights:** no permission has been requested from or granted by any broadcaster. If you operate an instance, that is your responsibility; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
 ## Development

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-11-01
+
 ### Added
 
 - **Updates warn before stopping playback.** If the bot is playing in any server, `radio-bot update` says so before it restarts the bot, and asks whether to go ahead: a server only starts playing again by itself when an admin has turned on **Resume after restart** in `/radio config`. When updating from 1.0.3, it shows the warning but doesn't ask, because the older copy of the command starts the update.
@@ -170,7 +172,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps) relies on the project owner's statement that the setting does not cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.0...v1.0.1
