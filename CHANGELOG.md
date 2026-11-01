@@ -6,10 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-01
+
 ### Changed
 
 - The sync adapter that reads a `webradios[]` list from a page's embedded JSON is now called `webradio-apidata`; a pack that names it by its old name must be updated (the bundled pack already is), or it fails validation at start-up.
-- The documentation outside the station packs uses generic examples (`mypack:my-station`) and no longer names a pack's broadcaster or stations. Pack-specific detail stays in each pack's own folder.
+- The documentation outside the station packs uses generic examples (`mypack:my-station`) and no longer names a pack's broadcaster or stations. Pack-specific detail stays in each pack's own folder. The README says in one sentence which starter pack is bundled and that it can be switched off, deleted or replaced.
+- Release notes no longer name a broadcaster; they carry only the generic "not affiliated with or endorsed by any broadcaster" statement.
 
 ## [1.0.1] - 2026-11-01
 
@@ -131,6 +134,7 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps) relies on the project owner's statement that the setting does not cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/DangerMouseUK/radiobot/releases/tag/v1.0.0
