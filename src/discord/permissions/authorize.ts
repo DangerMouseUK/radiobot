@@ -62,7 +62,7 @@ export function authorize(
       : {
           ok: false,
           level,
-          reason: 'Only members with the Discord Administrator permission can do that.',
+          reason: 'Only the server owner and members with the Administrator permission can do that.',
         };
   }
   if (level === 'admin' || level === 'dj') return { ok: true, level };
@@ -80,7 +80,8 @@ export function authorize(
         return {
           ok: false,
           level,
-          reason: 'Join the voice channel first — listeners can control the radio from the same channel.',
+          reason:
+            'Join a voice channel first. Listeners can only control the radio from the channel they are in.',
         };
       }
       if (ctx.botActive && ctx.botVoiceChannelId && ctx.botVoiceChannelId !== ctx.userVoiceChannelId) {

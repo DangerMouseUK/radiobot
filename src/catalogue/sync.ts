@@ -113,7 +113,7 @@ export class CatalogueSync {
       if (entries.length < floor) {
         throw new RadioError(
           'PLAYLIST_INVALID',
-          `The official list looked implausible (${entries.length} names); nothing changed.`,
+          `The official list did not look right (it had ${entries.length} names), so nothing was changed.`,
         );
       }
       report.officialCount = entries.length;

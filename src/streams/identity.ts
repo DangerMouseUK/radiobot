@@ -91,7 +91,7 @@ export function decideIdentity(
     evidence.push({
       kind: 'declared',
       verdict: 'supports',
-      detail: 'Added by a server administrator for this custom station.',
+      detail: 'Added by a server admin for this custom station.',
       at: now,
     });
   } else {
@@ -100,10 +100,10 @@ export function decideIdentity(
       verdict: provenanceSupports ? 'supports' : 'inconclusive',
       detail:
         source.provenance === 'official-player'
-          ? `Mapped by the official web player. ${source.provenanceDetail ?? ''}`.trim()
+          ? `Linked to this station by the broadcaster’s own player or website. ${source.provenanceDetail ?? ''}`.trim()
           : source.provenance === 'curated'
-            ? `Curated mapping with recorded evidence. ${source.provenanceDetail ?? ''}`.trim()
-            : 'Automatically discovered; no authoritative mapping.',
+            ? `Linked to this station in a reviewed list, with recorded evidence. ${source.provenanceDetail ?? ''}`.trim()
+            : 'Found automatically; nothing official links it to this station.',
       at: now,
     });
   }
@@ -115,14 +115,14 @@ export function decideIdentity(
     evidence.push({
       kind: 'admin-override',
       verdict: source.identityOverride === 'verified' ? 'supports' : 'contradicts',
-      detail: `Administrator marked this source as ${source.identityOverride}.`,
+      detail: `An admin reviewed this source and marked it as ${source.identityOverride === 'verified' ? 'the right station' : 'the wrong station'}.`,
       at: now,
     });
     return {
       status: source.identityOverride,
       confidence: 'high',
       evidence,
-      summary: `Administrator override: ${source.identityOverride}.`,
+      summary: `An admin marked it as ${source.identityOverride === 'verified' ? 'the right station' : 'the wrong station'}.`,
     };
   }
   const correlated = correlation?.verdict === 'supports';
@@ -134,7 +134,7 @@ export function decideIdentity(
       status: 'verified',
       confidence: 'high',
       evidence,
-      summary: 'Audio matches an already-verified feed of this station.',
+      summary: 'Its audio matches an already verified stream of this station.',
     };
   }
   if (provenanceSupports || source.provenance === 'custom-user') {
@@ -145,8 +145,8 @@ export function decideIdentity(
       evidence,
       summary:
         source.provenance === 'custom-user'
-          ? 'Custom station URL declared by a server administrator.'
-          : `Verified by ${source.provenance === 'official-player' ? 'official player mapping' : 'curated mapping'}${
+          ? 'Custom station URL added by a server admin.'
+          : `Verified by ${source.provenance === 'official-player' ? 'the broadcaster’s own player or website' : 'a reviewed list'}${
               metaBoost ? ' and stream metadata' : ''
             }.`,
     };
@@ -155,7 +155,8 @@ export function decideIdentity(
     status: 'unverified',
     confidence: 'low',
     evidence,
-    summary: 'No authoritative mapping or audio match yet; needs administrator review or comparison.',
+    summary:
+      'Nothing official links it to this station and no audio match yet; it needs an admin review or an audio comparison.',
   };
 }
 
@@ -280,8 +281,8 @@ export function correlationEvidence(
     verdict: supports ? 'supports' : 'inconclusive',
     score: r.score,
     detail: supports
-      ? `Audio aligns with ${againstLabel} (score ${r.score}, offset ${r.lagSeconds.toFixed(1)} s).`
-      : `No reliable alignment with ${againstLabel} (score ${r.score}, prominence ${r.prominence}); treated as inconclusive, not as a mismatch.`,
+      ? `Audio matches ${againstLabel} (score ${r.score}, offset ${r.lagSeconds.toFixed(1)} s).`
+      : `No reliable match with ${againstLabel} (score ${r.score}, prominence ${r.prominence}); this is inconclusive, not a mismatch.`,
     at: now,
   };
 }
@@ -351,7 +352,7 @@ export async function compareSources(
     decodeSample(deps, urlB, seconds, signal, owner),
   ]);
   if (a.length < PCM_RATE * 5 || b.length < PCM_RATE * 5) {
-    throw new RadioError('PROBE_FAILED', 'Not enough audio was captured to compare the two feeds.');
+    throw new RadioError('PROBE_FAILED', 'Not enough audio was captured to compare the two streams.');
   }
   // ±30 s covers CDN delays between direct streams and HLS started one segment from live.
   return correlateEnvelopes(onsetEnvelope(a), onsetEnvelope(b), 30);

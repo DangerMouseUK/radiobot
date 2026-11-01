@@ -34,7 +34,7 @@ The installer uses **Docker**, a free tool that runs Radio Bot in its own sealed
 You create the bot's account yourself, in Discord's Developer Portal. This gives you two values the installer will ask for: an **Application ID** and a **bot token**.
 
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) and log in with your Discord account.
-2. Click **New Application** (top right). Type a name, such as `Radio Bot`, tick the box to accept Discord's terms, and click **Create**. Please don't name it after a radio station in a way that suggests it's official.
+2. Click **New Application** (top right). Type a name, such as `Radio Bot`, tick the box to accept Discord's terms, and click **Create**. Don't name it after a radio station in a way that suggests it's official.
 3. You're now on the **General Information** page. Find **Application ID** and click **Copy**. Paste it somewhere safe for a moment, such as a text file. It's a long number, like `123456789012345678`.
 4. Click **Bot** in the menu on the left.
    - Click **Reset Token**, then **Yes, do it!** (Discord may ask for your password or a 2FA code). Click **Copy** and paste the token next to your Application ID.
@@ -50,7 +50,7 @@ Pick the section for your computer, then follow [Run the installer](#run-the-ins
 
 ### On Linux (including Raspberry Pi and cloud servers)
 
-Open a terminal. On a cloud server, that means connecting with SSH as your provider describes. Make sure `git` and `curl` are installed. On Ubuntu, Debian or Raspberry Pi OS:
+Open a terminal. On a cloud server, that means logging in to it over SSH, as your provider's instructions describe. Make sure `git` and `curl` are installed. On Ubuntu, Debian or Raspberry Pi OS:
 
 ```bash
 sudo apt update && sudo apt install -y git curl
@@ -108,9 +108,9 @@ The installer:
 
 When it finishes, you'll see **Radio Bot is online** and an invite link.
 
-> **"permission denied" talking to Docker on Linux?** The installer handles this by using `sudo`, which means it may ask for your password. To stop that, add yourself to the `docker` group with `sudo usermod -aG docker $USER`, then log out and back in.
+> **"permission denied" talking to Docker on Linux?** The installer gets round this by using `sudo`, so it may ask for your password. To stop that, add yourself to the `docker` group with `sudo usermod -aG docker $USER`, then log out and back in.
 
-If the installer asks for your computer password, that is `sudo`: it may need it to set up Docker on Linux, or to add the `radio-bot` command to `/usr/local/bin` (common on a Mac). Type the password you sign in with; nothing appears on screen while you type.
+If the installer asks for your computer password, that's `sudo`, the command that runs something with administrator rights. It may need it to set up Docker on Linux, or to add the `radio-bot` command to `/usr/local/bin` (common on a Mac). Type the password you sign in with. Nothing appears on screen while you type.
 
 ## 3. Invite the bot to your server
 
@@ -167,17 +167,17 @@ Run these in a terminal on the computer where you installed Radio Bot. On Window
 
 **The bot starts by itself** when the computer starts (as long as Docker does; on a Mac or Windows PC, set Docker Desktop to start when you sign in). If it crashes, Docker restarts it.
 
-**Updating.** Run `radio-bot update` now and then; `radio-bot status` tells you when there's something new. Read [CHANGELOG.md](../CHANGELOG.md) to see what changed. If an update ever goes wrong, `radio-bot update v1.0.0` (with the version you were on) takes you back, but only if the newer version didn't change the database. If it did, the bot refuses to start on the older version rather than risk your data; restore the backup the update made, using `radio-bot restore`.
+**Updating.** Run `radio-bot update` now and then; `radio-bot status` tells you when there's something new. Read [CHANGELOG.md](../CHANGELOG.md) to see what changed. If an update ever goes wrong, `radio-bot update v1.0.0` (with the version you were on) takes you back, but only if the newer version didn't change the database. If it did, the bot refuses to start on the older version rather than risk your data. In that case, put back the backup the update made, using `radio-bot restore`.
 
 **Backups.** The update command backs up automatically, but run `radio-bot backup` before making big changes, and copy the `~/radio-bot/backups` folder somewhere else now and then. Backups hold your server's settings and IDs, never your bot token.
 
 **Changing settings.** Most settings are per-server and live in Discord (`/radio config`). A few apply to the whole installation and live in the settings file that `radio-bot config` opens. Each one is explained in the file itself, and in the [README's configuration table](../README.md#configuration). If you change the settings file by hand, run `radio-bot restart` afterwards.
 
-**Your own tweaks to the Docker setup** belong in a file called `compose.override.yaml` in the `~/radio-bot` folder, never in `compose.yaml` itself. Updates refuse to run over edited files, so that they never silently undo your changes.
+**Your own tweaks to the Docker setup** belong in a file called `compose.override.yaml` in the `~/radio-bot` folder, never in `compose.yaml` itself. An update won't run over files you've edited, so it never quietly undoes your changes.
 
 ### Using less bandwidth
 
-By default the bot sends each station at the station's own quality: a 128 kbps station goes out at 128 kbps (about 58 MB of upload per hour for each server that is listening), and a 320 kbps one at 320 kbps (about 144 MB). It never goes above 510 kbps (about 230 MB an hour), which only a very high-quality station, or one whose quality the bot couldn't work out, would reach. On a metered connection or a slow upload, run `radio-bot config`, set `MAX_OPUS_BITRATE_KBPS=192` (or `128`), save, and let it restart. You can also cap a single server at 128 kbps with `/radio config` → **Playback** → quality **balanced**; that only saves anything on stations above 128 kbps.
+By default the bot sends each station at the station's own quality. A 128 kbps station goes out at 128 kbps (about 58 MB of upload per hour for each server that is listening), and a 320 kbps one at 320 kbps (about 144 MB). It never goes above 510 kbps (about 230 MB an hour), and only a very high-quality station, or one whose quality the bot couldn't work out, would reach that. On a metered connection or a slow upload, run `radio-bot config`, set `MAX_OPUS_BITRATE_KBPS=192` (or `128`), save, and let it restart. You can also cap a single server at 128 kbps with `/radio config` → **Playback** → quality **balanced**; that only saves anything on stations above 128 kbps.
 
 ## If something goes wrong
 
@@ -198,7 +198,7 @@ The full troubleshooting guide is [troubleshooting.md](troubleshooting.md). If y
 
 ## Other ways to install
 
-The installer is the easiest route, and it uses the same Docker setup that experienced users run by hand. If you know what you're doing and want more control:
+The installer is the easiest route, and it uses the same Docker setup that experienced users run by hand. If you're comfortable with a terminal and want more control:
 
 | Guide | For |
 |---|---|

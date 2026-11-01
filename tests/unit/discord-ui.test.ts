@@ -174,7 +174,9 @@ describe('control buttons', () => {
     const panel = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic', true) });
     const temporary = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic') });
     expect(panel).toHaveLength(10);
-    expect(panel.map((c) => c.label)).toEqual(expect.arrayContaining(['Skip (queue)', 'Browse stations']));
+    expect(panel.map((c) => c.label)).toEqual(
+      expect.arrayContaining(['Skip (queue empty)', 'Browse stations']),
+    );
     now += 16 * 60_000;
     expect(parseAll(ids, panel).every((p) => p && !p.expired)).toBe(true);
     expect(parseAll(ids, temporary).every((p) => p?.expired)).toBe(true);
@@ -209,7 +211,7 @@ describe('browse and list views', () => {
     guilds.toggleFavourite(GUILD, 'fg:fg-yoga');
     const fav = browseView(ctx, GUILD, { pack: null, category: 'favourites', search: null }, 't', 0);
     expect(fav.embeds[0]!.toJSON().description).toMatch(/FG YOGA/);
-    expect(fav.embeds[0]!.toJSON().footer?.text).toMatch(/1 stations/);
+    expect(fav.embeds[0]!.toJSON().footer?.text).toMatch(/· 1 station\./);
     const none = browseView(ctx, GUILD, { pack: 'custom', category: null, search: null }, 't', 0);
     expect(none.embeds[0]!.toJSON().description).toBe('No stations match.');
     expect(none.components.every((r) => r.toJSON().components.every((c) => c.type === 2))).toBe(true);
@@ -222,8 +224,8 @@ describe('browse and list views', () => {
     expect(e.title).toBe('Station pack: Radio FG / Maison FG');
     expect(e.description).toMatch(/^\*\*Radio FG \/ Maison FG\*\*\n1\. /);
     expect(e.description).toContain('`fg:fg-dj-radio`');
-    expect(e.footer?.text).toMatch(/Page 1\/4 · 63 catalogued · 63 with a known source/);
-    expect(e.footer?.text).toMatch(/list may be stale/);
+    expect(e.footer?.text).toMatch(/Page 1\/4 · 63 stations · 63 with a known stream/);
+    expect(e.footer?.text).toMatch(/list may be out of date/);
     expect(e.footer?.text).toMatch(/Unofficial/);
     embedSize(v.embeds[0]!);
     const nav = checkComponents(v);
@@ -323,7 +325,7 @@ describe('formatting helpers', () => {
   it('summarises identity with the first decisive piece of evidence', () => {
     const at = new Date().toISOString();
     expect(identityLine(makeSource({ identityConfidence: 'high' }))).toBe(
-      'Identity verified (high confidence)',
+      'Verified as this station (high confidence)',
     );
     const mismatch = makeSource({
       identityStatus: 'mismatch',
@@ -333,9 +335,11 @@ describe('formatting helpers', () => {
       ],
     });
     const line = identityLine(mismatch);
-    expect(line.startsWith('Identity MISMATCH — not used: xxx')).toBe(true);
-    expect(line.length).toBeLessThanOrEqual('Identity MISMATCH — not used: '.length + 160);
-    expect(identityLine(makeSource({ identityStatus: 'unverified' }))).toBe('Identity unverified');
+    expect(line.startsWith('Plays a different station, so it is not used: xxx')).toBe(true);
+    expect(line.length).toBeLessThanOrEqual('Plays a different station, so it is not used: '.length + 160);
+    expect(identityLine(makeSource({ identityStatus: 'unverified' }))).toBe(
+      'Not yet verified as this station',
+    );
   });
 
   it('reports the Discord output and that the channel setting is not a cap', () => {
@@ -348,7 +352,7 @@ describe('formatting helpers', () => {
       sourceChannels: 2,
     });
     expect(outputLine(plan)).toBe(
-      'Opus · 48 kHz · stereo · 20 ms frames · encoder target 510 kbps (maximum) · voice-channel setting 64 kbps (not a cap)',
+      'Opus · 48 kHz · stereo · 20 ms frames · encoder target 510 kbps (maximum quality) · voice channel bitrate setting 64 kbps (does not limit the bot)',
     );
   });
 
@@ -473,7 +477,7 @@ describe('status embeds', () => {
     expect(text).toContain('— **selected**');
     expect(text).toContain('— fallback');
     expect(sourcesEmbed(station, [], selectSource([], null), false).toJSON().description).toMatch(
-      /No stream source is known/,
+      /No stream is known/,
     );
   });
 

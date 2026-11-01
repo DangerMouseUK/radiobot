@@ -8,7 +8,7 @@ Radio Bot is an independent, community-maintained open-source project.
 
 - **It is not affiliated with, endorsed by, sponsored by or approved by Radio FG, Maison FG, Les Indes Radios, or any other broadcaster or rights holder.**
 - The bundled starter station pack (`catalog/packs/fg`) refers to the Radio FG / Maison FG webradios by their **station names** (nominative use) so that listeners can identify them. Its `pack.json` carries an unofficial disclaimer, which is shown with the pack. The names are recorded as they appear on the official site. Their use does not imply any partnership.
-- The repository contains **no station logos, artwork or audio**. Please do not add any. Don't name, brand or present your instance or your Discord application in a way that suggests it is an official broadcaster product.
+- The repository contains **no station logos, artwork or audio**, and none should be added. Don't name, brand or present your instance or your Discord application in a way that suggests it is an official broadcaster product.
 - The bot shows "Radio Bot is unofficial and not affiliated with or endorsed by any broadcaster." in its now-playing, quality, sources/inspect, browse, list and help views.
 
 ## What the MIT licence covers

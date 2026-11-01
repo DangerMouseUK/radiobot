@@ -103,7 +103,7 @@ export function browseView(
     .setColor(COLOR.info)
     .setDescription(truncate(lines.length > 0 ? lines.join('\n') : 'No stations match.', 4000))
     .setFooter({
-      text: `Page ${p + 1}/${pages}${filter ? ` · ${filter}` : ''} · ${all.length} stations. ${DISCLAIMER}`,
+      text: `Page ${p + 1}/${pages}${filter ? ` · ${filter}` : ''} · ${all.length} ${all.length === 1 ? 'station' : 'stations'}. ${DISCLAIMER}`,
     });
   const components: Row[] = [];
   if (slice.length > 0) {
@@ -223,7 +223,7 @@ export function listView(
       truncate(
         lines.join('\n') ||
           (scope === 'favourites'
-            ? 'No favourites yet — use the Favourite button on /radio now.'
+            ? 'No favourites yet. Use the Favourite button under /radio now to add one.'
             : 'No stations.'),
         4000,
       ),
@@ -231,12 +231,12 @@ export function listView(
   let footer = `Page ${p + 1}/${pages}`;
   if (scope === 'packs') {
     const cov = ctx.sources.coverage(list);
-    footer += ` · ${cov.catalogued} catalogued · ${cov.withSources} with a known source · ${cov.usable} technically usable · ${cov.verifiedPlayable} verified playable`;
+    footer += ` · ${cov.catalogued} stations · ${cov.withSources} with a known stream · ${cov.usable} with a working stream · ${cov.verifiedPlayable} verified and playable`;
     const packMeta = pack ? ctx.packs.get(pack) : null;
     if (packMeta?.meta.sync) {
       const sync = ctx.catalogueSync.lastSync(packMeta.meta.id);
       if (ctx.catalogueSync.isStale(packMeta.meta.id, ctx.config.catalogSyncIntervalHours))
-        footer += ' · list may be stale';
+        footer += ' · list may be out of date';
       else if (sync.at) footer += ` · synced ${sync.at.slice(0, 10)}`;
     }
     if (packMeta?.meta.disclaimer) footer += ` · ${packMeta.meta.disclaimer}`;
@@ -281,7 +281,7 @@ export function controlRows(
   const queued = ctx.guilds.listQueue(guildId).length;
   if (persistent || queued > 0) {
     rows[0]!.addComponents(
-      b('skip', queued > 0 ? `Skip (${queued} queued)` : 'Skip (queue)', ButtonStyle.Primary),
+      b('skip', queued > 0 ? `Skip (${queued} queued)` : 'Skip (queue empty)', ButtonStyle.Primary),
     );
   }
   const second: ButtonBuilder[] = [b('now', 'Refresh', ButtonStyle.Primary)];
@@ -300,6 +300,18 @@ export function controlRows(
 
 export type ConfigPage = 'access' | 'playback' | 'notify';
 
+const PAGE_LABEL: Record<ConfigPage, string> = {
+  access: 'Access',
+  playback: 'Playback',
+  notify: 'Notifications',
+};
+
+const IDLE_LABEL: Record<GuildSettings['idleMode'], string> = {
+  leave_when_empty: 'leave',
+  pause_when_empty: 'pause, and resume when someone joins',
+  '24x7': 'keep playing (24/7)',
+};
+
 export function configView(ctx: AppContext, guildId: string, s: GuildSettings, page: ConfigPage): View {
   const id = (field: string) => ctx.ids.make(guildId, 'cfg', field, 30 * 60_000);
   const station = s.defaultStationId ? ctx.stations.getStation(s.defaultStationId) : null;
@@ -312,23 +324,23 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
       [
         `**Command channels:** ${fmtIds(s.allowedTextChannelIds, '#')}`,
         `**Voice channels:** ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
-        '**Bot admins:** members with the Discord Administrator permission',
+        '**Admins:** the server owner and members with the Administrator permission',
         `**DJ roles:** ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
-        `**Listener control:** ${s.memberControlMode === 'same_channel' ? 'listeners in the same voice channel' : s.memberControlMode === 'any' ? 'anyone' : 'DJs/admins only'}`,
+        `**Who else can control the radio:** ${s.memberControlMode === 'same_channel' ? 'listeners in the bot’s voice channel' : s.memberControlMode === 'any' ? 'anyone' : 'nobody (DJs and admins only)'}`,
         `**Default station:** ${station?.displayName ?? 'none'} · **Preferred voice channel:** ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>` : 'none'}${s.voiceLock ? ' (locked)' : ''}`,
-        `**Idle mode:** ${s.idleMode} · **Quality:** ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
-        `**Autostart on boot:** ${s.autostart ? 'on' : 'off'} · **Resume after restart:** ${s.resumeOnRestart ? 'on' : 'off'}`,
+        `**When the channel is empty:** ${IDLE_LABEL[s.idleMode]} · **Quality:** ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
+        `**Autostart when the bot starts:** ${s.autostart ? 'on' : 'off'} · **Resume after restart:** ${s.resumeOnRestart ? 'on' : 'off'}`,
         `**Notifications:** ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
         '',
-        'Empty channel/role selections mean "no restriction". Set the default station and manual bitrate with `/radio config default_station:` / `manual_bitrate:`.',
+        'Leave a channel or role menu empty for no restriction. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config`.',
       ].join('\n'),
     )
-    .setFooter({ text: `Page: ${page}` });
+    .setFooter({ text: `Page: ${PAGE_LABEL[page]}` });
   const nav = row(
     ...(['access', 'playback', 'notify'] as ConfigPage[]).map((p) =>
       new ButtonBuilder()
         .setCustomId(id(`page-${p}`))
-        .setLabel(p === 'access' ? 'Access' : p === 'playback' ? 'Playback' : 'Notifications')
+        .setLabel(PAGE_LABEL[p])
         .setStyle(p === page ? ButtonStyle.Primary : ButtonStyle.Secondary)
         .setDisabled(p === page),
     ),
@@ -339,7 +351,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
       row(
         new ChannelSelectMenuBuilder()
           .setCustomId(id('text'))
-          .setPlaceholder('Command channels (none = any)')
+          .setPlaceholder('Channels where radio commands work (empty = all)')
           .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildVoice)
           .setMinValues(0)
           .setMaxValues(25)
@@ -348,7 +360,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
       row(
         new ChannelSelectMenuBuilder()
           .setCustomId(id('voice'))
-          .setPlaceholder('Approved voice channels (none = any)')
+          .setPlaceholder('Voice channels the bot may play in (empty = all)')
           .setChannelTypes(ChannelType.GuildVoice)
           .setMinValues(0)
           .setMaxValues(25)
@@ -357,7 +369,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
       row(
         new RoleSelectMenuBuilder()
           .setCustomId(id('djs'))
-          .setPlaceholder('DJ roles')
+          .setPlaceholder('DJ roles (can always control the radio)')
           .setMinValues(0)
           .setMaxValues(25)
           .setDefaultRoles(s.djRoleIds.slice(0, 25)),
@@ -374,37 +386,41 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
       row(
         new StringSelectMenuBuilder()
           .setCustomId(id('idle'))
-          .setPlaceholder('Idle mode')
+          .setPlaceholder('What to do when the voice channel is empty')
           .addOptions(
             opt('leave_when_empty', 'Leave when the channel is empty', s.idleMode),
-            opt('pause_when_empty', 'Pause stream when empty, resume when someone joins', s.idleMode),
-            opt('24x7', '24/7 — stay connected and keep playing', s.idleMode),
+            opt('pause_when_empty', 'Pause when the channel is empty, resume when someone joins', s.idleMode),
+            opt('24x7', '24/7: stay in the channel and keep playing', s.idleMode),
           ),
       ),
       row(
         new StringSelectMenuBuilder()
           .setCustomId(id('member'))
-          .setPlaceholder('Who can play/stop')
+          .setPlaceholder('Who else can control the radio')
           .addOptions(
-            opt('same_channel', 'Listeners in the same voice channel (+DJs/admins)', s.memberControlMode),
+            opt(
+              'same_channel',
+              'Listeners in the bot’s voice channel, plus DJs and admins',
+              s.memberControlMode,
+            ),
             opt('none', 'Only DJs and admins', s.memberControlMode),
-            opt('any', 'Anyone in allowed channels', s.memberControlMode),
+            opt('any', 'Anyone who can use radio commands', s.memberControlMode),
           ),
       ),
       row(
         new StringSelectMenuBuilder()
           .setCustomId(id('quality'))
-          .setPlaceholder('Quality mode')
+          .setPlaceholder('Audio quality')
           .addOptions(
-            opt('maximum', 'Maximum — match the station’s own bitrate (up to the limit)', s.qualityMode),
-            opt('balanced', 'Balanced — up to 128 kbps', s.qualityMode),
-            opt('manual', 'Manual — fixed target (set with manual_bitrate)', s.qualityMode),
+            opt('maximum', 'Maximum: match the station’s own bitrate, up to the limit', s.qualityMode),
+            opt('balanced', 'Balanced: up to 128 kbps', s.qualityMode),
+            opt('manual', 'Manual: a fixed bitrate, set with manual_bitrate', s.qualityMode),
           ),
       ),
       row(
         new ChannelSelectMenuBuilder()
           .setCustomId(id('pvoice'))
-          .setPlaceholder('Preferred voice channel (for autostart/lock)')
+          .setPlaceholder('Preferred voice channel (used by autostart and the lock)')
           .setChannelTypes(ChannelType.GuildVoice)
           .setMinValues(0)
           .setMaxValues(1)
@@ -435,7 +451,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
       row(
         new ChannelSelectMenuBuilder()
           .setCustomId(id('notify'))
-          .setPlaceholder('Channel for recovery/error notices (none = off)')
+          .setPlaceholder('Channel for problem and recovery notices (empty = off)')
           .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
           .setMinValues(0)
           .setMaxValues(1)

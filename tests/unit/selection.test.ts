@@ -48,13 +48,13 @@ describe('eligibility reasons', () => {
     expect(reasons({ enabled: false, disabledReason: 'takedown' })).toContain('disabled: takedown');
     expect(reasons({ rightsStatus: 'blocked' })).toContain('blocked by rights/takedown policy');
     expect(reasons({ identityStatus: 'mismatch' })).toContain(
-      'identity mismatch (plays a different programme)',
+      'plays a different station (identity mismatch)',
     );
     expect(reasons({ verificationState: 'blocked_by_policy' })).toContain('rejected by URL safety policy');
     expect(reasons({ verificationState: 'offline', lastFailureCode: 'HTTP_STATUS' })).toContain(
-      'last probe failed (HTTP_STATUS)',
+      'last check failed (HTTP_STATUS)',
     );
-    expect(reasons({ lastProbeAt: null })).toContain('not yet probed');
+    expect(reasons({ lastProbeAt: null })).toContain('not checked yet');
     expect(reasons({ codec: null })).toContain('codec not verified');
   });
 

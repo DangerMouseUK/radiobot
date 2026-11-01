@@ -5,6 +5,7 @@ import type { PackRegistry } from '../catalogue/packs.ts';
 import type { CatalogueSync } from '../catalogue/sync.ts';
 import type { Station } from '../catalogue/types.ts';
 import type { AppConfig } from '../config/env.ts';
+import type { EventLoopMonitor } from '../observability/event-loop.ts';
 import type { Logger } from '../observability/logger.ts';
 import type { Metrics } from '../observability/metrics.ts';
 import type { Db } from '../persistence/db.ts';
@@ -39,6 +40,8 @@ export interface AppContext {
   ids: ComponentIds;
   notifier: Notifier;
   limits: RateLimits;
+  /** How late the event loop runs timers; voice packets are sent from it. */
+  eventLoop: EventLoopMonitor;
   startedAt: Date;
   ffmpegInfo: {
     ffmpegVersion: string;

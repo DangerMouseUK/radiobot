@@ -11,15 +11,15 @@ export type QualityConclusion =
   | 'no-eligible-source';
 
 export const CONCLUSION_TEXT: Record<QualityConclusion, string> = {
-  'higher-quality-verified': 'Higher-fidelity source verified by measurement.',
+  'higher-quality-verified': 'Measurements show this source has better audio than the others.',
   'no-higher-quality-source-verified':
-    'Sources are technically equivalent; no higher-quality source verified.',
+    'The sources carry equivalent audio; none was verified as higher quality.',
   'not-conclusively-determined':
-    'Quality difference not conclusively determined (different codecs are not ranked by bitrate).',
+    'Whether one source sounds better was not conclusively determined (different codecs are not compared by bitrate).',
   'higher-quality-source-ranked-lower':
-    'A source with measurably higher fidelity is available but ranks lower (delivery, health or an administrator’s choice).',
-  'single-source': 'Only one verified source is currently eligible.',
-  'no-eligible-source': 'No verified, healthy source is currently available.',
+    'A source with measurably better audio exists but ranks lower, because of how it is delivered, its reliability or an admin’s choice.',
+  'single-source': 'Only one verified source can be used right now.',
+  'no-eligible-source': 'No verified, working source is available right now.',
 };
 
 export interface EligibilityReport {
@@ -44,18 +44,20 @@ export function checkEligibility(s: StationSource, now: number): EligibilityRepo
   const reasons: string[] = [];
   if (!s.enabled) reasons.push(`disabled${s.disabledReason ? `: ${s.disabledReason}` : ''}`);
   if (s.rightsStatus === 'blocked') reasons.push('blocked by rights/takedown policy');
-  if (s.identityStatus === 'mismatch') reasons.push('identity mismatch (plays a different programme)');
-  else if (s.identityStatus !== 'verified') reasons.push('station identity not verified');
+  if (s.identityStatus === 'mismatch') reasons.push('plays a different station (identity mismatch)');
+  else if (s.identityStatus !== 'verified') reasons.push('not verified as this station');
   if (s.verificationState === 'blocked_by_policy') reasons.push('rejected by URL safety policy');
   if (s.verificationState === 'discovered' || s.verificationState === 'resolved' || s.lastProbeAt === null) {
-    reasons.push('not yet probed');
+    reasons.push('not checked yet');
   } else if (s.verificationState === 'offline') {
-    reasons.push(`last probe failed${s.lastFailureCode ? ` (${s.lastFailureCode})` : ''}`);
+    reasons.push(`last check failed${s.lastFailureCode ? ` (${s.lastFailureCode})` : ''}`);
   } else if (!s.codec) {
     reasons.push('codec not verified');
   }
   if (s.cooldownUntil && Date.parse(s.cooldownUntil) > now) {
-    reasons.push(`cooling down after repeated failures until ${s.cooldownUntil}`);
+    reasons.push(
+      `cooling down after repeated failures until ${s.cooldownUntil.slice(0, 16).replace('T', ' ')} UTC`,
+    );
   }
   return { sourceId: s.id, eligible: reasons.length === 0, reasons };
 }
@@ -143,7 +145,7 @@ export function compareSources(a: StationSource, b: StationSource): number {
 function describe(s: StationSource): string {
   const br = effectiveBitrate(s).kbps;
   const transport =
-    s.transport === 'hls' ? 'HLS' : s.transport === 'http-continuous' ? 'direct' : 'unknown-transport';
+    s.transport === 'hls' ? 'HLS' : s.transport === 'http-continuous' ? 'direct' : 'unknown-delivery';
   return `${transport} ${codecFamily(s)}${br !== null ? ` ≈${Math.round(br)} kbps` : ''}`;
 }
 
@@ -160,7 +162,7 @@ export function selectSource(
   const eligibility = sources.map((s) => {
     const r = checkEligibility(s, now);
     if (opts.exclude?.has(s.id))
-      return { ...r, eligible: false, reasons: [...r.reasons, 'excluded after failure'] };
+      return { ...r, eligible: false, reasons: [...r.reasons, 'skipped because it just failed'] };
     return r;
   });
   const eligibleIds = new Set(eligibility.filter((e) => e.eligible).map((e) => e.sourceId));
@@ -175,7 +177,7 @@ export function selectSource(
   let degraded = false;
 
   if (ordered.length === 0) {
-    explanation.push('No source is both identity-verified and healthy right now.');
+    explanation.push('No source is both verified as this station and working right now.');
     return {
       mode,
       selected: null,
@@ -193,16 +195,14 @@ export function selectSource(
     const pinned = ordered.find((s) => s.id === preference.sourceId);
     if (pinned) {
       selected = pinned;
-      explanation.push(
-        `Using the ${mode === 'pin' ? 'pinned' : 'preferred'} source chosen by an administrator.`,
-      );
+      explanation.push(`Using the ${mode === 'pin' ? 'pinned' : 'preferred'} source an admin chose.`);
     } else if (mode === 'pin') {
       degraded = true;
       const why =
         eligibility.find((e) => e.sourceId === preference.sourceId)?.reasons.join('; ') ?? 'source removed';
-      explanation.push(`Degraded — pinned source unavailable (${why}); using fallback.`);
+      explanation.push(`Degraded: the pinned source can’t be used (${why}), so a fallback is playing.`);
     } else {
-      explanation.push('Preferred source is unavailable; using automatic selection.');
+      explanation.push('Preferred source is unavailable, so the bot chose one automatically.');
     }
   }
   const fallback = ordered.find((s) => s.id !== selected.id) ?? null;
@@ -210,7 +210,7 @@ export function selectSource(
   let conclusion: QualityConclusion;
   if (ordered.length === 1) {
     conclusion = 'single-source';
-    explanation.push(`Only one eligible source: ${describe(selected)}.`);
+    explanation.push(`Only one usable source: ${describe(selected)}.`);
   } else {
     const relations = ordered
       .filter((s) => s.id !== selected.id)
@@ -224,7 +224,7 @@ export function selectSource(
         selected.transport === 'http-continuous' && relations.some((x) => x.o.transport === 'hls')
           ? 'direct feed selected for simpler live delivery'
           : 'selected on stability, latency and catalogue order';
-      explanation.push(`All eligible sources carry equivalent audio (${relations[0]!.r.reason}); ${why}.`);
+      explanation.push(`All usable sources carry equivalent audio (${relations[0]!.r.reason}); ${why}.`);
       explanation.push('No independently verified higher-quality source found.');
     } else if (relations.some((x) => x.r.relation === 'b')) {
       // The evidence is conclusive; the better source lost on something other than fidelity.
@@ -234,7 +234,7 @@ export function selectSource(
         transportTier(o) > transportTier(selected)
           ? 'direct streams come before HLS whatever their bitrate'
           : mode !== 'auto' && preference?.sourceId === selected.id
-            ? 'an administrator chose the selected source'
+            ? 'an admin chose the selected source'
             : 'it ranks lower on stability or start-up time';
       explanation.push(
         `Selected ${describe(selected)}; ${better.map((x) => `${describe(x.o)} measures higher (${x.r.reason}) but ${why(x.o)}`).join('; ')}.`,
@@ -247,11 +247,9 @@ export function selectSource(
     }
   }
   if (selected.transport === 'hls' && ordered.some((s) => s.transport !== 'hls')) {
-    explanation.push(
-      'This HLS source was chosen by an administrator; an eligible direct stream would normally be preferred.',
-    );
+    explanation.push('An admin chose this HLS source; a usable direct stream would normally come first.');
   } else if (selected.transport === 'hls') {
-    explanation.push('Only HLS is available right now; no direct stream of this station is eligible.');
+    explanation.push('Only HLS is available right now; no direct stream of this station can be used.');
   } else if (ordered.some((s) => s.transport === 'hls')) {
     explanation.push('HLS sources are kept as a last-resort fallback (segmented delivery).');
   }

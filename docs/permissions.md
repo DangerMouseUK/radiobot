@@ -11,7 +11,7 @@ Radio Bot asks Discord for as little access as it can. It then checks every acti
 | `Guilds` | Servers, channels, roles, and interaction delivery context |
 | `GuildVoiceStates` | Which voice channel a user or the bot is in, listener counts for the idle modes, moves and disconnects |
 
-There are **no privileged intents**: no Message Content, no Server Members, no Presence. The bot does not read messages or chat history, and does not receive voice audio (it joins self-deafened). The member's roles come from the interaction payload itself, and voice channels from the voice-state cache. Setting the bot's own "Listening to" status (`PRESENCE_MODE`) is something every bot may do; it needs no intent or permission.
+There are **no privileged intents**: no Message Content, no Server Members, no Presence. The bot does not read messages or chat history, and does not receive voice audio (it joins self-deafened). The member's roles come from the interaction payload itself, and voice channels from the voice-state cache. Any bot may set its own "Listening to" status (`PRESENCE_MODE`); that needs no intent or permission.
 
 ### OAuth2 scopes
 
@@ -48,7 +48,7 @@ There is one `/radio` command, registered as a **guild** command, limited to the
 | **dj** | Anyone with a role configured as a *DJ role* |
 | **member** | Everyone else |
 
-Separately from that, the bot **operator** is either a Discord user listed in `OPERATOR_USER_IDS` or the application's owner (or team members). Operators are the only ones who can record identity verdicts for the sources of any station pack, because those verdicts affect every server on the installation. Being an operator does not make you a server admin.
+Separately, the bot **operator** is either a Discord user listed in `OPERATOR_USER_IDS` or the application's owner (or team members). Operators are the only ones who can record identity verdicts for the sources of any station pack, because those verdicts affect every server on the installation. Being an operator does not make you a server admin.
 
 ## Capabilities
 

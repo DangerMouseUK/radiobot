@@ -96,7 +96,7 @@ docker compose up -d
 
 The image is a multi-stage build on a pinned `node:24` Debian slim base. It uses Debian's `ffmpeg` package, which includes `libopus`, runs under `tini`, and runs as the unprivileged `node` user.
 
-On first start you should see JSON log lines along these lines: `database migrated`, `station packs loaded` (with the loaded and enabled pack IDs), `ffmpeg detected` (with `"libopus":true`), `connected to Discord`, and `slash commands registered`.
+On first start, the JSON log should include these messages: `database migrated`, `station packs loaded` (with the loaded and enabled pack IDs), `ffmpeg detected` (with `"libopus":true`), `connected to Discord`, and `slash commands registered`.
 
 If the configuration is invalid, the container exits with code 78 and prints which variable is wrong. Secret values are never printed.
 
@@ -195,7 +195,7 @@ docker compose exec radio-bot node -e "fetch('http://127.0.0.1:9464/diagnostics'
 
 ## Customising `compose.yaml`
 
-Don't edit `compose.yaml` itself: put changes (a bind mount instead of the named volume, resource limits, a different image) in a `compose.override.yaml` next to it. Compose merges it automatically, Git ignores it, and `radio-bot update` refuses to run over edited tracked files, so an override is the only kind of change that survives updates.
+Don't edit `compose.yaml` itself. Put your changes (a bind mount instead of the named volume, resource limits, a different image) in a `compose.override.yaml` next to it. Compose merges that file automatically and Git ignores it. `radio-bot update` refuses to run over edited tracked files, so an override is the only kind of change that survives updates.
 
 ## Upgrades
 

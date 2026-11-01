@@ -14,7 +14,7 @@ describe('eligibility gate (correctness before bitrate)', () => {
     expect(checkEligibility(makeSource(), now).eligible).toBe(true);
     expect(checkEligibility(makeSource({ identityStatus: 'unverified' }), now).eligible).toBe(false);
     expect(checkEligibility(makeSource({ identityStatus: 'mismatch' }), now).reasons.join()).toMatch(
-      /different programme/,
+      /plays a different station/,
     );
     expect(
       checkEligibility(makeSource({ lastProbeAt: null, verificationState: 'discovered' }), now).eligible,
@@ -126,7 +126,7 @@ describe('selection', () => {
     const r = selectSource([a, { ...b, verificationState: 'offline' as const }], pin, { now });
     expect(r.selected?.id).toBe('a');
     expect(r.degraded).toBe(true);
-    expect(r.explanation[0]).toMatch(/Degraded — pinned source unavailable/);
+    expect(r.explanation[0]).toMatch(/Degraded: the pinned source can’t be used/);
   });
 
   it('excludes sources that failed during this session', () => {

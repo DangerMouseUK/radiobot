@@ -14,15 +14,15 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 
 ## Highlights
 
-- 📻 **Modular station packs.** Drop a folder of three JSON files into `catalog/packs/` or your own `EXTRA_PACKS_DIR` and its stations appear. Switch whole packs on or off with one environment variable. A starter pack of 63 Radio FG / Maison FG webradios is included.
-- 🔎 **Evidence before bitrate.** Every candidate stream is probed with `ffprobe` and a decode check, and its identity is verified from provenance, stream metadata and optional audio correlation. The bot plays the *correct* station first and the best-sounding source second, and `/radio sources` tells you why.
-- 🎧 **One encode, at the station's own quality.** FFmpeg decodes once and encodes once with `libopus` at the source's bitrate, up to 510 kbps (48 kHz stereo, music mode), so a 320 kbps station goes out at 320 kbps and a 128 kbps one isn't padded out to waste bandwidth. `@discordjs/voice` only demuxes it. There is no normalisation, EQ or limiting, and the voice channel's bitrate setting is not used as a cap.
-- 🛟 **Self-healing playback.** A watchdog detects stalls, retries with backoff, fails over to another verified source, circuit-breaks flaky ones, rebuilds lost voice connections and re-syncs to live.
-- 🎵 **Now playing everywhere.** What's on air (the song or show title, when the stream sends one) appears in `/radio now` and on the control panel, and the bot's own Discord status says what it's playing: "Listening to FG DJ RADIO · Artist - Title".
-- 📋 **Queue and skip.** Line up stations with `/radio queue` and move on with `/radio skip` or the **Skip** button.
-- 📊 **Private live stats.** `/radio stats` shows administrators input and output bitrate, redirect host and region, ping and jitter to the stream server and to Discord's voice server, in a dismissable message only they can see.
-- 🔒 **Secure by default.** It uses only the minimal Discord permissions and no privileged intents. All stream traffic goes through an SSRF-safe HTTP client, and FFmpeg reads only from stdin. Every button and command is authorised on the server side when it is used. There is no telemetry.
-- 🗄️ **Simple to run.** One process and one SQLite file. It needs outbound internet only, with no inbound port, domain, reverse proxy, Redis or PostgreSQL.
+- **Station packs.** Drop a folder of three JSON files into `catalog/packs/` or your own `EXTRA_PACKS_DIR` and its stations appear. One environment variable switches whole packs on or off. A starter pack of 63 Radio FG / Maison FG webradios is included.
+- **Evidence before bitrate.** Every candidate stream is probed with `ffprobe` and a decode check, and its identity is checked against its provenance, its stream metadata and, optionally, an audio comparison. The bot plays the *correct* station first and the best-sounding source second, and `/radio sources` tells you why it chose what it did.
+- **One encode, at the station's own quality.** FFmpeg decodes once and encodes once with `libopus` at the source's bitrate, up to 510 kbps (48 kHz stereo, music mode). A 320 kbps station goes out at 320 kbps, and a 128 kbps one isn't padded out to waste bandwidth. `@discordjs/voice` only demuxes the result. There is no normalisation, EQ or limiting, and the voice channel's bitrate setting is not used as a cap.
+- **Automatic recovery.** A watchdog spots stalls and retries with backoff. If that fails, the bot switches to another verified source and puts sources that keep failing into a cooldown. It also rebuilds lost voice connections and catches up with the live stream when it falls behind.
+- **Now playing.** The current song or show title, when the stream sends one, appears in `/radio now` and on the control panel. The bot's own Discord status shows it too: "Listening to FG DJ RADIO · Artist - Title".
+- **Queue and skip.** Line up stations with `/radio queue` and move on with `/radio skip` or the **Skip** button.
+- **Private live stats.** `/radio stats` shows administrators the input and output bitrate, the redirect host and region, and ping and jitter to both the stream server and Discord's voice server. Only they can see the message, and they can dismiss it.
+- **Secure by default.** The bot asks for the minimum Discord permissions and no privileged intents. All stream traffic goes through an SSRF-safe HTTP client, and FFmpeg reads only from stdin. Every button and command is authorised on the server side each time it is used. There is no telemetry.
+- **Simple to run.** One process and one SQLite file. It needs outbound internet access only: no inbound port, domain, reverse proxy, Redis or PostgreSQL.
 
 ## Contents
 
@@ -50,11 +50,11 @@ You need a computer that stays on (Linux, a Raspberry Pi 4/5, a cloud server, or
    curl -fsSL https://raw.githubusercontent.com/DangerMouseUK/radiobot/main/install.sh | bash
    ```
 
-   It downloads the newest release into `~/radio-bot`, sets up Docker if needed (on Linux, with your permission), asks for your Application ID and token, starts the bot, and waits until it is online. To read it first: `git clone https://github.com/DangerMouseUK/radiobot.git ~/radio-bot && bash ~/radio-bot/scripts/radio-bot.sh install` does the same thing.
+   It downloads the newest release into `~/radio-bot`, sets up Docker if needed (on Linux, with your permission), asks for your Application ID and token, starts the bot, and waits until it is online. If you'd rather read the script before running it, this does the same thing: `git clone https://github.com/DangerMouseUK/radiobot.git ~/radio-bot && bash ~/radio-bot/scripts/radio-bot.sh install`.
 3. **Invite the bot** with the link the installer prints (or `radio-bot invite`).
 4. **In your server,** join a voice channel and run `/radio play station:FG DJ RADIO`. Admins can run `/radio config` to choose channels and DJ roles.
 
-Afterwards, the `radio-bot` command looks after it:
+From then on, the `radio-bot` command looks after it:
 
 | Command | Does |
 |---|---|
@@ -64,7 +64,7 @@ Afterwards, the `radio-bot` command looks after it:
 | `radio-bot config` | Edit installation settings, then restart to apply them |
 | `radio-bot uninstall` | Remove it, optionally keeping a copy of your data |
 
-Prefer to run Docker Compose yourself? `git clone`, `cp .env.example .env`, set `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`, then `docker compose up -d --build`. [docs/install-docker.md](docs/install-docker.md) covers it in full. The database lives in the `radio-bot_radio-bot-data` volume, and migrations take a backup automatically before they change it.
+If you'd rather run Docker Compose yourself: `git clone`, `cp .env.example .env`, set `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`, then `docker compose up -d --build`. [docs/install-docker.md](docs/install-docker.md) covers this in full. The database lives in the `radio-bot_radio-bot-data` volume, and a backup is taken automatically before any migration changes it.
 
 ## Other ways to deploy
 
@@ -155,7 +155,7 @@ Radio never ends, so the queue moves only when you skip.
 - **Stream input:** the requested host, the host it redirected to (with a region hint such as "Europe"), the connected IP and port, codec, input bitrate over 10 s and 60 s, HLS segment counts, and TCP round-trip time and jitter to the stream server. The round trip is measured from connection handshakes only; no extra stream request is made.
 - **Output to Discord:** the Opus target, the channel's bitrate setting for reference, the Ogg Opus rate actually being sent over 10 s and 60 s, and packets per second (normally about 50).
 - **Discord voice connection:** the voice server's host name and IP with a region hint, the channel's RTC region, voice WebSocket ping with jitter, gateway ping, encryption and DAVE, and reconnect and failover counts.
-- **Bot health:** the process, FFmpeg, the User-Agent in use, per-pack coverage and recent incidents.
+- **Bot health:** the process, FFmpeg, the User-Agent in use, per-pack coverage, recent incidents, and the event-loop delay over the last minute. Voice packets go out every 20 ms from that loop, so a delay of 20 ms or more means packets left late, which listeners hear as a short drop and a catch-up.
 
 ### Administration
 
@@ -271,7 +271,7 @@ The module map and data flow are in [docs/architecture.md](docs/architecture.md)
 
 Version **1.0.0** is the first public release. Lint, the strict typecheck and the full unit and integration suite pass, and CI runs them on every push and pull request. The integration tests run against a local fixture radio server with synthetic audio, never real stations or Discord. The following have **not** been verified yet, and are listed here so you can judge for yourself:
 
-- **Only one live Discord test so far.** On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, heard in the Discord client: the direct MP3 source at 128 kbps, one Opus encode at 128 kbps, and DAVE end-to-end encryption negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Not yet tested on a live call: the owner, DJ and member permission scenarios, station switching, and kick, move and channel-delete handling.
+- **Only one live Discord test so far.** On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Not yet tested on a live call: the owner, DJ and member permission scenarios, station switching, and kick, move and channel-delete handling.
 - **No 72-hour soak test** has been run, so long-run memory growth and FFmpeg process clean-up over days are unmeasured.
 - **Starter pack coverage is partial.** On 31 October 2026, live probes confirmed 3 of the 63 stations (FG DJ RADIO, FG CHIC and FG DANCE): direct MP3 and AAC-LC, and HLS AAC-LC, all at 128 kbps, 44.1 kHz stereo. The other 60 use the same host and URL pattern but haven't been probed. One HLS address timed out, and one station's direct mount (FG HÏ IBIZA) refuses access and is disabled. The evidence is in [`catalog/packs/fg/evidence/`](catalog/packs/fg/evidence/).
 - **End-to-end pipeline, without Discord:** FG DJ RADIO ran through the safe client, one libopus encode and `@discordjs/voice` at about 486 kbps Opus against the 510 kbps target, with one encoder process and nothing left running afterwards. The stream-side stats were checked live: the redirect to a regional server, 128 kbps in, and the TCP round trip and jitter were all reported.

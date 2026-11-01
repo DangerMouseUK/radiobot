@@ -83,7 +83,7 @@ export class SessionManager {
               this.#d.sources.flagIdentityContradiction(source.id, meta.detail);
               throw new RadioError(
                 'IDENTITY_MISMATCH',
-                `This feed now identifies as another station: ${meta.detail}`,
+                `This stream now says it is a different station. ${meta.detail}`,
               );
             }
           }
@@ -138,7 +138,7 @@ export class SessionManager {
     if (!existing?.isStreaming && this.activeStreams() >= this.#d.maxActiveStreams) {
       throw new RadioError(
         'STREAM_LIMIT',
-        `This Radio Bot installation is already streaming to ${this.#d.maxActiveStreams} server(s), its configured maximum.`,
+        `This bot is already playing in ${this.#d.maxActiveStreams} server(s), the most its operator allows. Try again later.`,
       );
     }
     const session = this.ensure(guildId);

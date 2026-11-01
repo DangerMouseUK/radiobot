@@ -16,7 +16,7 @@ const stationOpt = (o: import('discord.js').SlashCommandStringOption, desc = 'St
 export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSONBody {
   const b = new SlashCommandBuilder()
     .setName('radio')
-    .setDescription('Radio Bot — live internet radio in voice channels')
+    .setDescription('Play live internet radio in a voice channel')
     .setContexts(InteractionContextType.Guild)
     .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
     .addSubcommand((s) =>
@@ -26,12 +26,16 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addStringOption((o) =>
           o
             .setName('pack')
-            .setDescription('Station pack (group of stations)')
+            .setDescription('Only show stations from this pack')
             .setAutocomplete(true)
             .setMaxLength(40),
         )
         .addStringOption((o) =>
-          o.setName('category').setDescription('Filter by category').setAutocomplete(true).setMaxLength(70),
+          o
+            .setName('category')
+            .setDescription('Only show stations in this category')
+            .setAutocomplete(true)
+            .setMaxLength(70),
         )
         .addStringOption((o) =>
           o.setName('search').setDescription('Search by name, alias or genre').setMaxLength(60),
@@ -45,29 +49,38 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addChannelOption((o) =>
           o
             .setName('channel')
-            .setDescription('Voice channel (DJs/admins)')
+            .setDescription('Voice channel to play in (DJs and admins only)')
             .addChannelTypes(ChannelType.GuildVoice),
         ),
     )
-    .addSubcommand((s) => s.setName('stop').setDescription('Stop the audio (stays in the channel briefly)'))
+    .addSubcommand((s) =>
+      s.setName('stop').setDescription('Stop playing (the bot stays in the channel for a short while)'),
+    )
     .addSubcommand((s) =>
       s
         .setName('join')
         .setDescription('Join a voice channel and start the default station if one is set')
         .addChannelOption((o) =>
-          o.setName('channel').setDescription('Voice channel').addChannelTypes(ChannelType.GuildVoice),
+          o
+            .setName('channel')
+            .setDescription('Voice channel to join')
+            .addChannelTypes(ChannelType.GuildVoice),
         ),
     )
-    .addSubcommand((s) => s.setName('leave').setDescription('Disconnect and cancel auto-rejoin'))
-    .addSubcommand((s) => s.setName('now').setDescription('What is playing, with source and output quality'))
+    .addSubcommand((s) =>
+      s.setName('leave').setDescription('Leave the voice channel and stay out until someone plays a station'),
+    )
+    .addSubcommand((s) =>
+      s.setName('now').setDescription('Show what is playing, where it comes from and its audio quality'),
+    )
     .addSubcommand((s) =>
       s
         .setName('list')
-        .setDescription('List stations with their status')
+        .setDescription('List stations and whether they can play')
         .addStringOption((o) =>
           o
             .setName('scope')
-            .setDescription('Which list')
+            .setDescription('Which stations to list')
             .addChoices(
               { name: 'Station packs', value: 'packs' },
               { name: 'Custom (this server)', value: 'custom' },
@@ -84,19 +97,23 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('inspect')
-        .setDescription('Technical inspection of a station’s candidate sources')
+        .setDescription('Technical details of a station’s sources: codec, bitrate and evidence')
         .addStringOption((o) => stationOpt(o)),
     )
-    .addSubcommand((s) => s.setName('quality').setDescription('Current input/output audio quality report'))
+    .addSubcommand((s) =>
+      s.setName('quality').setDescription('Audio quality of what is playing, from the station to Discord'),
+    )
     .addSubcommand((s) =>
       s
         .setName('sources')
-        .setDescription('Verified/unverified sources, default choice and fallback')
+        .setDescription('A station’s sources, which one plays and which is the fallback')
         .addStringOption((o) => stationOpt(o)),
     )
-    .addSubcommand((s) => s.setName('status').setDescription('Connection and desired-station summary'))
     .addSubcommand((s) =>
-      s.setName('stats').setDescription('Live stream and connection statistics, privately (Administrators)'),
+      s.setName('status').setDescription('Show the bot’s connection and the station it is set to play'),
+    )
+    .addSubcommand((s) =>
+      s.setName('stats').setDescription('Live stream and connection statistics, shown only to you (admins)'),
     )
     .addSubcommand((s) => s.setName('skip').setDescription('Skip to the next station in the queue'))
     .addSubcommand((s) =>
@@ -104,12 +121,12 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .setName('add')
         .setDescription('Add a custom station for this server (admins)')
         .addStringOption((o) =>
-          o.setName('name').setDescription('Display name').setRequired(true).setMinLength(2).setMaxLength(60),
+          o.setName('name').setDescription('Station name').setRequired(true).setMinLength(2).setMaxLength(60),
         )
         .addStringOption((o) =>
           o
             .setName('url')
-            .setDescription('Public stream URL (Icecast/SHOUTcast/HLS/PLS/M3U)')
+            .setDescription('Public stream URL (Icecast, SHOUTcast, HLS, PLS or M3U)')
             .setRequired(true)
             .setMaxLength(2048),
         )
@@ -118,15 +135,17 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
           o.setName('description').setDescription('Short description').setMaxLength(300),
         )
         .addStringOption((o) => o.setName('category').setDescription('Category or genre').setMaxLength(40))
-        .addStringOption((o) => o.setName('language').setDescription('Expected language').setMaxLength(20)),
+        .addStringOption((o) =>
+          o.setName('language').setDescription('Language the station broadcasts in').setMaxLength(20),
+        ),
     )
     .addSubcommand((s) =>
       s
         .setName('edit')
         .setDescription('Edit a custom station (admins)')
-        .addStringOption((o) => stationOpt(o, 'Custom station'))
+        .addStringOption((o) => stationOpt(o, 'Custom station to edit'))
         .addStringOption((o) =>
-          o.setName('name').setDescription('New display name').setMinLength(2).setMaxLength(60),
+          o.setName('name').setDescription('New station name').setMinLength(2).setMaxLength(60),
         )
         .addStringOption((o) => o.setName('url').setDescription('New stream URL').setMaxLength(2048))
         .addStringOption((o) => o.setName('website').setDescription('Station website').setMaxLength(300))
@@ -137,66 +156,66 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('remove')
-        .setDescription('Remove a custom station (admins; built-in stations cannot be removed)')
-        .addStringOption((o) => stationOpt(o, 'Custom station')),
+        .setDescription('Remove a custom station (admins). Stations from packs can’t be removed')
+        .addStringOption((o) => stationOpt(o, 'Custom station to remove')),
     )
     .addSubcommand((s) =>
       s
         .setName('rescan')
-        .setDescription('Re-probe a station’s sources (admins, rate-limited)')
+        .setDescription('Check a station’s sources again now (admins)')
         .addStringOption((o) => stationOpt(o))
         .addBooleanOption((o) =>
           o
             .setName('compare')
-            .setDescription('Also run a ~40 s audio comparison to verify unverified sources'),
+            .setDescription('Also compare about 40 seconds of audio to try to verify unverified sources'),
         ),
     )
     .addSubcommand((s) =>
       s
         .setName('sync')
-        .setDescription('Reconcile station packs with their official station lists (admins)')
+        .setDescription('Check station packs against their official station lists (admins)')
         .addStringOption((o) =>
-          o.setName('pack').setDescription('Only this pack').setAutocomplete(true).setMaxLength(40),
+          o.setName('pack').setDescription('Only check this pack').setAutocomplete(true).setMaxLength(40),
         ),
     )
     .addSubcommand((s) =>
       s
         .setName('config')
-        .setDescription('Server settings: channels, roles, idle mode, quality (admins)')
+        .setDescription('Server settings: channels, roles, idle behaviour and quality (admins)')
         .addStringOption((o) =>
           o
             .setName('default_station')
-            .setDescription('Default station')
+            .setDescription('Station to play when the bot joins without one')
             .setAutocomplete(true)
             .setMaxLength(100),
         )
         .addIntegerOption((o) =>
           o
             .setName('manual_bitrate')
-            .setDescription('Opus target for manual quality mode (kbps)')
+            .setDescription('Bitrate in kbps for the Manual quality mode')
             .setMinValue(32)
             .setMaxValue(510),
         ),
     )
     .addSubcommand((s) =>
-      s.setName('export').setDescription('Export this server’s settings as JSON (admins)'),
+      s.setName('export').setDescription('Download this server’s settings as a JSON file (admins)'),
     )
     .addSubcommand((s) =>
       s
         .setName('import')
-        .setDescription('Validate and preview a settings export, then apply (admins)')
+        .setDescription('Load settings from an export file: preview the changes, then apply (admins)')
         .addAttachmentOption((o) =>
-          o.setName('file').setDescription('A Radio Bot export JSON file').setRequired(true),
+          o.setName('file').setDescription('A settings file made with /radio export').setRequired(true),
         ),
     )
     .addSubcommand((s) =>
       s
         .setName('panel')
-        .setDescription('Post a persistent control panel (admins)')
+        .setDescription('Post a control panel that stays in a text channel (admins)')
         .addChannelOption((o) =>
           o
             .setName('channel')
-            .setDescription('Text channel')
+            .setDescription('Text channel for the panel')
             .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
         ),
     )
@@ -215,7 +234,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addSubcommand((s) =>
           s
             .setName('remove')
-            .setDescription('Remove one queued station')
+            .setDescription('Remove a station from the queue')
             .addIntegerOption((o) =>
               o
                 .setName('position')
@@ -230,48 +249,60 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommandGroup((g) =>
       g
         .setName('source')
-        .setDescription('Source selection overrides (admins)')
+        .setDescription('Choose which source a station plays from (admins)')
         .addSubcommand((s) =>
           s
             .setName('pin')
-            .setDescription('Always use one source for a station (with fallback warning)')
+            .setDescription('Always use this source, falling back to another only while it is broken')
             .addStringOption((o) => stationOpt(o))
             .addStringOption((o) =>
-              o.setName('source').setDescription('Source ID').setRequired(true).setAutocomplete(true),
+              o
+                .setName('source')
+                .setDescription('Source (pick from the list)')
+                .setRequired(true)
+                .setAutocomplete(true),
             ),
         )
         .addSubcommand((s) =>
           s
             .setName('prefer')
-            .setDescription('Prefer one source when it is eligible')
+            .setDescription('Use this source whenever it is verified and working')
             .addStringOption((o) => stationOpt(o))
             .addStringOption((o) =>
-              o.setName('source').setDescription('Source ID').setRequired(true).setAutocomplete(true),
+              o
+                .setName('source')
+                .setDescription('Source (pick from the list)')
+                .setRequired(true)
+                .setAutocomplete(true),
             ),
         )
         .addSubcommand((s) =>
           s
             .setName('auto')
-            .setDescription('Return to evidence-based automatic selection')
+            .setDescription('Let the bot choose the source again from its checks')
             .addStringOption((o) => stationOpt(o)),
         )
         .addSubcommand((s) =>
           s
             .setName('verify')
-            .setDescription('Record an identity review verdict for a source (installation-wide)')
+            .setDescription('Record whether a source plays the right station (applies to every server)')
             .addStringOption((o) => stationOpt(o))
             .addStringOption((o) =>
-              o.setName('source').setDescription('Source ID').setRequired(true).setAutocomplete(true),
+              o
+                .setName('source')
+                .setDescription('Source (pick from the list)')
+                .setRequired(true)
+                .setAutocomplete(true),
             )
             .addStringOption((o) =>
               o
                 .setName('verdict')
-                .setDescription('Your verdict after listening/reviewing evidence')
+                .setDescription('Your verdict after listening or checking the evidence')
                 .setRequired(true)
                 .addChoices(
                   { name: 'Correct station (verified)', value: 'verified' },
                   { name: 'Wrong station (mismatch)', value: 'mismatch' },
-                  { name: 'Clear override (use automatic evidence)', value: 'clear' },
+                  { name: 'Clear the verdict (go back to the automatic checks)', value: 'clear' },
                 ),
             ),
         ),

@@ -11,7 +11,7 @@ Installed with the installer? Start with `radio-bot status` and `radio-bot logs`
 | `/radio status` | Connection state, desired state and station, the current source, and the last problem. It also says when playback was not resumed after a restart because *Resume after restart* is off. |
 | `/radio now` / `/radio quality` | What is playing, the source format and verification, the Discord output target, the channel's bitrate setting (not a cap), the observed rates, and whether DAVE is in use. |
 | `/radio sources <station>` | Every candidate (up to 10), which one is selected and the fallback, and **why each other one is not eligible**. |
-| `/radio inspect <station>` | As above, plus the redacted endpoint, every bitrate figure, probe and failure times, the last failure code, health, start-up time and provenance. Admins also get a **Re-probe sources now** button. |
+| `/radio inspect <station>` | As above, plus the redacted endpoint, every bitrate figure, probe and failure times, the last failure code, health, start-up time and provenance. Admins also get a **Check sources again** button. |
 | `/radio stats` (Administrators; private, with Refresh and Close) | **Live stream**: session state and source, requested and redirected host (with a region hint from the host name), connected IP and port, HLS segments, codec, input rate over 10 s and 60 s and data received, and round trip to the stream endpoint by TCP handshake. **Output**: Opus target, channel setting (not a cap), Ogg Opus rate, and packets per second to Discord (about 50). **Discord**: voice server host (with a region hint) and IP, the channel's RTC region, voice WebSocket ping with jitter, gateway ping, encryption/DAVE, and this server's failovers, voice reconnects and encoder PID, plus the last FFmpeg warnings. **Bot health**: uptime and memory; active streams and probes against their limits; FFmpeg processes (active, spawned, reaped) and whether `libopus` is present; the stream User-Agent in use; database schema version; per-pack catalogue coverage and last list sync; recent coalesced incidents. |
 | Logs | `docker compose logs -f radio-bot`. Set `LOG_LEVEL=debug` for state transitions and the voice dependency report, and `trace` for everything. Return to `info` afterwards. |
 | Probe from the CLI | `docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe <pack>:<station>` (or `--probe --pack-id <pack>`) prints raw probe results for pack stations. |
@@ -29,7 +29,7 @@ Installed with the installer? Start with `radio-bot status` and `radio-bot logs`
 
 The server has a command-channel allowlist (`/radio config` → Access). Use one of those channels, or the text chat of an approved voice channel. Admins aren't affected by this restriction.
 
-## "Only DJs and administrators…" / "Join the voice channel first…" / "The radio is in use in #…"
+## "Only DJs and administrators…" / "Join a voice channel first…" / "The radio is in use in #…"
 
 These come from the listener control mode. See [permissions.md](permissions.md#listener-control-mode). With the default `same_channel` mode, a member must be in a voice channel, and can only control the bot when it is idle or already in their channel.
 
@@ -43,7 +43,7 @@ These come from the listener control mode. See [permissions.md](permissions.md#l
 | `VOICE_KICKED` | A moderator disconnected the bot. | Deliberate: the bot won't rejoin or autostart. Use `/radio play` to start again. |
 | `VOICE_DISCONNECTED` | The voice connection dropped and couldn't be rebuilt after several attempts (spread over about 2 min). | Check connectivity, and Discord's status page. Then `/radio play` again. |
 | `STREAM_LIMIT` | The installation is already streaming to `MAX_ACTIVE_GUILD_STREAMS` servers. The limit also applies when a server resumes from pause, retries or reconnects; the bot then posts one notice and tries again about every 2 minutes. | Wait for another server to stop, or raise the limit in `.env` if your hardware allows. |
-| `RATE_LIMITED` | "Slow down — … is rate-limited. Try again in N s." A per-user or per-server rate limit was hit (see [permissions.md](permissions.md#rate-limits)). | Wait the number of seconds shown. |
+| `RATE_LIMITED` | "Too many … in a short time. Try again in N s." A per-user or per-server rate limit was hit (see [permissions.md](permissions.md#rate-limits)). | Wait the number of seconds shown. |
 | `CUSTOM_STATION_LIMIT` | The server already has `MAX_CUSTOM_STATIONS_PER_GUILD` custom stations. | Remove one with `/radio remove`, or raise the limit. |
 | `CANCELLED` | A newer command replaced this one before it finished (for example, a second `/radio play` while the first was still connecting), or a probe was stopped. | Nothing to fix: the newer command wins. |
 | `INTERNAL` | Something the bot didn't expect, or an action that doesn't apply (for example "This pack has no official list to sync with."). The message says which. | If the message doesn't explain it, check `radio-bot logs` (or `docker compose logs`) for the error and report it as a bug. |
@@ -116,17 +116,18 @@ A custom station is only saved if the probe succeeds. Otherwise the reply says "
 | `FFMPEG_EXIT` | The encoder exited. The message includes the last FFmpeg error lines, redacted. |
 | `IDENTITY_MISMATCH` | When the bot connected, the stream named itself (`icy-name`) as a *different* catalogue station. The source is marked as a mismatch, and the bot fails over to another verified source. An admin can re-compare it with `/radio rescan <station> compare:true`; the operator (or, for a custom station, a server admin) can review it with `/radio source verify`. |
 
-- "Degraded — using fallback source (…)" means the best source failed and a verified alternative is playing. The original is retried after its cooldown.
+- "The usual source failed, so the radio is playing from a fallback (…)", and **Degraded** in `/radio now`, mean the best source failed and a verified alternative is playing. The original is retried after its cooldown.
 - If a notification channel is set, the first notice of each kind is posted, and repeats within 5 minutes are summarised in one follow-up message.
+- **Short drops followed by a speed-up, with no error logged:** Discord's player is catching up after voice packets arrived late. Check the event-loop delay in `/radio stats` → Bot health. If the worst delay is 20 ms or more (flagged in the panel, and logged as a warning at 50 ms), the bot's host was too busy to send packets on time: give it more CPU, or run fewer streams. If the delay stays low, the packets left on time and were delayed on the network between the host and Discord, or between Discord and the listener.
 - **Frequent stalls on HLS** usually mean a slow or overloaded segment host. HLS only plays when no direct stream of the station is eligible. Check `/radio sources` to see why the direct streams are excluded: for example a failed probe, a cooldown, an operator disable, or an admin pin to the HLS source.
 - **No song or show title, or the title disappears for a while:** titles come only from the stream's own ICY metadata. Many stations send none, HLS sources never carry one, and the bot hides a title the station clears or replaces with a placeholder (such as "Unknown" or "Advert"), so the line comes back with the next real title. Accented characters from older servers are decoded as Windows-1252 when the text is not valid UTF-8.
-- **Audio quality is lower than expected:** check `/radio quality`. The source's own codec and bitrate are the real limit. The Opus target comes from the server's quality mode: `maximum` matches the source's own bitrate up to `MAX_OPUS_BITRATE_KBPS` (510 by default), and `balanced` uses 128 kbps or less. A target equal to the source's bitrate is intended, not a downgrade. The voice channel's bitrate setting is shown but is not used as a cap. Whether Discord delivers a bot's stream above that setting has not been verified against a live call.
+- **Audio quality is lower than expected:** check `/radio quality`. The source's own codec and bitrate are the real limit. The Opus target comes from the server's quality mode: `maximum` matches the source's own bitrate up to `MAX_OPUS_BITRATE_KBPS` (510 by default), and `balanced` uses 128 kbps or less. A target equal to the source's bitrate is intended, not a downgrade. The voice channel's bitrate setting is shown but is not used as a cap. In the one live test so far, 128 kbps into a 96 kbps channel sounded right, but what a listener's client receives above that setting has not been measured.
 
 ## FFmpeg problems
 
 - **`FFMPEG_SPAWN`**, or the log line "FFmpeg/FFprobe not available — install FFmpeg or set FFMPEG_PATH/FFPROBE_PATH": the binary wasn't found. In Docker it comes from the image, so leave `FFMPEG_PATH` and `FFPROBE_PATH` unset (they are commented out in `.env.example`). Outside Docker, install FFmpeg or point the variables at it.
 - **"FFmpeg was found but has no libopus encoder; playback will fail."**, or `/radio stats` showing `libopus NO`: your FFmpeg build lacks `libopus`. Use the Docker image, or an FFmpeg build compiled with `--enable-libopus` (check with `ffmpeg -hide_banner -encoders | grep libopus`). Probes still work without it, but playback doesn't.
-- **FFmpeg process count keeps growing** in `/radio stats` while nothing is playing: please file a bug with the counts and your logs. Every pipeline and probe process is supposed to be reaped.
+- **FFmpeg process count keeps growing** in `/radio stats` while nothing is playing: file a bug with the counts and your logs. Every pipeline and probe process is supposed to be reaped.
 
 ## Start-up failures
 
@@ -142,7 +143,7 @@ A custom station is only saved if the probe succeeds. Otherwise the reply says "
 
 ## Catalogue sync
 
-- **"… — sync failed: …"**: the pack's official list couldn't be fetched, or looked implausible (fewer than 10 names, or fewer than half the pack's stations for small packs). Nothing changed, and existing entries are kept. `/radio list pack:<pack>` shows "list may be stale" if no sync has succeeded within three intervals.
+- **"…: the sync failed. …"**: the pack's official list couldn't be fetched, or looked implausible (fewer than 10 names, or fewer than half the pack's stations for small packs). Nothing changed, and existing entries are kept. `/radio list pack:<pack>` shows "list may be out of date" if no sync has succeeded within three intervals.
 - **"No enabled station pack has an official list to sync with."**: none of the enabled packs declares `sync` in its `pack.json`.
 - **"That pack is not enabled or has no official list to sync with."**: the pack you named is disabled, or doesn't declare `sync`.
 - **"Needs a reviewed source mapping before it can play"**: a new station appeared on the official list. The sync deliberately never collects stream URLs, so someone has to add the station's sources to the pack's `sources.json` through a reviewed change.

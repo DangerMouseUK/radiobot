@@ -455,7 +455,7 @@ export async function openSourceInput(
   opts: OpenOptions = {},
   depth = 0,
 ): Promise<SourceInput> {
-  if (depth > 2) throw new RadioError('PLAYLIST_INVALID', 'The playlist nests too deeply.');
+  if (depth > 2) throw new RadioError('PLAYLIST_INVALID', 'The playlist points to too many other playlists.');
   const res = await client.request(rawUrl, {
     signal: opts.signal,
     headersTimeoutMs: opts.headersTimeoutMs ?? 10_000,
@@ -549,7 +549,7 @@ async function openHls(
   let alternatives: RenditionChoice[] = [];
   if (parsed.type === 'master') {
     const ranked = rankAudioRenditions(parsed);
-    if (ranked.length === 0) throw new RadioError('HLS_NO_AUDIO', 'The HLS stream has no audio rendition.');
+    if (ranked.length === 0) throw new RadioError('HLS_NO_AUDIO', 'The HLS stream has no audio track.');
     let lastErr: unknown = null;
     let found: HlsMedia | null = null;
     for (const candidate of ranked) {
@@ -572,7 +572,8 @@ async function openHls(
         lastErr = err;
       }
     }
-    if (!found) throw lastErr ?? new RadioError('HLS_NO_AUDIO', 'No HLS audio rendition could be loaded.');
+    if (!found)
+      throw lastErr ?? new RadioError('HLS_NO_AUDIO', 'None of the HLS audio tracks could be loaded.');
     media = found;
     alternatives = ranked.filter((r) => r !== chosen);
   } else {

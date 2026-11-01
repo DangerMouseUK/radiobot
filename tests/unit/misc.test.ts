@@ -279,7 +279,7 @@ describe('import/export', () => {
       new Set(),
       new Set(['223456789012345678']),
     );
-    expect(preview.warnings.join(' ')).toMatch(/redacted/);
+    expect(preview.warnings.join(' ')).toMatch(/left out of the export/);
     applyImport(other, parsed, guilds, stations, new Set(), new Set(['223456789012345678']), (fn) =>
       db.transaction(fn),
     );

@@ -195,7 +195,7 @@ describe('voice access helpers', () => {
     const all = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
     expect(botVoicePermissionProblem(guild([]), channel(all))).toBeNull();
     expect(botVoicePermissionProblem(guild([]), channel([PermissionFlagsBits.ViewChannel]))).toBe(
-      'I am missing Connect, Speak in <#v1>.',
+      'I need these permissions in <#v1>: Connect, Speak.',
     );
     expect(botVoicePermissionProblem(guild([]), channel(all, false))).toMatch(/full/);
     expect(botVoicePermissionProblem(guild([], null), channel(all))).toMatch(/could not check/);

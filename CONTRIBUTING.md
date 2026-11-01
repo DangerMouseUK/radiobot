@@ -9,7 +9,7 @@ Thank you for helping. Radio Bot is a small, self-hosted Discord radio bot. Its 
 
 Contributions that keep to these rules are very welcome. By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-**Naming:** the product is **Radio Bot** (package and image `radio-bot`; the repository is [DangerMouseUK/radiobot](https://github.com/DangerMouseUK/radiobot)). Please don't call it "FG Radio" or anything else that implies it is a broadcaster's product. It is unofficial; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
+**Naming:** the product is **Radio Bot** (package and image `radio-bot`; the repository is [DangerMouseUK/radiobot](https://github.com/DangerMouseUK/radiobot)). Don't call it "FG Radio" or anything else that implies it is a broadcaster's product. It is unofficial; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
 ## Development setup
 
@@ -56,7 +56,7 @@ Use a separate Discord application and a private test server for development. Ne
 
 ### Catalogue changes
 
-Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The bundled starter pack is `catalog/packs/fg/`. A new pack must be **unofficial-labelled** (with a `disclaimer` and no logos or artwork) unless the broadcaster has agreed otherwise. For these files:
+Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The bundled starter pack is `catalog/packs/fg/`. A new pack must be **labelled as unofficial** (with a `disclaimer` and no logos or artwork) unless the broadcaster has agreed otherwise. For these files:
 
 - **Every source mapping needs provenance and evidence:**
   - **Provenance:** how the URL is tied to the station, and when. For example: "Official radiofg.com web player entry `<officialId>` redirected to this mount on YYYY-MM-DD". Put this in `provenanceDetail`, and add a row or section to `SOURCE_PROVENANCE.md`.

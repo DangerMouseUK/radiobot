@@ -19,7 +19,7 @@ Pack stations come from **station packs**. Each pack is a folder under `catalog/
 
 ## Candidate states
 
-Each source has a `verification_state`. The PRD (§7.2) describes a longer chain. The states the v1 implementation actually sets are:
+Each source has a `verification_state`. The PRD (§7.2) describes a longer chain; v1 sets only these states:
 
 | State | Set when | Eligible? |
 |---|---|---|
@@ -57,7 +57,7 @@ The labels shown in `/radio browse`, `list` and autocomplete come from `SourceSe
 | Unverified | Some enabled source hasn't been probed yet, or was probed but its identity is unverified. **On a fresh install every pack station shows this until its sources are probed**, which happens on first play or `/radio rescan`. |
 | Temporarily unavailable | Every enabled source is failing, cooling down or mismatched, or the operator disabled the station. |
 | No stream source known | The station is catalogued, but no enabled source is mapped. It cannot be played. |
-| Removed/retired | Retired from the catalogue. |
+| Retired | Retired from the catalogue. |
 
 ## Identity rules
 
@@ -148,7 +148,7 @@ These are per-server overrides, stored in `guild_source_preferences`:
 |---|---|---|
 | `auto` | `/radio source auto <station>` | Evidence-based selection as described above. This is the default. |
 | `prefer` | `/radio source prefer <station> <source>` | Uses that source whenever it is eligible. Otherwise falls back to automatic selection without marking playback degraded. |
-| `pin` | `/radio source pin <station> <source>` | Uses that source whenever it is eligible. Otherwise playback is marked **Degraded — pinned source unavailable (reason); using fallback**. |
+| `pin` | `/radio source pin <station> <source>` | Uses that source whenever it is eligible. Otherwise playback is marked **Degraded: the pinned source can’t be used (reason), so a fallback is playing.** |
 
 When you pin or prefer a source that isn't eligible right now, the reply warns you and gives the reason. An override never makes an ineligible source playable: the identity and health gate always applies. The catalogue sync and seeding never touch these preferences.
 
@@ -191,7 +191,7 @@ On **31 October 2026** each station's entry in the official radiofg.com web play
 | `fg-buddha-bar-hls-kb8037g1t7uvv` | Malformed HLS target (`.hls.m3u8`), HTTP 404 |
 | `fg-mix-melodic-hls-h0n0zbh1t7uvv` | Malformed HLS target (`.hls.m3u8`), HTTP 404 |
 | `fg-disco-house-direct-ffn7zkskca3vv` | `.m3u8` URL serving plain `audio/mpeg`, a duplicate of the station's MP3 mount, not HLS |
-| `fg-hi-ibiza-direct-2ykcf6e1e2uvv` | Direct mount answered HTTP 401 at discovery (browser User-Agent) and again on 31 October 2026 with the bot's FFmpeg User-Agent: access-restricted, stays disabled. The station's HLS source remains enabled. |
+| `fg-hi-ibiza-direct-2ykcf6e1e2uvv` | Direct mount answered HTTP 401 at discovery (browser User-Agent), and again on 31 October 2026 with the bot's FFmpeg User-Agent. Access is restricted, so it stays disabled. The station's HLS source remains enabled. |
 
 The flagship **FG DJ RADIO** has four sources:
 
@@ -257,7 +257,7 @@ pnpm validate-catalogue --pack ./my-pack
 # probe specific stations, run the ~40 s audio comparison, and write the evidence
 pnpm validate-catalogue --probe fg:fg-dj-radio fg:fg-chic --compare --json evidence.json
 
-# every enabled source of one pack: slow, so please be gentle with the broadcaster's servers
+# every enabled source of one pack: slow, and it loads the broadcaster's servers, so run it sparingly
 pnpm validate-catalogue --probe --pack-id fg
 ```
 
@@ -286,7 +286,7 @@ For the starter pack, a sync:
 - on a **rename**, keeps the station ID, favourites and preferences, and keeps the old name as an alias;
 - on a **new station**, adds it with no source and reports it as "Needs a reviewed source mapping before it can play";
 - on a **missing** station, marks it `missing_from_official`, keeps it (favourites stay intact) and reports it. A station that reappears is reported as "Back on the list";
-- on **failure**, keeps the existing entries and records a failed sync report. `/radio list` for that pack shows "list may be stale" when no sync has succeeded within three intervals.
+- on **failure**, keeps the existing entries and records a failed sync report. `/radio list` for that pack shows "list may be out of date" when no sync has succeeded within three intervals.
 
 Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio sync` shows one report per pack: added, renamed, no longer listed, back on the list, needs a source mapping, and stations whose probed sources are all failing.
 

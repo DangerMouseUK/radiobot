@@ -8,6 +8,7 @@ import { ComponentIds } from '../../src/discord/components/custom-id.ts';
 import { type AppContext, RateLimits } from '../../src/discord/context.ts';
 import { RadioController } from '../../src/discord/controller.ts';
 import { exportGuild } from '../../src/import-export/config-io.ts';
+import { EventLoopMonitor } from '../../src/observability/event-loop.ts';
 import { Metrics } from '../../src/observability/metrics.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { SourceService } from '../../src/streams/source-service.ts';
@@ -352,6 +353,7 @@ function setup() {
     ids,
     notifier: {},
     limits: new RateLimits(),
+    eventLoop: new EventLoopMonitor(),
     startedAt: new Date(),
     ffmpegInfo: null,
   } as unknown as AppContext;
@@ -462,7 +464,7 @@ describe('every slash command is acknowledged exactly once', () => {
       expect(i.text).not.toMatch(/Something went wrong/);
       expect(internalIncidents(t.metrics)).toEqual([]);
       if (ADMIN_ONLY.has(spec.group ?? spec.sub)) {
-        expect(i.text).toMatch(/Only members with the Discord Administrator permission/);
+        expect(i.text).toMatch(/Only the server owner and members with the Administrator permission/);
         expect(i.ephemeral).toBe(true);
       }
       expect(t.sessions.plays).toEqual([]);
@@ -477,7 +479,7 @@ describe('every slash command is acknowledged exactly once', () => {
       const i = await t.command(t.people.admin, { sub });
       expect(i.violations).toEqual([]);
       expect(i.acks).toBe(1);
-      expect(i.text).not.toMatch(/Something went wrong|Only members with/);
+      expect(i.text).not.toMatch(/Something went wrong|Only the server owner/);
       expect(internalIncidents(t.metrics)).toEqual([]);
     },
   );
@@ -497,7 +499,7 @@ describe('every slash command is acknowledged exactly once', () => {
     const t = setup();
     const i = await t.command(t.people.owner, { sub: 'stats' });
     expect(i.violations).toEqual([]);
-    expect(i.text).not.toMatch(/Only members with/);
+    expect(i.text).not.toMatch(/Only the server owner/);
   });
 });
 
@@ -514,7 +516,7 @@ describe('buttons and menus are authorised again on every click', () => {
       expect(i.violations).toEqual([]);
       expect(i.acks).toBe(1);
       expect(i.ephemeral).toBe(true);
-      expect(i.text).toMatch(/Only members with the Discord Administrator permission/);
+      expect(i.text).toMatch(/Only the server owner and members with the Administrator permission/);
     }
     expect(t.probes).toEqual([]);
   });
@@ -530,7 +532,7 @@ describe('buttons and menus are authorised again on every click', () => {
   it('denies a member a play button when they are not in the voice channel', async () => {
     const t = setup();
     const i = await t.click(t.people.member, t.ids.make(GUILD, 'play', 'fg:fg-dj-radio'));
-    expect(i.text).toMatch(/Join the voice channel first/);
+    expect(i.text).toMatch(/Join a voice channel first/);
     expect(t.sessions.plays).toEqual([]);
   });
 
@@ -695,7 +697,7 @@ describe('/radio stats', () => {
     const t = setup();
     const member = await t.command(t.people.member, { sub: 'stats' });
     expect(member.ephemeral).toBe(true);
-    expect(member.text).toMatch(/Only members with the Discord Administrator permission/);
+    expect(member.text).toMatch(/Only the server owner and members with the Administrator permission/);
 
     const admin = await t.command(t.people.admin, { sub: 'stats' });
     expect(admin.violations).toEqual([]);

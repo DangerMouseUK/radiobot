@@ -338,7 +338,7 @@ export async function probeSource(
       );
     }
     const parsed = parseFfprobeOutput(json);
-    if (!parsed.codec) throw new RadioError('NO_AUDIO_STREAM', 'No audio stream was found in the source.');
+    if (!parsed.codec) throw new RadioError('NO_AUDIO_STREAM', 'No audio was found in the stream.');
     Object.assign(out, parsed);
     if (input.info.hls?.container && !out.container?.includes('mp4'))
       out.container = input.info.hls.container;

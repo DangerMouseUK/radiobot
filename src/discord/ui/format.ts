@@ -2,10 +2,13 @@ import { EmbedBuilder, escapeMarkdown, TimestampStyles, time } from 'discord.js'
 import type { EncoderPlan } from '../../audio/encoder.ts';
 import {
   AVAILABILITY_LABEL,
+  type SourceProvenance,
   type Station,
   type StationAvailability,
   type StationSource,
+  type VerificationState,
 } from '../../catalogue/types.ts';
+import type { LoopDelaySummary } from '../../observability/event-loop.ts';
 import { redactUrl } from '../../shared/redact.ts';
 import { truncate } from '../../shared/text.ts';
 import { codecLabel } from '../../streams/probe.ts';
@@ -31,6 +34,29 @@ export const COLOR = {
 } as const;
 
 export const DISCLAIMER = 'Radio Bot is unofficial and not affiliated with or endorsed by any broadcaster.';
+
+/** A source's check progress in words, for the sources and inspect views. */
+const VERIFICATION_LABEL: Record<VerificationState, string> = {
+  discovered: 'not checked yet',
+  resolved: 'not checked yet',
+  transport_healthy: 'connects, audio not checked yet',
+  codec_verified: 'audio checked',
+  identity_verified: 'audio and station identity checked',
+  eligible: 'working',
+  unverified: 'working, but not verified as this station',
+  degraded: 'working with decode errors',
+  blocked_by_policy: 'blocked by the URL safety rules',
+  cooldown: 'paused after repeated failures',
+  offline: 'last check failed',
+  retired: 'retired',
+};
+
+const PROVENANCE_LABEL: Record<SourceProvenance, string> = {
+  'official-player': 'the broadcaster’s own player or website',
+  curated: 'a reviewed, curated list',
+  'auto-discovered': 'found automatically, not reviewed',
+  'custom-user': 'added by a server admin',
+};
 
 export function availabilityBadge(a: StationAvailability): string {
   const icon: Record<StationAvailability, string> = {
@@ -86,10 +112,10 @@ export function sourceFormat(s: StationSource): string {
 export function identityLine(s: StationSource): string {
   const label =
     s.identityStatus === 'verified'
-      ? `Identity verified (${s.identityConfidence} confidence)`
+      ? `Verified as this station (${s.identityConfidence} confidence)`
       : s.identityStatus === 'mismatch'
-        ? 'Identity MISMATCH — not used'
-        : 'Identity unverified';
+        ? 'Plays a different station, so it is not used'
+        : 'Not yet verified as this station';
   const why = s.identityEvidence.find((e) => e.verdict !== 'inconclusive')?.detail;
   return why ? `${label}: ${truncate(why, 160)}` : label;
 }
@@ -98,8 +124,8 @@ export function outputLine(plan: EncoderPlan | null): string {
   if (!plan) return 'Not encoding.';
   return [
     `Opus · ${plan.sampleRateHz / 1000} kHz · stereo · ${plan.frameMs} ms frames`,
-    `encoder target ${plan.targetKbps} kbps (${plan.qualityMode})`,
-    `voice-channel setting ${plan.channelBitrateKbps !== null ? `${plan.channelBitrateKbps} kbps` : 'unknown'} (not a cap)`,
+    `encoder target ${plan.targetKbps} kbps (${plan.qualityMode} quality)`,
+    `voice channel bitrate setting ${plan.channelBitrateKbps !== null ? `${plan.channelBitrateKbps} kbps` : 'unknown'} (does not limit the bot)`,
   ].join(' · ');
 }
 
@@ -135,7 +161,7 @@ export function nowEmbed(
     );
   }
   lines.push(`**Discord output:** ${outputLine(status.plan)}`);
-  if (status.selection?.degraded) lines.push('**Degraded — using fallback.**');
+  if (status.selection?.degraded) lines.push('**Degraded: playing from a fallback source.**');
   if (status.nowPlaying) {
     lines.push(
       `**On air:** ${streamText(truncate(status.nowPlaying.title, 200))} _(stream metadata, received ${ts(status.nowPlaying.receivedAt)})_`,
@@ -167,7 +193,7 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
         `Station: **${st.displayName}** · source \`${s.id}\``,
         `Transport: ${transportLabel(status.inputTransport ?? s.transport)}${status.hls?.chosen ? ` — rendition: ${status.hls.chosen.reason}` : ''}`,
         `Codec: ${codecLabel(s.codec, s.profile)} · container ${s.container ?? 'unknown'}`,
-        `Bitrate: ${br.kbps !== null ? `≈${Math.round(br.kbps)} kbps` : 'unknown'} (evidence: ${s.bitrateConfidence})${status.observedInputKbps !== null ? ` · live network rate ≈${status.observedInputKbps} kbps` : ''}`,
+        `Bitrate: ${br.kbps !== null ? `≈${Math.round(br.kbps)} kbps` : 'unknown'} (evidence: ${s.bitrateConfidence.replace('-', ' ')})${status.observedInputKbps !== null ? ` · live network rate ≈${status.observedInputKbps} kbps` : ''}`,
         `Sample rate: ${s.sampleRateHz ? `${s.sampleRateHz} Hz` : 'unknown'} · Channels: ${s.channels ?? 'unknown'}${s.channelLayout ? ` (${s.channelLayout})` : ''}`,
       ].join('\n'),
     },
@@ -175,9 +201,9 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
       name: 'Output (Discord)',
       value: [
         `Codec: Opus (libopus, music mode, VBR) · ${p.sampleRateHz} Hz · ${p.channels} channels · ${p.frameMs} ms`,
-        `Encoder target: **${p.targetKbps} kbps** (${p.qualityMode} mode)`,
-        `Voice-channel bitrate setting: ${p.channelBitrateKbps !== null ? `${p.channelBitrateKbps} kbps` : 'unknown'} (does not cap the bot's stream)`,
-        `Observed encoder output: ${status.observedOutputKbps !== null ? `≈${status.observedOutputKbps} kbps (Ogg, incl. framing)` : 'not measured yet'}`,
+        `Encoder target: **${p.targetKbps} kbps** (${p.qualityMode} quality)`,
+        `Voice channel bitrate setting: ${p.channelBitrateKbps !== null ? `${p.channelBitrateKbps} kbps` : 'unknown'} (it does not limit the bot’s stream)`,
+        `Measured encoder output: ${status.observedOutputKbps !== null ? `≈${status.observedOutputKbps} kbps (Ogg, including framing)` : 'not measured yet'}`,
         `Encryption: ${status.encryption ?? 'unknown'}`,
       ].join('\n'),
     },
@@ -185,8 +211,8 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
       name: 'Processing',
       value: [
         s.codec === 'opus'
-          ? 'Transcode: yes — the Opus source is decoded and re-encoded once for Discord (zero-transcode passthrough is not used in v1). No second encode in the voice library.'
-          : `Transcode: yes — exactly one lossy encode (${codecLabel(s.codec, s.profile)} → Opus). No second encode in the voice library.`,
+          ? 'Transcode: yes. The Opus source is decoded and encoded again once for Discord (zero-transcode passthrough is not used in v1). The voice library adds no second encode.'
+          : `Transcode: yes, exactly one lossy encode (${codecLabel(s.codec, s.profile)} → Opus). The voice library adds no second encode.`,
         `Resampling: ${p.resampled ? `${s.sampleRateHz} Hz → 48000 Hz (required by Discord)` : 'none'}`,
         'Volume/normalisation/EQ/compression: off',
         ...p.notes.map((n) => `• ${n}`),
@@ -215,12 +241,12 @@ export function sourcesEmbed(
     .setTitle(`${detailed ? 'Inspection' : 'Sources'}: ${st.displayName}`)
     .setColor(selection.selected ? COLOR.info : COLOR.warn)
     .setFooter({
-      text: `${DISCLAIMER} Values come from live probes; HLS is a delivery protocol, not a codec.`,
+      text: `${DISCLAIMER} Figures come from the bot’s own checks of each stream. HLS is a way of delivering audio, not a codec.`,
     });
   const now = Date.now();
   if (sources.length === 0) {
     return e.setDescription(
-      'No stream source is known for this station yet, so it cannot be played. It is listed for completeness.',
+      'No stream is known for this station yet, so it can’t be played. It is listed so the catalogue is complete.',
     );
   }
   const description = truncate(
@@ -243,15 +269,15 @@ export function sourcesEmbed(
     const lines = [
       `${transportLabel(s.transport === 'unknown' ? s.transportHint : s.transport)} · ${sourceFormat(s)}`,
       identityLine(s),
-      `State: ${s.verificationState}${elig.eligible ? ' · eligible' : ` · not eligible: ${truncate(elig.reasons.join('; '), 200)}`}`,
+      `Check result: ${VERIFICATION_LABEL[s.verificationState]}${elig.eligible ? ' · can be used' : ` · can’t be used: ${truncate(elig.reasons.join('; '), 200)}`}`,
     ];
     if (detailed) {
       lines.push(
         `Endpoint: \`${truncate(redactUrl(s.url), 120)}\`${s.effectiveHost ? ` → ${s.effectiveHost}` : ''}`,
         `Bitrates: advertised ${s.advertisedBitrateKbps ?? '—'} · codec ${s.codecBitrateKbps ?? '—'} · measured ${s.measuredBitrateKbps ?? '—'} kbps`,
-        `Probed ${ts(s.lastProbeAt)} · last OK ${ts(s.lastSuccessAt)} · last failure ${ts(s.lastFailureAt)}${s.lastFailureCode ? ` (${s.lastFailureCode})` : ''}`,
-        `Health ${Math.round(s.healthScore)}/100 · startup ${s.startupMs !== null ? `${s.startupMs} ms` : '—'}${s.icyName ? ` · stream name "${truncate(s.icyName, 60)}"` : ''}`,
-        `Provenance: ${s.provenance}${s.rightsStatus !== 'unreviewed' ? ` · rights ${s.rightsStatus}` : ''}`,
+        `Last checked ${ts(s.lastProbeAt)} · last worked ${ts(s.lastSuccessAt)} · last failed ${ts(s.lastFailureAt)}${s.lastFailureCode ? ` (${s.lastFailureCode})` : ''}`,
+        `Health ${Math.round(s.healthScore)}/100 · start-up ${s.startupMs !== null ? `${s.startupMs} ms` : '—'}${s.icyName ? ` · stream name "${truncate(s.icyName, 60)}"` : ''}`,
+        `Where it came from: ${PROVENANCE_LABEL[s.provenance]}${s.rightsStatus !== 'unreviewed' ? ` · rights: ${s.rightsStatus}` : ''}`,
       );
     }
     const name = truncate(`${s.label ?? 'Source'} \`${s.id}\`${role}`, 256);
@@ -282,4 +308,11 @@ export function infoEmbed(title: string, message: string, color: number = COLOR.
     .setColor(color)
     .setTitle(truncate(title, 256))
     .setDescription(truncate(message, 4000));
+}
+
+/** One stats line for the event-loop delay. Voice packets go out every 20 ms from that loop. */
+export function loopDelayLine(s: LoopDelaySummary | null): string {
+  if (!s) return 'Event-loop delay: not measured yet';
+  const verdict = s.maxMs >= 20 ? ' (high enough to send voice packets late)' : '';
+  return `Event-loop delay (last ${s.windowSec} s): typical ${s.meanMs} ms · 99% under ${s.p99Ms} ms · worst ${s.maxMs} ms${verdict}`;
 }

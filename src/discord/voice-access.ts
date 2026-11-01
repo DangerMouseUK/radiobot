@@ -27,7 +27,7 @@ export async function resolveVoiceTarget(
   if (settings.allowedVoiceChannelIds.length > 0 && !settings.allowedVoiceChannelIds.includes(channel.id)) {
     throw new RadioError(
       'VOICE_PERMISSION',
-      `<#${channel.id}> is not an approved radio voice channel on this server.`,
+      `<#${channel.id}> is not one of the voice channels the radio may use on this server.`,
     );
   }
   const problem = botVoicePermissionProblem(guild, channel);
@@ -43,7 +43,7 @@ export function botVoicePermissionProblem(guild: Guild, channel: VoiceChannel): 
   if (!perms?.has(PermissionFlagsBits.ViewChannel)) missing.push('View Channel');
   if (!perms?.has(PermissionFlagsBits.Connect)) missing.push('Connect');
   if (!perms?.has(PermissionFlagsBits.Speak)) missing.push('Speak');
-  if (missing.length > 0) return `I am missing ${missing.join(', ')} in <#${channel.id}>.`;
+  if (missing.length > 0) return `I need these permissions in <#${channel.id}>: ${missing.join(', ')}.`;
   if (!channel.joinable) return `<#${channel.id}> is full or I cannot join it.`;
   return null;
 }

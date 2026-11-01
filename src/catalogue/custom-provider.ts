@@ -73,7 +73,7 @@ export class CustomStationService {
   ): Promise<{ station: Station; report: ProbeReport }> {
     const name = cleanText(input.name, 60);
     if (!name || name.length < 2)
-      throw new RadioError('URL_INVALID', 'Please give the station a name (2–60 characters).');
+      throw new RadioError('URL_INVALID', 'The station name must be 2–60 characters long.');
     if (this.#repo.countCustomStations(guildId) >= this.#maxPerGuild) {
       throw new RadioError(
         'CUSTOM_STATION_LIMIT',
@@ -123,7 +123,7 @@ export class CustomStationService {
       this.#repo.deleteCustomStation(guildId, stationId);
       throw new RadioError(
         report.outcome.failureCode ?? 'PROBE_FAILED',
-        `That stream could not be verified: ${report.outcome.failureDetail ?? 'unknown error'}. Nothing was added.`,
+        `That stream failed its check, so nothing was added. Reason: ${report.outcome.failureDetail ?? 'unknown'}`,
       );
     }
     return { station: this.#repo.getStation(stationId)!, report };
@@ -140,7 +140,7 @@ export class CustomStationService {
     }
     const name = patch.name !== undefined ? cleanText(patch.name, 60) : undefined;
     if (name !== undefined && (!name || name.length < 2)) {
-      throw new RadioError('URL_INVALID', 'Station names must be 2–60 characters.');
+      throw new RadioError('URL_INVALID', 'The station name must be 2–60 characters long.');
     }
     // Validate everything before changing anything, and apply the other fields only once a new URL
     // has passed its probe, so a rejected edit leaves the station exactly as it was.
@@ -155,7 +155,11 @@ export class CustomStationService {
     let report: ProbeReport | null = null;
     if (url) {
       const source = this.#repo.listSources(stationId)[0];
-      if (!source) throw new RadioError('INTERNAL', 'The custom station has no source record.');
+      if (!source)
+        throw new RadioError(
+          'INTERNAL',
+          'This custom station has no stream saved. Remove it and add it again.',
+        );
       // Restored as it was if the new URL fails, so a bad edit costs the old source no evidence.
       const previous = this.#repo.snapshotSource(source.id)!;
       this.#repo.upsertSeedSource({
@@ -181,7 +185,7 @@ export class CustomStationService {
         restore();
         throw new RadioError(
           report.outcome.failureCode ?? 'PROBE_FAILED',
-          `The new URL could not be verified (${report.outcome.failureDetail ?? 'unknown error'}); the old URL was kept.`,
+          `The new URL failed its check, so the old URL was kept. Reason: ${report.outcome.failureDetail ?? 'unknown'}`,
         );
       }
     }

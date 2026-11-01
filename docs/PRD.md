@@ -146,7 +146,7 @@ Provenance details for each station are recorded in `catalog/packs/fg/SOURCE_PRO
 - The bundled starter pack (`fg`) has all 63 official Radio FG / Maison FG names (Appendix A), with aliases and six categories.
 - Partial and fuzzy search by name, alias, tag or category (for example `fg`, `chic`, `techno`, `ibiza`, `maxximum`, `deep`).
 - `/radio browse` and `/radio list` group stations under pack headings in pack order, with custom stations last. They filter by pack and by category (categories come from the enabled packs), and are paged to fit Discord's component limits.
-- Visible statuses: Available, Degraded, Unverified, Temporarily unavailable, No stream source known, Removed/retired.
+- Visible statuses: Available, Degraded, Unverified, Temporarily unavailable, No stream source known, Retired.
 - Ambiguous input is never resolved silently: only an exact ID, name or alias match, or a single clearly dominant match, plays directly; otherwise the user picks from a list.
 
 **Acceptance:** every pack station is listed with its status; similarly named stations are never substituted; adding a group of stations means adding a pack folder, not code.
@@ -228,7 +228,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
   - `maximum` (default) = the source's own bitrate (codec metadata, then measured, then manifest or advertised), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
   - `balanced` = 128 kbps, or the source's bitrate when lower;
   - `manual` = an admin-set value from 32 kbps up to `MAX_OPUS_BITRATE_KBPS`.
-- The voice channel's bitrate setting is **reported but not used as a cap**. A bot's outgoing stream is taken not to be limited by it, and the plan notes when the target is above it. This rests on the project owner's statement and has **not been verified against a live call** (§18).
+- The voice channel's bitrate setting is **reported but not used as a cap**. A bot's outgoing stream is taken not to be limited by it, and the plan notes when the target is above it. This rests on the project owner's statement. In the one live test, 128 kbps into a 96 kbps channel sounded right, but what a listener receives has **not been measured** (§18).
 - The encoder is rebuilt when the target changes (quality mode or manual bitrate).
 - Opus sources are decoded and re-encoded once (no pass-through in 1.0.0).
 - `/radio quality` states that a higher Opus target cannot restore detail missing from the source.
@@ -303,7 +303,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
   - **the stream**: requested and redirected host with a region hint parsed from the host name (labelled as such), connected IP and port, HLS segment counts and last segment host, codec, live input rate over 10 s and 60 s, and stream-endpoint round trip measured by 5 TCP handshakes to the exact stream IP, with no HTTP request;
   - **the output**: Opus target, the voice channel's setting (not a cap), the Ogg Opus rate pulled by the voice player, and packets per second (about 50) and packets sent to Discord;
   - **the Discord connection**: voice endpoint host with region hint and resolved IP, the channel's RTC region, voice WebSocket ping with jitter (`@discordjs/voice` 0.19 no longer measures a UDP round trip), gateway ping, encryption/DAVE mode, failovers, reconnects and encoder PID, and FFmpeg warnings;
-  - **bot health**: process, FFmpeg, User-Agent, per-pack coverage and incidents.
+  - **bot health**: process, FFmpeg, User-Agent, per-pack coverage, incidents, and the event-loop delay (typical, 99th percentile and worst over the last minute). A delay of 20 ms or more is flagged, because voice packets are sent every 20 ms from that loop; the delay is also in the diagnostics endpoint, and a minute with a delay of 50 ms or more is logged as a warning.
 - No telemetry. An optional diagnostics endpoint listens only on 127.0.0.1.
 - A heartbeat file drives the container health check.
 
@@ -421,7 +421,7 @@ Discord voice channel
 
 ### 8.2 Discord bitrates
 
-Discord voice channels have a bitrate setting of up to 96 kbps (no boosts), 128 kbps (level 1), 256 kbps (level 2) or 384 kbps (level 3). Radio Bot treats this as a setting for members' audio, **not a cap on the bot's own stream**: it reports the channel's setting but encodes at its own target (FR-007), up to 510 kbps. This is based on the project owner's statement and **has not been verified against a live call** in 1.0.0. Neither the setting nor the bot's target is a guarantee of what listeners receive. Source and output bitrates are always reported separately.
+Discord voice channels have a bitrate setting of up to 96 kbps (no boosts), 128 kbps (level 1), 256 kbps (level 2) or 384 kbps (level 3). Radio Bot treats this as a setting for members' audio, **not a cap on the bot's own stream**: it reports the channel's setting but encodes at its own target (FR-007), up to 510 kbps. This is based on the project owner's statement. In 1.0.0's one live test it sounded right at 128 kbps in a 96 kbps channel, but what listeners receive **has not been measured**. Neither the setting nor the bot's target is a guarantee of what listeners receive. Source and output bitrates are always reported separately.
 
 ### 8.3 Encoder policy
 
@@ -696,7 +696,7 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 **Open release gates for 1.0.0:**
 
 - **Starter pack: 3 of 63 stations confirmed playable by live probe.** FG DJ RADIO, FG CHIC and FG DANCE were confirmed (`catalog/packs/fg/evidence/probe-2026-10-31.json`). Audio correlation also supports identity for FG DJ RADIO and FG DANCE, while FG CHIC was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed. An end-to-end pipeline check of FG DJ RADIO (safe client → one libopus encode → `@discordjs/voice`, which only demuxed) produced about 486 kbps of Opus against the 510 kbps target, with no leftover process. It was not a Discord call.
-- One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, heard in the Discord client: the direct MP3 source at 128 kbps, one Opus encode at 128 kbps, and DAVE end-to-end encryption negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
+- One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
 - The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
 - No resource benchmarks.
 - Encoding above the voice channel's bitrate setting (up to 510 kbps) rests on the project owner's statement that the setting doesn't cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate a listener receives has **not been measured**.
@@ -882,7 +882,7 @@ The real file declares six categories. `sync` is optional (`null` for packs with
 | Quality rule | Best *verified* source; correctness before bitrate |
 | Transport | Direct streams first; HLS only as a last resort (segmented delivery hurts live playback) |
 | Stream client identity | FFmpeg's `Lavf/<version>` User-Agent (truthful; FFmpeg decodes the audio); no browser imitation, no `Referer`; operator override via `STREAM_USER_AGENT` |
-| Output | 48 kHz stereo Opus, one encode, at the source's bitrate up to `MAX_OPUS_BITRATE_KBPS` (default 510 kbps) in `maximum` mode; the channel setting is reported, not used as a cap (not verified against a live call) |
+| Output | 48 kHz stereo Opus, one encode, at the source's bitrate up to `MAX_OPUS_BITRATE_KBPS` (default 510 kbps) in `maximum` mode; the channel setting is reported, not used as a cap (what listeners receive has not been measured) |
 | Playback limit | One station and voice connection per server |
 | Interface | One `/radio` command with Discord-native menus and buttons; it uses all 25 top-level options Discord allows, so further commands must go into subcommand groups (as `queue` and `source` do) |
 | Bot administration | Server owner or Discord Administrator permission only; DJ roles for playback control |

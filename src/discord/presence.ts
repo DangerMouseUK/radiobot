@@ -92,7 +92,10 @@ export class PresenceUpdater {
     const text = presenceText(this.#d.entries(), this.#d.mode);
     if (text === this.#last) return;
     try {
-      if (this.#d.apply(text)) this.#last = text;
+      if (this.#d.apply(text)) {
+        this.#last = text;
+        this.#log.debug({ text }, 'bot status sent');
+      }
     } catch (err) {
       this.#log.warn({ err: safeErr(err) }, 'could not update the bot status');
     }
