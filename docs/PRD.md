@@ -228,7 +228,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
   - `maximum` (default) = the source's own bitrate (codec metadata, then measured, then manifest or advertised), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
   - `balanced` = 128 kbps, or the source's bitrate when lower;
   - `manual` = an admin-set value from 32 kbps up to `MAX_OPUS_BITRATE_KBPS`.
-- The voice channel's bitrate setting is **reported but not used as a cap**. The setting applies to members' voices, not to a bot's stream, and the plan notes when the target is above it. In a live test, 128 kbps in a 96 kbps channel played correctly; what a listener receives has **not been measured** (§18).
+- The voice channel's bitrate setting is **reported but not used as a cap**. The setting applies to members' voices, not to a bot's stream, and the plan notes when the target is above it. What a listener receives has **not been measured** (§18).
 - The encoder is rebuilt when the target changes (quality mode or manual bitrate).
 - Opus sources are decoded and re-encoded once (no pass-through in 1.0.0).
 - `/radio quality` states that a higher Opus target cannot restore detail missing from the source.
@@ -422,7 +422,7 @@ Discord voice channel
 
 ### 8.2 Discord bitrates
 
-Discord voice channels have a bitrate setting of up to 96 kbps (no boosts), 128 kbps (level 1), 256 kbps (level 2) or 384 kbps (level 3). Radio Bot treats this as a setting for members' audio, **not a cap on the bot's own stream**: it reports the channel's setting but encodes at its own target (FR-007), up to 510 kbps. In a live test, 128 kbps in a 96 kbps channel played correctly; what listeners receive **has not been measured**. Neither the setting nor the bot's target is a guarantee of what listeners receive. Source and output bitrates are always reported separately.
+Discord voice channels have a bitrate setting of up to 96 kbps (no boosts), 128 kbps (level 1), 256 kbps (level 2) or 384 kbps (level 3). Radio Bot treats this as a setting for members' audio, **not a cap on the bot's own stream**: it reports the channel's setting but encodes at its own target (FR-007), up to 510 kbps. What listeners receive **has not been measured**. Neither the setting nor the bot's target is a guarantee of what listeners receive. Source and output bitrates are always reported separately.
 
 ### 8.3 Encoder policy
 
@@ -700,7 +700,7 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 - One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played the starter pack's flagship station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
 - The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
 - Resource use measured for a single stream only; no multi-stream, long-run or ARM measurements.
-- Encoding above the voice channel's bitrate setting (up to 510 kbps): in a live test, 128 kbps in a 96 kbps channel played correctly, but the bitrate a listener receives has **not been measured**.
+- Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate a listener receives has **not been measured**.
 - Rights clearance (§14) and the licence review of the bundled FFmpeg build not done.
 
 ---
