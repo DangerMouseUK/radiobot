@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Db, loadMigrations, type Migration, matchOwner } from '../../src/persistence/db.ts';
 import { GuildRepository } from '../../src/persistence/repositories/guilds.ts';
 import { bootDecision } from '../../src/voice/session-manager.ts';
@@ -322,5 +322,26 @@ describe('backup ownership', () => {
             ['file', owner.uid, owner.gid],
           ],
     );
+  });
+});
+
+describe('statement cache', () => {
+  it('compiles each statement once and reuses it', () => {
+    const db = new Db(':memory:');
+    db.raw.exec('CREATE TABLE t (a INTEGER)');
+    const prepare = vi.spyOn(db.raw, 'prepare');
+    for (let i = 0; i < 5; i++) db.run('INSERT INTO t (a) VALUES (?)', [i]);
+    expect(db.all<{ a: number }>('SELECT a FROM t ORDER BY a').map((r) => r.a)).toEqual([0, 1, 2, 3, 4]);
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM t')?.n).toBe(5);
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM t')?.n).toBe(5);
+    expect(prepare).toHaveBeenCalledTimes(3);
+  });
+
+  it('still sees schema changes made after a statement was cached', () => {
+    const db = new Db(':memory:');
+    db.raw.exec('CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1)');
+    expect(db.get('SELECT * FROM t')).toEqual({ a: 1 });
+    db.raw.exec('ALTER TABLE t ADD COLUMN b TEXT');
+    expect(db.get('SELECT * FROM t')).toEqual({ a: 1, b: null });
   });
 });

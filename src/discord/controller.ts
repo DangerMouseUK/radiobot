@@ -50,6 +50,7 @@ import {
   DISCLAIMER,
   errorEmbed,
   infoEmbed,
+  latePacketsLine,
   loopDelayLine,
   nowEmbed,
   qualityEmbed,
@@ -92,6 +93,22 @@ type Cmd = ChatInputCommandInteraction<'cached'>;
 type Comp = MessageComponentInteraction<'cached'>;
 const EPHEMERAL = MessageFlags.Ephemeral;
 
+/** What an interaction was, for the debug log: "command stats", "autocomplete play", "button stop". */
+export function describeInteraction(i: Interaction): string {
+  if (i.isChatInputCommand() || i.isAutocomplete()) {
+    const group = i.options.getSubcommandGroup(false);
+    const sub = i.options.getSubcommand(false);
+    const name = [group, sub].filter(Boolean).join(' ') || i.commandName;
+    return `${i.isAutocomplete() ? 'autocomplete' : 'command'} ${name}`;
+  }
+  if (i.isMessageComponent()) {
+    // Custom IDs are "rb1:<action>:…"; only the action is worth logging.
+    const action = i.customId.split(':')[1] ?? '?';
+    return `${i.isButton() ? 'button' : 'menu'} ${action.slice(0, 16)}`;
+  }
+  return `type ${i.type}`;
+}
+
 interface PendingImport {
   guildId: string;
   userId: string;
@@ -117,12 +134,29 @@ export class RadioController {
         await i.reply({ content: 'Radio Bot only works inside servers.', flags: EPHEMERAL }).catch(() => {});
       return;
     }
+    const started = performance.now();
+    const cpu = process.cpuUsage();
     try {
       if (i.isAutocomplete()) await this.#autocomplete(i);
       else if (i.isChatInputCommand() && i.commandName === 'radio') await this.#command(i);
       else if (i.isMessageComponent()) await this.#component(i);
     } catch (err) {
       await this.#fail(i, err);
+    }
+    // Interactions run on the thread that sends voice packets, so a slow one can make them late.
+    // `ms` includes waiting for Discord; `cpuMs` is the process's CPU time meanwhile, the better
+    // guide to what held the thread up (it includes anything else running at the same moment).
+    if (this.#ctx.logger.isLevelEnabled('debug')) {
+      const used = process.cpuUsage(cpu);
+      this.#ctx.logger.debug(
+        {
+          guildId: i.guildId,
+          interaction: describeInteraction(i),
+          ms: Math.round(performance.now() - started),
+          cpuMs: Math.round((used.user + used.system) / 1000),
+        },
+        'interaction handled',
+      );
     }
   }
 
@@ -726,6 +760,7 @@ export class RadioController {
               `Opus target: ${out ? `${out.targetKbps} kbps (${status.plan?.qualityMode ?? '—'})` : '—'} · voice channel setting ${kbps(out?.channelBitrateKbps)} (not a cap)`,
               `Sent to Discord: ${kbps(out?.kbps10s)} (10 s) · ${kbps(out?.kbps60s)} (60 s) · Ogg Opus pulled by the voice player`,
               `Packets to Discord: ${live.voice?.packetsPerSecond ?? '—'} per second (expect ~50) · ${live.voice?.packetsPlayed ?? '—'} sent on this connection`,
+              latePacketsLine(live.voice?.latePackets, live.voice?.worstPacketGapMs),
             ].join('\n'),
             1024,
           ),

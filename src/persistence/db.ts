@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { chownSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
 import { rootPath } from '../shared/paths.ts';
 
 export type Row = Record<string, SQLInputValue>;
@@ -20,6 +20,7 @@ export interface MigrationResult {
 }
 
 const MIGRATION_FILE = /^(\d{4})_([a-z0-9_]+)\.sql$/;
+const MAX_CACHED_STATEMENTS = 500;
 
 export function loadMigrations(dir = rootPath('migrations')): Migration[] {
   return readdirSync(dir)
@@ -59,6 +60,7 @@ export class Db {
   readonly raw: DatabaseSync;
   readonly path: string;
   #txDepth = 0;
+  readonly #statements = new Map<string, StatementSync>();
 
   constructor(path: string) {
     this.path = path;
@@ -72,18 +74,33 @@ export class Db {
     }
   }
 
+  /**
+   * Compiling a statement costs more than running a small query, and views such as /radio stats run
+   * one per station, all on the thread that sends voice packets. So statements are kept and reused.
+   */
+  #prepare(sql: string): StatementSync {
+    let stmt = this.#statements.get(sql);
+    if (!stmt) {
+      // The SQL is almost all fixed text; the limit only guards against a caller that builds it.
+      if (this.#statements.size >= MAX_CACHED_STATEMENTS) this.#statements.clear();
+      stmt = this.raw.prepare(sql);
+      this.#statements.set(sql, stmt);
+    }
+    return stmt;
+  }
+
   all<T = Row>(sql: string, params: Params = []): T[] {
-    const stmt = this.raw.prepare(sql);
+    const stmt = this.#prepare(sql);
     return (Array.isArray(params) ? stmt.all(...params) : stmt.all(params)) as T[];
   }
 
   get<T = Row>(sql: string, params: Params = []): T | undefined {
-    const stmt = this.raw.prepare(sql);
+    const stmt = this.#prepare(sql);
     return (Array.isArray(params) ? stmt.get(...params) : stmt.get(params)) as T | undefined;
   }
 
   run(sql: string, params: Params = []): { changes: number; lastInsertRowid: number } {
-    const stmt = this.raw.prepare(sql);
+    const stmt = this.#prepare(sql);
     const r = Array.isArray(params) ? stmt.run(...params) : stmt.run(params);
     return { changes: Number(r.changes), lastInsertRowid: Number(r.lastInsertRowid) };
   }

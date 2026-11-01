@@ -1,16 +1,38 @@
 #!/usr/bin/env bash
 # Stand-in for the docker CLI in the lifecycle test: records each call and simulates one
 # radio-bot container. FAKE_PULL_OK=1 makes `compose pull` succeed; FAKE_CRASH=1 makes the
-# container restart-loop like a bot with a bad token. FAKE_COMPOSE_VERSION sets the reported version.
+# container restart-loop like a bot with a bad token. FAKE_COMPOSE_VERSION sets the reported version,
+# and FAKE_PLAYING the number of servers the bot reports playing in. Local images are listed in
+# $FAKE_STATE/images as "repository:tag id", one per line; pull and build add the checked-out version's.
 st=$FAKE_STATE
 echo "docker $*" >>"$st/calls.log"
 now() { date -u +%Y-%m-%dT%H:%M:%S.000000000Z; }
 running() { [ -f "$st/running" ]; }
+REPO=ghcr.io/dangermouseuk/radio-bot
+version() { git describe --tags --exact-match 2>/dev/null || echo dev; }
+add_image() {
+  touch "$st/images"
+  grep -q "^$REPO:$(version) " "$st/images" || echo "$REPO:$(version) sha256:$(version)" >>"$st/images"
+}
 case "$1" in
-  info | image) exit 0 ;;
+  info) exit 0 ;;
+  image)
+    case "$2" in
+      ls) grep -F "${*: -1}:" "$st/images" 2>/dev/null ;;
+      rm) # by "repository:tag" or id; refused while the container uses it
+        line=$(awk -v r="$3" '$1 == r || $2 == r' "$st/images" 2>/dev/null)
+        if [ -z "$line" ] || [ "$line" = "$(cat "$st/current" 2>/dev/null)" ]; then exit 1; fi
+        grep -vxF "$line" "$st/images" >"$st/images.new"
+        mv "$st/images.new" "$st/images"
+        ;;
+    esac
+    exit 0
+    ;;
   inspect)
     running || [ -f "$st/stopped" ] || exit 1
     case "$3" in
+      '{{.Config.Image}}') cut -d' ' -f1 "$st/current" ;;
+      '{{.Image}}') cut -d' ' -f2 "$st/current" ;;
       '{{.State.Status}}') if running; then echo running; else echo exited; fi ;;
       '{{.State.StartedAt}}') cat "$st/started" ;;
       '{{.RestartCount}}')
@@ -26,9 +48,12 @@ case "$1" in
 esac
 case "$1" in
   version) echo "Docker Compose version v${FAKE_COMPOSE_VERSION:-2.40.0}" ;;
-  pull) [ -n "${FAKE_PULL_OK:-}" ] || { echo "manifest unknown" >&2 && exit 1; } ;;
-  build) echo "(built)" ;;
-  up) rm -f "$st/stopped" && touch "$st/running" && now >"$st/started" ;;
+  pull) [ -n "${FAKE_PULL_OK:-}" ] || { echo "manifest unknown" >&2 && exit 1; } && add_image ;;
+  build) echo "(built)" && add_image ;;
+  up)
+    rm -f "$st/stopped" && touch "$st/running" && now >"$st/started"
+    grep "^$REPO:$(version) " "$st/images" >"$st/current"
+    ;;
   restart) now >"$st/started" ;;
   stop) rm -f "$st/running" && touch "$st/stopped" ;;
   down) rm -f "$st/running" "$st/stopped" ;;
@@ -36,6 +61,7 @@ case "$1" in
     case "$*" in
       *backup.js*) echo "Backup written: /app/data/backups/radio-bot-manual-x.sqlite" ;;
       *healthcheck.js*) echo "healthy: ok" ;;
+      *health.json*) echo "{\"at\":\"x\",\"activeStreams\":${FAKE_PLAYING:-0},\"dbOk\":true}" ;;
     esac
     ;;
   cp) dest=${*: -1} && mkdir -p "$dest" && touch "$dest/radio-bot-manual-x.sqlite" ;;

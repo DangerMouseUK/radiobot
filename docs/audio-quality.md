@@ -104,6 +104,7 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 
 - the input and Ogg Opus output rates over 10 s and 60 s;
 - packets per second to Discord, which should be about 50 at 20 ms frames;
+- late packets: how many went out more than 40 ms after the one before since the bot joined, and the longest gap (about 55 ms or more is enough to hear);
 - the stream host and endpoint round trip;
 - the voice connection's WebSocket ping;
 - the encoder PID and the last FFmpeg warnings.

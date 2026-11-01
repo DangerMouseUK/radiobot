@@ -19,6 +19,7 @@ import {
 import type { VoiceBasedChannel } from 'discord.js';
 import { delay } from '../shared/async.ts';
 import { RadioError } from '../shared/errors.ts';
+import { PacketTiming, type PacketTimingSummary } from './packet-timing.ts';
 
 export interface VoiceLinkEvents {
   /** The connection is gone for good (destroyed, kicked, or reconnects exhausted). */
@@ -38,6 +39,8 @@ export interface VoiceLinkStats {
   endpoint: string | null;
   /** Opus packets sent to Discord on this connection. */
   packetsPlayed: number | null;
+  /** Packets sent late while playing since the bot joined, and the longest gap between two. */
+  packetTiming: PacketTimingSummary;
   encryptionMode: string | null;
   status: string;
 }
@@ -85,6 +88,33 @@ export function guardConnection(connection: Pick<VoiceConnection, 'on'>): void {
   });
 }
 
+/** The timer of the link currently using each connection; a newer link on the same connection takes over. */
+const packetTimings = new WeakMap<VoiceConnection, PacketTiming>();
+const timedConnections = new WeakSet<VoiceConnection>();
+
+/**
+ * The player calls `dispatchAudio` every 20 ms while playing, and it returns true when a packet
+ * went out, so wrapping it times every packet for one clock read each. Like the error guard, the
+ * wrapper is added once and stays for the life of the shared connection.
+ */
+export function timePackets(connection: Pick<VoiceConnection, 'dispatchAudio'>): void {
+  const key = connection as VoiceConnection;
+  // If a library update renames the method, playback must not break; the count just stays at 0.
+  if (timedConnections.has(key) || typeof connection.dispatchAudio !== 'function') return;
+  timedConnections.add(key);
+  const dispatch = connection.dispatchAudio.bind(connection);
+  connection.dispatchAudio = () => {
+    const sent = dispatch();
+    if (sent) packetTimings.get(key)?.sent();
+    return sent;
+  };
+}
+
+/** Test seam: makes `timing` the timer for `connection`, as a new link does. */
+export function setPacketTiming(connection: object, timing: PacketTiming): void {
+  packetTimings.set(connection as VoiceConnection, timing);
+}
+
 /**
  * @discordjs/voice-backed link. Self-deafened (no inbound audio, PRD FR-003), unmuted,
  * DAVE end-to-end encryption enabled. Input is already Ogg Opus, so the library only
@@ -102,6 +132,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
   #expectingAudio = false;
   #reconnecting = false;
   #destroyed = false;
+  readonly #timing = new PacketTiming();
 
   private constructor(connection: VoiceConnection, channelId: string) {
     super();
@@ -111,8 +142,11 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: MAX_MISSED_FRAMES },
     });
     this.#subscription = connection.subscribe(this.player);
+    timePackets(connection);
+    packetTimings.set(connection, this.#timing);
 
     this.player.on('stateChange', (oldState, newState) => {
+      if (newState.status !== AudioPlayerStatus.Playing) this.#timing.pause();
       if (
         newState.status === AudioPlayerStatus.Idle &&
         oldState.status !== AudioPlayerStatus.Idle &&
@@ -130,6 +164,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     });
 
     this.#onConnectionState = (_old, state) => {
+      if (state.status !== VoiceConnectionStatus.Ready) this.#timing.pause();
       if (state.status === VoiceConnectionStatus.Disconnected) void this.#reconnect(state);
       else if (state.status === VoiceConnectionStatus.Destroyed) this.#markLost('destroyed');
     };
@@ -154,6 +189,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       /* ignore */
     }
     this.#subscription?.unsubscribe();
+    this.#releaseTiming();
     if (this.#onConnectionState) this.connection.off('stateChange', this.#onConnectionState);
     if (this.#onConnectionError) this.connection.off('error', this.#onConnectionError);
     this.removeAllListeners();
@@ -287,9 +323,14 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       wsPingMs: ping.ws ?? null,
       endpoint,
       packetsPlayed,
+      packetTiming: this.#timing.summary(),
       encryptionMode,
       status: state.status,
     };
+  }
+
+  #releaseTiming(): void {
+    if (packetTimings.get(this.connection) === this.#timing) packetTimings.delete(this.connection);
   }
 
   encryption(): string {
@@ -308,6 +349,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     } catch {
       /* ignore */
     }
+    this.#releaseTiming();
     if (this.connection.state.status !== VoiceConnectionStatus.Destroyed) this.connection.destroy();
     if (this.#onConnectionError) this.connection.off('error', this.#onConnectionError);
     this.#markLost('destroyed');

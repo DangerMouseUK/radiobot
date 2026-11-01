@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **`radio-bot update` now removes old images.** Each update used to leave the previous Docker image behind, about 1 GB per release, which slowly filled small disks: the clean-up looked for a label the published images don't carry, and skipped tagged images anyway. Once the new version is healthy, the update now removes the other versions of the bot's image, including ones left by earlier updates. If the new version doesn't start, the old image is kept so you can go back. Published images are also labelled "Radio Bot" again.
+
+### Added
+
+- **Updates warn before stopping playback.** If the bot is playing in any server, `radio-bot update` says so before it restarts the bot, and asks whether to go ahead: a server only starts playing again by itself when an admin has turned on **Resume after restart** in `/radio config`.
+- **The old version's logs are kept.** Replacing the container deletes its logs, so `radio-bot update` first saves the last 500 lines to the `logs` folder of the install (the newest 5 files are kept).
+- **Late voice packets are counted.** `/radio stats` shows how many voice packets went out more than 40 ms after the one before since the bot joined, and the longest gap, and says when that gap is long enough to hear.
+- At debug level (`LOG_LEVEL=debug`), every command, button and suggestion is logged with how long it took and the CPU time the bot used meanwhile, so a delay can be matched to what caused it.
+
+### Changed
+
+- `/radio stats`, `/radio browse` and station suggestions do less work: database statements are now compiled once and reused, which made the stats panel's station count about 3.5 times faster in a local test. These all run on the same thread that sends voice packets.
+- The systemd unit gives the bot a slightly higher CPU priority than ordinary jobs (`Nice=-5`). Docker installs can't do this without running the container as root, so they keep normal priority.
+- The docs say that a one-core host is enough, but that other scheduled jobs on the same machine can cause brief audio hiccups.
+
 ## [1.0.3] - 2026-11-01
 
 ### Changed

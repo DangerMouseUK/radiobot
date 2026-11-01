@@ -155,6 +155,9 @@ export interface SessionLiveStats {
     packetsPlayed: number | null;
     /** Packets per second sent to Discord over the last sampling window (expect ~50). */
     packetsPerSecond: number | null;
+    /** Packets sent more than 40 ms after the one before, while playing, and the longest gap. */
+    latePackets: number;
+    worstPacketGapMs: number | null;
     ws: LatencySummary | null;
   };
 }
@@ -1064,6 +1067,8 @@ export class GuildSession {
               encryptionMode: v.encryptionMode,
               packetsPlayed: v.packetsPlayed,
               packetsPerSecond,
+              latePackets: v.packetTiming.late,
+              worstPacketGapMs: v.packetTiming.worstGapMs,
               ws: this.#wsPing.summary(),
             }
           : null,

@@ -43,7 +43,7 @@ There are no other services. State lives in one SQLite file. All network traffic
 
 `createApp(config, logger)` constructs everything in this order:
 
-1. **Database.** `new Db(DATABASE_PATH)` opens SQLite with WAL, foreign keys and `busy_timeout`, then runs `db.migrate()`. If the database already has a schema and migrations are pending, a backup is written to `data/backups/` first.
+1. **Database.** `new Db(DATABASE_PATH)` opens SQLite with WAL, foreign keys and `busy_timeout`, then runs `db.migrate()`. If the database already has a schema and migrations are pending, a backup is written to `data/backups/` first. `Db` keeps each prepared statement and reuses it, since compiling one costs more than running a small query and views such as `/radio stats` run one per station on the thread that sends voice packets.
 2. **Repositories.** `StationRepository`, `GuildRepository` (seeded with the installation defaults for quality mode, idle mode and resume) and `MetaRepository` (a key/value store for things like the component-signing secret and command hashes).
 3. **Station packs.** `PackRegistry.load()` loads and validates every pack folder in `catalog/packs/` and in `EXTRA_PACKS_DIR`. It applies `ENABLED_PACKS` and `DISABLED_PACKS` on top of each pack's `enabledByDefault`. `seedPacks()` then runs in a single transaction and upserts each pack's `stations.json` and `sources.json`. Seeding:
    - keeps runtime evidence and guild data;
@@ -98,7 +98,7 @@ There are no other services. State lives in one SQLite file. All network traffic
 
 ### `voice/`: sessions and the playback state machine
 
-- **`link.ts`** (`DiscordVoiceLink`) joins the voice channel through `@discordjs/voice` with `selfDeaf: true`, `selfMute: false` and `daveEncryption: true`. It creates an `AudioResource` with `inputType: StreamType.OggOpus` and no inline volume. On disconnect it tries to reconnect up to 5 times. Close code 4014 that does not reconnect within 5 s is treated as a kick. `encryption()` reports whether DAVE was negotiated, using the voice privacy code.
+- **`link.ts`** (`DiscordVoiceLink`) joins the voice channel through `@discordjs/voice` with `selfDeaf: true`, `selfMute: false` and `daveEncryption: true`. It creates an `AudioResource` with `inputType: StreamType.OggOpus` and no inline volume. On disconnect it tries to reconnect up to 5 times. Close code 4014 that does not reconnect within 5 s is treated as a kick. `encryption()` reports whether DAVE was negotiated, using the voice privacy code. `timePackets()` wraps the connection's `dispatchAudio` once, so the link's `PacketTiming` (`packet-timing.ts`) counts packets sent more than 40 ms after the one before while playing, and the longest gap; a pause or a voice reconnect resets the gap. `stats()` reports them for `/radio stats`.
 - **`state-machine.ts`** defines the PRD §9.1 states: `IDLE`, `JOINING`, `CONNECTED`, `BUFFERING`, `PLAYING`, `SWITCHING`, `RECOVERING`, `FAILING_OVER`, `STOPPING`, `LEAVING` and `ERROR`, with the allowed transitions. An unexpected transition is logged, not thrown.
 - **`session.ts`** (`GuildSession`) handles one server. It owns at most one voice link and one pipeline. It keeps the **desired state** (persisted in `guild_playback_state`: `idle`, `playing`, `paused_empty`, `stopped`, `left` or `kicked`) separate from the runtime state. A generation counter means a newer command always supersedes an older one that is still pending. Overlapping play requests share a single voice connection attempt, so a quick double-click doesn't open two connections. A `/radio stop` that arrives while the bot is still joining is honoured: nothing plays once the join completes. `/radio join` to a different channel while a station is playing moves the bot and brings the station along. The session also contains:
   - the stall watchdog;
@@ -168,7 +168,7 @@ There are no other services. State lives in one SQLite file. All network traffic
 - **`logger.ts`**: Pino, writing JSON lines to stdout.
 - **`metrics.ts`**: in-process counters and a ring buffer of 200 incidents. Repeats of the same code are coalesced within 5 minutes, and each incident is tagged with a fault domain: `upstream`, `discord`, `bot`, `operator` or `user`.
 - **`health.ts`**: the heartbeat file (`health.json` next to the database), read by `scripts/healthcheck.ts`, and the optional local diagnostics server.
-- **`event-loop.ts`** (`EventLoopMonitor`): Node's event-loop delay, sampled every 10 ms and summarised per minute (typical, 99th percentile, worst). Voice packets are sent every 20 ms from that loop, so `/radio stats` flags a delay of 20 ms or more, a minute with 50 ms or more is logged as a warning, and the diagnostics endpoint includes the figures.
+- **`event-loop.ts`** (`EventLoopMonitor`): Node's event-loop delay, sampled every 10 ms and summarised per minute (typical, 99th percentile, worst). Voice packets are sent every 20 ms from that loop, so `/radio stats` flags a delay of 20 ms or more, a minute with 50 ms or more is logged as a warning (other minutes at debug level), and the diagnostics endpoint includes the figures. `RadioController.handle()` logs every interaction at debug level with `describeInteraction()`, the time taken and the process's CPU time meanwhile.
 
 ## Data flow: `/radio play`
 

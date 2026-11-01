@@ -363,6 +363,7 @@ cmd_update() {
     return
   fi
   if [ "$(container_state)" = running ]; then
+    warn_if_playing || die "Cancelled; nothing was changed."
     step "Backing up the database first"
     compose exec -T "$SERVICE" node dist/scripts/backup.js
   fi
@@ -372,18 +373,65 @@ cmd_update() {
   else
     git -c advice.detachedHead=false checkout --quiet "$to" || die "Version $to was not found."
   fi
-  # The rest runs from the updated copy of this script.
-  exec bash "$SELF" __finish-update "$from"
+  # The rest runs from the updated copy of this script. "warned" tells it the warning was shown.
+  exec bash "$SELF" __finish-update "$from" warned
 }
 
+# Updates started by an older copy of this script arrive here without the warning, so it is shown now.
 cmd_finish_update() {
   ensure_docker
+  [ "${2:-}" = warned ] || [ "$(container_state)" != running ] || warn_if_playing no-ask || true
   get_image
+  save_logs "${1:-}"
   step "Restarting Radio Bot"
   compose up -d --remove-orphans
-  "${DOCKER[@]}" image prune -f --filter "label=org.opencontainers.image.title=Radio Bot" >/dev/null 2>&1 || true
   wait_until_healthy || exit 1
+  remove_old_images
   ok "Updated ${1:-} → $(current_version). Read what changed in CHANGELOG.md."
+}
+
+playing_count() { # servers the running bot is playing in, from its heartbeat file
+  compose exec -T "$SERVICE" cat /app/data/health.json 2>/dev/null |
+    grep -oE '"activeStreams":[0-9]+' | cut -d: -f2 || true
+}
+
+warn_if_playing() { # warn_if_playing [no-ask]; fails if the user decides not to update
+  local n servers=servers
+  n=$(playing_count)
+  if [ -z "$n" ] || [ "$n" -eq 0 ]; then return 0; fi
+  if [ "$n" -eq 1 ]; then servers=server; fi
+  warn "Radio Bot is playing in $n $servers. Updating restarts it, and a server only starts playing again by itself if an admin turned on \"Resume after restart\" in /radio config."
+  if [ -n "${1:-}" ] || ! has_tty; then return 0; fi
+  confirm "Update now?" y
+}
+
+# The container's logs go when it is replaced, so the old version's last lines are kept in logs/.
+save_logs() { # save_logs VERSION
+  [ "$(container_state)" != missing ] || return 0
+  local file
+  mkdir -p logs && chmod 700 logs
+  file="logs/radio-bot-${1:-old}-$(date +%Y%m%d-%H%M%S).log"
+  (umask 077 && compose logs --no-color --no-log-prefix --tail=500 "$SERVICE" >"$file" 2>&1) || true
+  # Keep the newest 5. The names are ours and have no spaces, so ls is safe here.
+  # shellcheck disable=SC2012
+  ls -1t logs/radio-bot-*.log 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done || true
+  ok "Saved the last 500 log lines to $DIR/$file"
+}
+
+# Every update downloads a new image of about 1 GB, so older ones are removed once the new version
+# is healthy. Images a container still uses (even a stopped one) are kept: docker refuses to remove them.
+remove_old_images() {
+  local image keep repo ref id removed=0
+  image=$("${DOCKER[@]}" inspect -f '{{.Config.Image}}' "$SERVICE" 2>/dev/null) || return 0
+  keep=$("${DOCKER[@]}" inspect -f '{{.Image}}' "$SERVICE" 2>/dev/null) || return 0
+  repo=${image%@*}
+  case "${repo##*/}" in *:*) repo=${repo%:*} ;; esac
+  while read -r ref id; do
+    if [ -z "$id" ] || [ "$id" = "$keep" ]; then continue; fi
+    case "$ref" in *:'<none>') ref=$id ;; esac
+    if "${DOCKER[@]}" image rm "$ref" >/dev/null 2>&1; then removed=$((removed + 1)); fi
+  done < <("${DOCKER[@]}" image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$repo" 2>/dev/null || true)
+  [ "$removed" -eq 0 ] || ok "Removed $removed older Radio Bot image(s) to free disk space."
 }
 
 cmd_backup() {

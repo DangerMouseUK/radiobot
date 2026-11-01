@@ -45,6 +45,7 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
       wsPingMs: 20,
       endpoint: 'c-lhr05-test.discord.media:443',
       packetsPlayed: 0,
+      packetTiming: { late: 2, worstGapMs: 57 },
       encryptionMode: 'aead',
       status: 'ready',
     };

@@ -50,7 +50,7 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 | Network | Outbound only, including UDP for Discord voice; no open ports | |
 | Bandwidth | Each playing server uses the station's bitrate in and about the same out: roughly 60–70 MB per hour each way at 128 kbps, and up to about 230 MB per hour out at the 510 kbps maximum | |
 
-Measured on a small cloud server, one stream at 128 kbps used about 8% of one CPU core and about 200 MB of memory in total (the bot plus its FFmpeg process). Each extra stream adds roughly the same CPU and about 60 MB, so the default limit of 3 streams (`MAX_ACTIVE_GUILD_STREAMS`) fits comfortably within the minimum. These figures haven't been measured on a Raspberry Pi or over long periods yet.
+Measured on a small cloud server, one stream at 128 kbps used about 8% of one CPU core and about 200 MB of memory in total (the bot plus its FFmpeg process). Each extra stream adds roughly the same CPU and about 60 MB, so the default limit of 3 streams (`MAX_ACTIVE_GUILD_STREAMS`) fits comfortably within the minimum. These figures haven't been measured on a Raspberry Pi or over long periods yet. A one-core host is enough, but other scheduled jobs on the same machine (system stats collectors, `docker stats` loggers, backups) can cause brief audio hiccups: voice packets go out every 20 ms, and a burst of other work can make a few leave late.
 
 ## Quick start
 
@@ -167,7 +167,7 @@ Radio never ends, so the queue moves only when you skip.
 `/radio stats` shows:
 
 - **Stream input:** the requested host, the host it redirected to (with a region hint such as "Europe"), the connected IP and port, codec, input bitrate over 10 s and 60 s, HLS segment counts, and TCP round-trip time and jitter to the stream server. The round trip is measured from connection handshakes only; no extra stream request is made.
-- **Output to Discord:** the Opus target, the channel's bitrate setting for reference, the Ogg Opus rate actually being sent over 10 s and 60 s, and packets per second (normally about 50).
+- **Output to Discord:** the Opus target, the channel's bitrate setting for reference, the Ogg Opus rate actually being sent over 10 s and 60 s, packets per second (normally about 50), and late packets: how many went out more than 40 ms after the one before since the bot joined, and the longest gap. Listeners start to hear a gap of about 55 ms or more as a small cut with a slow-down and speed-up, and the panel says so.
 - **Discord voice connection:** the voice server's host name and IP with a region hint, the channel's RTC region, voice WebSocket ping with jitter, gateway ping, encryption and DAVE, and reconnect and failover counts.
 - **Bot health:** the process, FFmpeg, the User-Agent in use, per-pack coverage, recent incidents, and the event-loop delay over the last minute. Voice packets go out every 20 ms from that loop, so a delay of 20 ms or more means packets left late, which listeners hear as a short drop and a catch-up.
 
@@ -293,7 +293,7 @@ Version **1.0.3** is the current release; 1.0.0 was the first public release. Li
 - **Encoding above the channel's bitrate setting:** in the live test the bot sent 128 kbps into a channel set to 96 kbps and it sounded right, but the bitrate a listener's client actually receives hasn't been measured.
 - **Resource use is measured for one stream only** (see [Requirements](#requirements)): about 8% of one CPU core and about 200 MB of memory at 128 kbps. Several streams at once, long runs, and a Raspberry Pi haven't been measured yet.
 - **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
-- **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker, and were exercised on Ubuntu 24.04 (WSL). They haven't yet been run against real Docker on a fresh Linux server, a Raspberry Pi, macOS or Windows.
+- **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker, and were exercised on Ubuntu 24.04 (WSL). On 1 November 2026, `radio-bot update` took a real Docker install on a 1-vCPU cloud server from 1.0.1 to 1.0.3 (backup first, healthy straight away, settings kept); that run found the old-image clean-up bug fixed in 1.0.4. A fresh install hasn't yet been run against real Docker on a Linux server, a Raspberry Pi, macOS or Windows.
 - **Rights:** no permission has been requested from or granted by any broadcaster. If you operate an instance, that is your responsibility; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
 ## Development

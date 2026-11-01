@@ -63,6 +63,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          # Otherwise the action names the image after the repository ("radiobot").
+          labels: |
+            org.opencontainers.image.title=Radio Bot
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

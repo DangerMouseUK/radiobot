@@ -336,3 +336,12 @@ export function loopDelayLine(s: LoopDelaySummary | null): string {
   const verdict = s.maxMs >= 20 ? ' (high enough to send voice packets late)' : '';
   return `Event-loop delay (last ${s.windowSec} s): typical ${s.meanMs} ms · 99% under ${s.p99Ms} ms · worst ${s.maxMs} ms${verdict}`;
 }
+
+/** One stats line for voice packets that went out late (more than 40 ms after the one before). */
+export function latePacketsLine(late: number | undefined, worstGapMs: number | null | undefined): string {
+  if (late === undefined) return 'Late packets: —';
+  const worst = worstGapMs != null ? ` · longest gap ${worstGapMs} ms` : '';
+  // Listeners start to hear gaps from about 55 ms as a small cut, with a slow-down and speed-up.
+  const verdict = worstGapMs != null && worstGapMs >= 55 ? ' (long enough to be heard)' : '';
+  return `Late packets (over 40 ms apart) since joining: ${late}${worst}${verdict}`;
+}

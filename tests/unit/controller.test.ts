@@ -1,4 +1,5 @@
 import { type APIEmbed, type Interaction, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import pino from 'pino';
 import { describe, expect, it } from 'vitest';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
 import { PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
@@ -733,5 +734,32 @@ describe('/radio help', () => {
     expect(member.text).not.toMatch(/\*\*Admin\*\*/);
     expect(member.text).toMatch(/`\/radio add`/);
     expect(member.ephemeral).toBe(true);
+  });
+});
+
+describe('interaction log', () => {
+  it('logs what each interaction was and how long it took, at debug level only', async () => {
+    const t = setup();
+    const lines: Array<Record<string, unknown>> = [];
+    const capture = { write: (s: string) => lines.push(JSON.parse(s)) };
+    (t.ctx as { logger: unknown }).logger = pino({ level: 'debug' }, capture);
+    await t.command(t.people.owner, { sub: 'status' });
+    await t.command(t.people.owner, { group: 'queue', sub: 'list' });
+    await t.click(t.people.owner, t.ids.make(GUILD, 'stop'));
+    const handled = lines.filter((l) => l.msg === 'interaction handled');
+    expect(handled.map((l) => l.interaction)).toEqual([
+      'command status',
+      'command queue list',
+      'button stop',
+    ]);
+    for (const l of handled) {
+      expect(l.guildId).toBe(GUILD);
+      expect(typeof l.ms).toBe('number');
+      expect(typeof l.cpuMs).toBe('number');
+    }
+    lines.length = 0;
+    (t.ctx as { logger: unknown }).logger = pino({ level: 'info' }, capture);
+    await t.command(t.people.owner, { sub: 'status' });
+    expect(lines.filter((l) => l.msg === 'interaction handled')).toEqual([]);
   });
 });

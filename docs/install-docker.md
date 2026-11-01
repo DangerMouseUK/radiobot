@@ -200,13 +200,17 @@ Don't edit `compose.yaml` itself. Put your changes (a bind mount instead of the 
 
 ## Upgrades
 
-If you installed with the installer, run `radio-bot update`. It backs up the database, switches to the newest release, and restarts. By hand:
+If you installed with the installer, run `radio-bot update`. It warns you if the bot is playing anywhere (playback only resumes by itself where **Resume after restart** is on), backs up the database, switches to the newest release, saves the last 500 log lines of the old container to `logs/` (newest 5 kept), restarts, and once the new version is healthy removes the older `radio-bot` images. By hand:
 
 ```sh
+docker compose logs --tail=500 radio-bot > radio-bot-before-update.log   # replacing the container deletes its logs
 docker compose pull           # or: git pull && docker compose build
 docker compose up -d
 docker compose logs -f radio-bot
+docker image ls ghcr.io/dangermouseuk/radio-bot   # remove old versions with: docker image rm <name:tag>
 ```
+
+Each image is about 1 GB, so remove old ones, or a small disk fills up over a few updates.
 
 On start-up, pending database migrations are applied automatically:
 
