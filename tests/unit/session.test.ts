@@ -96,7 +96,7 @@ class FakePipeline extends EventEmitter {
       }
     }, 5);
   }
-  fail(code: 'STREAM_EOF' | 'FFMPEG_EXIT' = 'STREAM_EOF'): void {
+  fail(code: 'STREAM_EOF' | 'FFMPEG_EXIT' | 'NOT_FOUND' = 'STREAM_EOF'): void {
     this.emit('failed', new RadioError(code, 'boom'));
   }
   stop(): void {
@@ -159,6 +159,7 @@ function setup(
   let opened = 0;
   let closed = 0;
   let connects = 0;
+  const refreshed: Array<{ stationId: string; at: number }> = [];
   const session = new GuildSession({
     guildId: 'g1',
     sources: {
@@ -168,6 +169,7 @@ function setup(
         return selectSource(sources, null, { exclude: o.exclude });
       },
       recordPlaybackSuccess: () => {},
+      refreshStation: (stationId) => refreshed.push({ stationId, at: Date.now() }),
       recordPlaybackFailure: (id) => {
         const n = (failures.get(id) ?? 0) + 1;
         failures.set(id, n);
@@ -233,6 +235,7 @@ function setup(
     notices,
     failures,
     sources,
+    refreshed,
     opened: () => opened,
     closed: () => closed,
     connects: () => connects,
@@ -374,6 +377,25 @@ describe('GuildSession', () => {
 
   it('runs every same-source retry step before the circuit breaker trips', () => {
     expect(CIRCUIT_BREAK_FAILURES).toBe(DEFAULT_TIMINGS.backoff.length + 1);
+  });
+
+  it('starts background re-checks only once the stream has played steadily', async () => {
+    const t = setup();
+    const started = Date.now();
+    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    expect(t.refreshed).toEqual([]); // nothing competes with a stream that is starting up
+    await until(() => t.refreshed.length === 1);
+    expect(t.refreshed[0]!.stationId).toBe('fg:fg-dj-radio');
+    expect(t.refreshed[0]!.at - started).toBeGreaterThanOrEqual(FAST.stableMs!);
+  });
+
+  it('fails over at once when the address is gone (no retries on the same source)', async () => {
+    const t = setup();
+    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    t.pipelines[0]!.fail('NOT_FOUND');
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
+    expect(t.pipelines).toHaveLength(2);
+    expect(t.session.status().failovers).toBe(1);
   });
 
   it('fails over to a verified fallback after repeated failures and says so', async () => {

@@ -65,7 +65,7 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 | Reason shown | Meaning | What to do |
 |---|---|---|
 | not yet probed | No probe has run yet. A probe normally runs automatically when you play. | Admins: run `/radio rescan <station>`. |
-| last probe failed (CODE) | The last probe failed. See the probe codes below. | Wait. The bot re-probes failed sources at most every 10 min, and retries playback every 2 min while playback is wanted. Or rescan. |
+| last probe failed (CODE) | The last probe failed. See the probe codes below. `/radio sources` shows how many checks failed in a row and when the next automatic one is. | Wait: failing sources are re-checked with a growing wait (about 10 min, 1 h, 6 h, 12 h, then once a day), and playback is retried every 2 min while it is wanted. Or rescan, which checks at once. A source that has had no successful check for a week is **paused** ("Paused: no successful check for over a week…") and is only tested again when an admin rescans. |
 | station identity not verified | The probe worked, but nothing confirms that this feed carries this station. | An admin can compare it with `/radio rescan <station> compare:true`. The operator (or, for a custom station, a server admin) can review it with `/radio source verify`. See [station-verification.md](station-verification.md#identity-rules). |
 | identity mismatch | The stream names itself as a different catalogue station, or an operator marked it as a mismatch. | Deliberate: the bot never plays a mismatched feed for this station. |
 | cooling down after repeated failures until … | The circuit breaker tripped after 4 consecutive playback failures. | Wait for the cooldown (10 min, doubling up to 2 h), or fix the upstream. |
@@ -79,7 +79,8 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 | Code | Meaning |
 |---|---|
 | `ACCESS_DENIED` | The stream host refused access with HTTP 401, 403 or 451, for the stream itself or for an HLS playlist or segment. This can mean geo-restriction, rights restriction, or a host that only serves certain clients. Retrying the same source is pointless, so the bot moves straight to a fallback.<br><br>By default the bot identifies as FFmpeg's network library, `Lavf/<version>` from the installed FFmpeg. Many hosts that refuse unknown clients accept that, because it is a standard media player's network stack; the starter pack's host is one of them. Check the value in use in `/radio stats`. If you changed `STREAM_USER_AGENT`, clear it to return to FFmpeg's own.<br><br>The bot does not imitate a web browser, sends no `Referer`, and never uses signed or tokenised URLs. A host that still refuses is respected. |
-| `HTTP_STATUS` | The stream server answered with another non-2xx status, such as 404 or 5xx. |
+| `NOT_FOUND` | The address no longer exists (HTTP 404 or 410): the mount was removed or renamed. The source is re-checked after 12 h, then daily, in case it returns; playback fails over to another source at once instead of retrying it. If it stays gone, the pack's maintainer should disable it (`enabled: false` with a `disabledReason`). |
+| `HTTP_STATUS` | The stream server answered with another non-2xx status, such as 5xx. |
 | `HTTP_TIMEOUT` / `HTTP_ERROR` | The server didn't respond in time, or the connection failed. For example, one of the starter pack flagship's HLS addresses redirected and then never answered in the 31 Oct 2026 probe. |
 | `DNS_FAILED` | The host name didn't resolve. |
 | `REDIRECT_LIMIT` | More than 5 redirects. |

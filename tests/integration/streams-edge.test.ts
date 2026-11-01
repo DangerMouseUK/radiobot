@@ -70,6 +70,6 @@ describe('SafeHttpClient status mapping', () => {
     await expect(client.fetchBytes(`${radio.base}/forbidden`, { maxBytes: 1024 })).rejects.toMatchObject({
       code: 'ACCESS_DENIED',
     });
-    await expect(client.fetchText(`${radio.base}/nope`)).rejects.toMatchObject({ code: 'HTTP_STATUS' });
+    await expect(client.fetchText(`${radio.base}/nope`)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

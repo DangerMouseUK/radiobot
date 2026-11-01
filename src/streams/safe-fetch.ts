@@ -259,6 +259,13 @@ export function statusError(status: number): RadioError {
       `The stream host refused access (HTTP ${status}). Radio Bot does not bypass access restrictions.`,
     );
   }
+  // 404 and 410 mean the address itself is gone (a removed or renamed mount), not a passing fault.
+  if (status === 404 || status === 410) {
+    return new RadioError(
+      'NOT_FOUND',
+      `Nothing is at that address any more (HTTP ${status}). It may have moved or been removed.`,
+    );
+  }
   return new RadioError('HTTP_STATUS', `The stream server returned an error (HTTP ${status}).`);
 }
 

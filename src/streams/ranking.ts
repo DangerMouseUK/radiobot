@@ -242,7 +242,7 @@ export function selectSource(
     } else {
       conclusion = 'not-conclusively-determined';
       explanation.push(
-        `Selected ${describe(selected)}; quality versus ${relations.map((x) => `${describe(x.o)} (${x.r.reason})`).join(', ')} is not conclusively determined.`,
+        `Selected ${describe(selected)}. Compared with ${relations.map((x) => `${describe(x.o)} (${x.r.reason})`).join(', ')}.`,
       );
     }
   }
