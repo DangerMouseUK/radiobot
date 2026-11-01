@@ -302,7 +302,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - `/radio status` for everyone. `/radio stats` for Administrators: a private live panel with Refresh and Close buttons. It shows:
   - **the stream**: requested and redirected host with a region hint parsed from the host name (labelled as such), connected IP and port, HLS segment counts and last segment host, codec, live input rate over 10 s and 60 s, and stream-endpoint round trip measured by 5 TCP handshakes to the exact stream IP, with no HTTP request;
   - **the output**: Opus target, the voice channel's setting (not a cap), the Ogg Opus rate pulled by the voice player, and packets per second (about 50) and packets sent to Discord;
-  - **the Discord connection**: voice endpoint host with region hint and resolved IP, the channel's RTC region, voice WebSocket ping and UDP ping with jitter, gateway ping, encryption/DAVE mode, failovers, reconnects and encoder PID, and FFmpeg warnings;
+  - **the Discord connection**: voice endpoint host with region hint and resolved IP, the channel's RTC region, voice WebSocket ping with jitter (`@discordjs/voice` 0.19 no longer measures a UDP round trip), gateway ping, encryption/DAVE mode, failovers, reconnects and encoder PID, and FFmpeg warnings;
   - **bot health**: process, FFmpeg, User-Agent, per-pack coverage and incidents.
 - No telemetry. An optional diagnostics endpoint listens only on 127.0.0.1.
 - A heartbeat file drives the container health check.
@@ -696,10 +696,10 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 **Open release gates for 1.0.0:**
 
 - **Starter pack: 3 of 63 stations confirmed playable by live probe.** FG DJ RADIO, FG CHIC and FG DANCE were confirmed (`catalog/packs/fg/evidence/probe-2026-10-31.json`). Audio correlation also supports identity for FG DJ RADIO and FG DANCE, while FG CHIC was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed. An end-to-end pipeline check of FG DJ RADIO (safe client → one libopus encode → `@discordjs/voice`, which only demuxed) produced about 486 kbps of Opus against the 510 kbps target, with no leftover process. It was not a Discord call.
-- No recorded live Discord end-to-end test or 72-hour soak test. The Discord-side statistics in `/radio stats` (voice endpoint, voice WebSocket and UDP ping, packets per second) are implemented but not yet observed on a live call. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
+- One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, heard in the Discord client: the direct MP3 source at 128 kbps, one Opus encode at 128 kbps, and DAVE end-to-end encryption negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
 - The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
 - No resource benchmarks.
-- Encoding above the voice channel's bitrate setting (up to 510 kbps) is **not verified against a live call**. It rests on the project owner's statement that the setting doesn't cap a bot's stream.
+- Encoding above the voice channel's bitrate setting (up to 510 kbps) rests on the project owner's statement that the setting doesn't cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate a listener receives has **not been measured**.
 - Rights clearance (§14) and the licence review of the bundled FFmpeg build not done.
 
 ---

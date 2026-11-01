@@ -105,7 +105,7 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 - the input and Ogg Opus output rates over 10 s and 60 s;
 - packets per second to Discord, which should be about 50 at 20 ms frames;
 - the stream host and endpoint round trip;
-- the voice connection's WebSocket and UDP ping;
+- the voice connection's WebSocket ping;
 - the encoder PID and the last FFmpeg warnings.
 
 ## Recovery and continuity

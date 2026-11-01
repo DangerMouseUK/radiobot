@@ -712,7 +712,6 @@ export class RadioController {
             [
               `Voice server: \`${endpointHost ?? 'unknown'}\`${where(endpointHost)}${endpointIp ? ` · \`${endpointIp}\`` : ''} · channel region: ${rtcRegion}`,
               `Voice WebSocket ping: ${lat(live.voice?.ws ?? null)}`,
-              `Voice UDP ping: ${lat(live.voice?.udp ?? null)}`,
               `Gateway ping: ${ctx.client.ws.ping >= 0 ? `${ctx.client.ws.ping} ms` : 'not measured yet'}`,
               `Encryption: ${live.voice?.encryption ?? '—'}${live.voice?.encryptionMode ? ` · ${live.voice.encryptionMode}` : ''}`,
               `Failovers ${status.failovers} · voice reconnects ${status.reconnects} · encoder pid ${status.encoderPid ?? '—'}`,

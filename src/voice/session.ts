@@ -148,7 +148,6 @@ export interface SessionLiveStats {
     /** Packets per second sent to Discord over the last sampling window (expect ~50). */
     packetsPerSecond: number | null;
     ws: LatencySummary | null;
-    udp: LatencySummary | null;
   };
 }
 
@@ -238,7 +237,6 @@ export class GuildSession {
   #failingRun = -1;
   #connectedSince: number | null = null;
   #wsPing = new LatencySeries(24);
-  #udpPing = new LatencySeries(24);
   #packetSamples: Array<{ at: number; packets: number }> = [];
   #destroyed = false;
 
@@ -519,7 +517,6 @@ export class GuildSession {
     this.#link = link;
     this.#connectedSince = Date.now();
     this.#wsPing = new LatencySeries(24);
-    this.#udpPing = new LatencySeries(24);
     this.#packetSamples = [];
     link.on('lost', (reason) => this.#onLinkLost(link, reason));
     link.on('reconnected', () => {
@@ -551,14 +548,15 @@ export class GuildSession {
       return this.#streamLimitReached(gen);
     }
     const commands = this.#commands;
-    this.#runAbort?.abort();
-    const abort = new AbortController();
-    this.#runAbort = abort;
     this.#clearTimer('retry');
     this.#clearTimer('stable');
     const wasPlaying = this.#pipeline !== null;
     if (wasPlaying && this.#state === 'PLAYING') this.#setState('SWITCHING');
+    // Tears down the previous run, aborting its probes and requests. The new run's controller is
+    // created afterwards: created first, the teardown would abort it and cancel every start.
     this.#teardownAudio();
+    const abort = new AbortController();
+    this.#runAbort = abort;
     try {
       const linked = await this.#ensureLink(gen, channelId);
       if (!linked) return this.#superseded();
@@ -896,7 +894,6 @@ export class GuildSession {
     if (!this.#link) return;
     const v = this.#link.stats();
     this.#wsPing.add(v.wsPingMs);
-    this.#udpPing.add(v.udpPingMs);
     if (v.packetsPlayed !== null) {
       this.#packetSamples.push({ at: Date.now(), packets: v.packetsPlayed });
       if (this.#packetSamples.length > 13) this.#packetSamples.shift();
@@ -1040,7 +1037,6 @@ export class GuildSession {
               packetsPlayed: v.packetsPlayed,
               packetsPerSecond,
               ws: this.#wsPing.summary(),
-              udp: this.#udpPing.summary(),
             }
           : null,
     };

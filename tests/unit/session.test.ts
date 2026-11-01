@@ -43,7 +43,6 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
   stats() {
     return {
       wsPingMs: 20,
-      udpPingMs: 22,
       endpoint: 'c-lhr05-test.discord.media:443',
       packetsPlayed: 0,
       encryptionMode: 'aead',
@@ -162,7 +161,11 @@ function setup(
   const session = new GuildSession({
     guildId: 'g1',
     sources: {
-      prepareForPlayback: async (_g, _s, o) => selectSource(sources, null, { exclude: o.exclude }),
+      prepareForPlayback: async (_g, _s, o) => {
+        // Like SourceService: probing under an aborted signal is cancelled.
+        if (o.signal?.aborted) throw new RadioError('CANCELLED', 'Playback request superseded.');
+        return selectSource(sources, null, { exclude: o.exclude });
+      },
       recordPlaybackSuccess: () => {},
       recordPlaybackFailure: (id) => {
         const n = (failures.get(id) ?? 0) + 1;
@@ -175,7 +178,9 @@ function setup(
       getSource: (id) => sources.find((s) => s.id === id) ?? null,
     },
     guilds,
-    openInput: async (source) => {
+    openInput: async (source, signal) => {
+      // Like SafeHttpClient: a request whose signal is already aborted never connects.
+      if (signal?.aborted) throw new RadioError('CANCELLED', 'Request aborted.');
       opened++;
       return {
         info: {

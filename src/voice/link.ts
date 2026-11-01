@@ -34,8 +34,6 @@ export interface VoiceLinkEvents {
 export interface VoiceLinkStats {
   /** Round trip of the voice WebSocket heartbeat, ms. */
   wsPingMs: number | null;
-  /** Round trip of the UDP keep-alive to the voice server, ms. */
-  udpPingMs: number | null;
   /** Discord voice server endpoint host (e.g. "c-lhr05-….discord.media"). */
   endpoint: string | null;
   /** Opus packets sent to Discord on this connection. */
@@ -287,7 +285,6 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     }
     return {
       wsPingMs: ping.ws ?? null,
-      udpPingMs: ping.udp ?? null,
       endpoint,
       packetsPlayed,
       encryptionMode,

@@ -149,7 +149,7 @@ There are no other services. State lives in one SQLite file. All network traffic
 `/radio stats` is built by `RadioController.#statsView()` from three sources:
 
 - `GuildSession.liveStats()`: input and output `RateMeter`s over 10 s and 60 s, HLS segment counters and last segment host, and the connected stream IP and port.
-- `DiscordVoiceLink.stats()`: voice endpoint, WebSocket and UDP ping, sampled every 5 s into a `LatencySeries` whose jitter is the mean absolute difference between neighbouring samples, and packets sent.
+- `DiscordVoiceLink.stats()`: voice endpoint and WebSocket ping (the voice library no longer measures a UDP round trip), sampled every 5 s into a `LatencySeries` whose jitter is the mean absolute difference between neighbouring samples, and packets sent.
 - `netstats.ts` helpers:
   - `tcpPing()` makes 5 TCP handshakes to the exact stream IP, which is re-checked against the URL policy first. It sends no HTTP request.
   - `regionHint()` turns host-name conventions (`n01-eu2` → Europe, `c-lhr05` → London) into a best-effort label, shown as "from host name".
