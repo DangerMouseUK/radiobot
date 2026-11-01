@@ -29,7 +29,7 @@ node scripts/validate-catalogue.ts # validate every station pack, straight from 
 
 **Definition of done** for any change: `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` succeeds. If you touch `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` must pass too. CI (`.github/workflows/ci.yml`) runs all of these, then builds the Docker image and smoke-tests it (FFmpeg has `libopus`; a missing token exits with code 78).
 
-The tests need FFmpeg and FFprobe. They use `ffmpeg-static` / `ffprobe-static` from the dev dependencies, or a system FFmpeg via `FFMPEG_PATH` / `FFPROBE_PATH`. The tests never touch the real network, real radio stations or Discord.
+The tests need FFmpeg and FFprobe. They use `ffmpeg-static` / `ffprobe-static` from the dev dependencies, or a system FFmpeg via `FFMPEG_PATH` / `FFPROBE_PATH`. **On Linux, use the system FFmpeg** (`FFMPEG_PATH=/usr/bin/ffmpeg FFPROBE_PATH=/usr/bin/ffprobe pnpm test`): `ffmpeg-static`'s Linux build crashes while decoding the HLS fixtures, which is why CI installs the distro FFmpeg, as the Docker image does. The tests never touch the real network, real radio stations or Discord.
 
 ## TypeScript and style
 

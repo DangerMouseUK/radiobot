@@ -7,7 +7,7 @@ import { backoffDelayMs, cooldownMs } from '../../src/shared/backoff.ts';
 import { RateLimiter } from '../../src/shared/rate-limit.ts';
 import { redactText, redactUrl } from '../../src/shared/redact.ts';
 import { slugify } from '../../src/shared/text.ts';
-import { codecLabel, parseFfprobeOutput } from '../../src/streams/probe.ts';
+import { codecLabel, parseFfprobeOutput, wholePacketsEnd } from '../../src/streams/probe.ts';
 import { canTransition } from '../../src/voice/state-machine.ts';
 import { makeSource, memoryDb } from '../helpers.ts';
 
@@ -189,6 +189,16 @@ describe('ffprobe interpretation', () => {
     expect(
       parseFfprobeOutput({ streams: [{ codec_type: 'audio', codec_name: 'aac' }] }).measuredBitrateKbps,
     ).toBeNull();
+  });
+
+  it('stops the decode check before the cut-off frame at the end of the sample', () => {
+    const packets = [{ pos: '0' }, { pos: '418' }, { pos: '836' }, { pos: '1254' }];
+    expect(wholePacketsEnd({ packets }, 1400)).toBe(1254);
+    // No positions, or an implausible one, means the whole sample is decoded as before.
+    expect(wholePacketsEnd({ packets: [{ size: '418' }] }, 1400)).toBe(1400);
+    expect(wholePacketsEnd({ packets: [{ pos: '100' }] }, 1400)).toBe(1400);
+    expect(wholePacketsEnd({ packets: [{ pos: '9999' }] }, 1400)).toBe(1400);
+    expect(wholePacketsEnd({}, 1400)).toBe(1400);
   });
 });
 

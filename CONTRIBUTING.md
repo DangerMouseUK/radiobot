@@ -17,7 +17,7 @@ You need:
 
 - **Node.js 24.17 or newer.** `package.json` enforces it with `engines`. The code runs straight from `.ts` files through Node's type stripping (`pnpm dev`, CI's catalogue check) and uses the built-in `node:sqlite`.
 - **pnpm.** The version is pinned in `packageManager`. Run `corepack enable` and Node will provide the right one.
-- **FFmpeg and FFprobe with `libopus`,** for playback and for the stream integration tests. `ffmpeg-static` and `ffprobe-static` are dev dependencies for local tests, or you can use a system FFmpeg and set `FFMPEG_PATH` and `FFPROBE_PATH`.
+- **FFmpeg and FFprobe with `libopus`,** for playback and for the stream integration tests. `ffmpeg-static` and `ffprobe-static` are dev dependencies for local tests, or you can use a system FFmpeg and set `FFMPEG_PATH` and `FFPROBE_PATH`. On Linux, point the tests at the system FFmpeg (`FFMPEG_PATH=/usr/bin/ffmpeg FFPROBE_PATH=/usr/bin/ffprobe pnpm test`), because the `ffmpeg-static` Linux build crashes on the HLS fixtures.
 
 ```sh
 corepack enable

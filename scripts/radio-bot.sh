@@ -66,8 +66,9 @@ resolve() { # follows symlinks without relying on GNU readlink -f
 
 SELF=$(resolve "${BASH_SOURCE[0]}")
 DIR=$(dirname "$(dirname "$SELF")")
-[ -f "$DIR/compose.yaml" ] && [ -f "$DIR/.env.example" ] ||
+if [ ! -f "$DIR/compose.yaml" ] || [ ! -f "$DIR/.env.example" ]; then
   die "This script must stay in the scripts/ folder of a Radio Bot checkout ($DIR looks wrong)."
+fi
 START_DIR=$PWD # where the user ran the command, for file names they type
 cd "$DIR"
 

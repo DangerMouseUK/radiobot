@@ -697,7 +697,7 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 
 - **Starter pack: 3 of 63 stations confirmed playable by live probe.** FG DJ RADIO, FG CHIC and FG DANCE were confirmed (`catalog/packs/fg/evidence/probe-2026-10-31.json`). Audio correlation also supports identity for FG DJ RADIO and FG DANCE, while FG CHIC was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed. An end-to-end pipeline check of FG DJ RADIO (safe client → one libopus encode → `@discordjs/voice`, which only demuxed) produced about 486 kbps of Opus against the 510 kbps target, with no leftover process. It was not a Discord call.
 - No recorded live Discord end-to-end test or 72-hour soak test. The Discord-side statistics in `/radio stats` (voice endpoint, voice WebSocket and UDP ping, packets per second) are implemented but not yet observed on a live call. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
-- Docker image not yet published; the three installation profiles not yet smoke-tested.
+- The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
 - No resource benchmarks.
 - Encoding above the voice channel's bitrate setting (up to 510 kbps) is **not verified against a live call**. It rests on the project owner's statement that the setting doesn't cap a bot's stream.
 - Rights clearance (§14) and the licence review of the bundled FFmpeg build not done.
@@ -726,7 +726,7 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | Docker image and documented installation with persistent storage | Done (image not yet published) |
+| 1 | Docker image and documented installation with persistent storage | Done (image published by the release workflow) |
 | 2 | Discord application setup documented; least-privilege permissions | Documented; live test open |
 | 3 | Starter pack includes all official names; nothing falsely shown as playable | Done |
 | 4 | Every station shown as playable has a verified, healthy source with evidence | Enforced by the eligibility gate; 3 starter-pack stations confirmed by live probe, 60 not yet probed |

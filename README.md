@@ -278,13 +278,13 @@ Version **1.0.0** is the first public release. Lint, the strict typecheck and th
 - **"Identity verified" mostly rests on provenance** (the official player maps the stream to the station) plus a successful probe. Audio comparison has confirmed FG DJ RADIO and FG DANCE; other stations haven't been compared or checked by listening. `/radio rescan compare:true` and `/radio source verify` exist to strengthen this.
 - **Encoding above the channel's bitrate setting** hasn't been confirmed on a live call from the receiving side.
 - **Not measured yet:** CPU, memory and bandwidth on real hosting. Upload follows the station's bitrate, up to 510 kbps (about four times a 128 kbps station).
-- **The Docker image hasn't been published to GHCR yet,** and the licence review of the FFmpeg build in the image hasn't been done. Until it is, the installer builds the image on your machine.
+- **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
 - **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker, and were exercised on Ubuntu 24.04 (WSL). They haven't yet been run against real Docker on a fresh Linux server, a Raspberry Pi, macOS or Windows.
 - **Rights:** no permission has been requested from or granted by any broadcaster. If you operate an instance, that is your responsibility; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
 ## Development
 
-You need Node.js 24.17+, pnpm (via `corepack enable`) and FFmpeg with `libopus`. The dev dependencies include `ffmpeg-static` and `ffprobe-static` for the tests.
+You need Node.js 24.17+, pnpm (via `corepack enable`) and FFmpeg with `libopus`. The dev dependencies include `ffmpeg-static` and `ffprobe-static` for the tests; on Linux, run the tests against the system FFmpeg instead (`FFMPEG_PATH=/usr/bin/ffmpeg FFPROBE_PATH=/usr/bin/ffprobe pnpm test`), as CI does.
 
 ```sh
 corepack enable

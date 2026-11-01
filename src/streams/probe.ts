@@ -64,7 +64,24 @@ interface FfprobeJson {
     bit_rate?: string;
   }>;
   format?: { format_name?: string; bit_rate?: string };
-  packets?: Array<{ size?: string; duration_time?: string; pts_time?: string }>;
+  packets?: Array<{ size?: string; duration_time?: string; pts_time?: string; pos?: string }>;
+}
+
+/**
+ * Where the decode check should stop: the start of the sample's last audio packet. The sample
+ * ends wherever the sampling window closed, usually mid-frame, and decoding that cut-off frame
+ * reports an error ("invalid new backstep" for MP3, "Input buffer exhausted" for AAC) that is
+ * the probe's own doing, not a fault in the stream. Falls back to the whole sample when packet
+ * positions are unknown or implausible.
+ */
+export function wholePacketsEnd(json: FfprobeJson, sampleLength: number): number {
+  const packets = json.packets ?? [];
+  for (let i = packets.length - 1; i >= 0; i--) {
+    const pos = toNum(packets[i]!.pos);
+    if (pos === null) continue;
+    return pos >= sampleLength / 2 && pos < sampleLength ? pos : sampleLength;
+  }
+  return sampleLength;
 }
 
 export interface ParsedProbe {
@@ -290,52 +307,26 @@ export async function probeSource(
     if (sample.length < 2048) throw new RadioError('NO_AUDIO_STREAM', 'The stream delivered almost no data.');
 
     const remaining = () => Math.max(2000, budget.totalMs - (Date.now() - started));
-    const [probeRes, decodeRes] = await Promise.all([
-      runWithInput(
-        deps.registry,
-        deps.ffprobePath,
-        [
-          '-v',
-          'error',
-          '-protocol_whitelist',
-          'pipe',
-          '-select_streams',
-          'a:0',
-          '-show_entries',
-          'stream=codec_name,codec_type,profile,sample_rate,channels,channel_layout,bit_rate:format=format_name,bit_rate:packet=size,duration_time',
-          '-of',
-          'json',
-          '-i',
-          'pipe:0',
-        ],
-        sample,
-        { owner, kind: 'ffprobe', timeoutMs: remaining(), maxStdout: 8 * 1024 * 1024, signal: outerSignal },
-      ),
-      runWithInput(
-        deps.registry,
-        deps.ffmpegPath,
-        [
-          '-hide_banner',
-          '-nostdin',
-          '-v',
-          'error',
-          '-protocol_whitelist',
-          'pipe',
-          '-i',
-          'pipe:0',
-          '-map',
-          '0:a:0',
-          '-f',
-          'null',
-          '-progress',
-          'pipe:1',
-          '-nostats',
-          '-',
-        ],
-        sample,
-        { owner, kind: 'decode-check', timeoutMs: remaining(), maxStdout: 1024 * 1024, signal: outerSignal },
-      ),
-    ]);
+    const probeRes = await runWithInput(
+      deps.registry,
+      deps.ffprobePath,
+      [
+        '-v',
+        'error',
+        '-protocol_whitelist',
+        'pipe',
+        '-select_streams',
+        'a:0',
+        '-show_entries',
+        'stream=codec_name,codec_type,profile,sample_rate,channels,channel_layout,bit_rate:format=format_name,bit_rate:packet=size,duration_time,pos',
+        '-of',
+        'json',
+        '-i',
+        'pipe:0',
+      ],
+      sample,
+      { owner, kind: 'ffprobe', timeoutMs: remaining(), maxStdout: 8 * 1024 * 1024, signal: outerSignal },
+    );
 
     let json: FfprobeJson;
     try {
@@ -351,6 +342,31 @@ export async function probeSource(
     Object.assign(out, parsed);
     if (input.info.hls?.container && !out.container?.includes('mp4'))
       out.container = input.info.hls.container;
+
+    const decodeRes = await runWithInput(
+      deps.registry,
+      deps.ffmpegPath,
+      [
+        '-hide_banner',
+        '-nostdin',
+        '-v',
+        'error',
+        '-protocol_whitelist',
+        'pipe',
+        '-i',
+        'pipe:0',
+        '-map',
+        '0:a:0',
+        '-f',
+        'null',
+        '-progress',
+        'pipe:1',
+        '-nostats',
+        '-',
+      ],
+      sample.subarray(0, wholePacketsEnd(json, sample.length)),
+      { owner, kind: 'decode-check', timeoutMs: remaining(), maxStdout: 1024 * 1024, signal: outerSignal },
+    );
 
     const progress = decodeRes.stdout.toString('utf8');
     const times = [...progress.matchAll(/out_time_us=(\d+)/g)].map((m) => Number(m[1]));

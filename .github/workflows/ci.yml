@@ -23,7 +23,13 @@ jobs:
       - run: pnpm lint
       - name: Validate catalogue
         run: node scripts/validate-catalogue.ts
+      # The distro FFmpeg, like the Docker image's. ffmpeg-static's Linux build crashes on the HLS fixtures.
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: pnpm test
+        env:
+          FFMPEG_PATH: /usr/bin/ffmpeg
+          FFPROBE_PATH: /usr/bin/ffprobe
       - run: pnpm build
 
   lifecycle:

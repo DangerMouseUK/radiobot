@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-10-31
+## [1.0.0] - 2026-11-01
 
-First public release of the code. Not yet tagged or published: this entry describes the code as built for 1.0.0 (`package.json` version `1.0.0`); the open items are listed under *Release status* below.
+First public release. The items not yet verified are listed under *Release status* below.
 
 > **Unofficial integration, not endorsed by the broadcaster.** Radio Bot is an independent project. It is not affiliated with, endorsed by or sponsored by Radio FG, Maison FG or any other broadcaster. The bundled starter station pack names their stations only to identify them. The MIT licence covers this project's original code only. The rights and branding release gate (PRD §14) is **not** resolved by this release; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
@@ -98,6 +98,7 @@ A full code review before tagging found and fixed these; each has a regression t
 - **Boot:** resume and autostart skip retired stations and stations of packs switched off with `DISABLED_PACKS`.
 - **Streams:** a probe no longer accepts a direct stream that ends within the sample (such as a short "offline" file). A playlist with any encrypted segment stays refused as encrypted. HLS playlist and segment 401/403/451 report `ACCESS_DENIED`. A probe that runs out of time reports `PROBE_TIMEOUT`, not `CANCELLED`. A duplicated or invalid `icy-metaint` header can no longer let metadata bytes reach FFmpeg. A huge `#EXT-X-TARGETDURATION` is clamped. Source selection no longer depends on database row order, and the explanation no longer calls a conclusive comparison "not conclusively determined".
 - **Discord:** picking from the "Which station did you mean?" list always started playback, whatever command produced it; only `/radio play` now offers the picker (keeping its `channel`), and other commands ask for the exact name. An ambiguous name in `/radio queue add` no longer reports an internal error. Stream track titles are shown as plain text (no links or headings). `/radio rescan` stays within Discord's per-message size limit. `/radio join` and `/radio edit url:` are rate-limited, and importing the same file twice no longer duplicates custom stations, whose probes now count against the add limit.
+- **Probe:** the decode check stops at the start of the sample's last packet. The sample is cut wherever the sampling window closes, usually mid-frame, and MP3 reported that cut as a decode error ("invalid new backstep") on some probes by chance.
 - **Final QA:** changing the idle mode while an empty-channel timer was pending no longer lets the old timer leave or pause. Applying an import now updates the playing stream's quality and idle behaviour at once. The stats panel's Close button is authorised like every other button. `manual` quality with no bitrate set follows the station like `maximum` (it used the 510 kbps limit). Truncated text never splits an emoji. `radio-bot restart` now recreates the container, so edits to `.env` take effect; `radio-bot uninstall` moves earlier backups out of the folder before deleting it, and says when it can't copy the data; `radio-bot restore` accepts a file named from the current folder; the manager refuses Docker Compose older than 2.24, which `compose.yaml` needs; and the installer explains when it asks for the `sudo` password.
 - **Data:** a source moved to another station by a pack update is moved on upgrade, with its old evidence and pins cleared. A failed custom-station URL edit restores the previous source exactly. Import ignores other servers' custom stations and repeated favourites. Removing the bot from a server also clears its command-registration record, so a re-invite registers `/radio` again. Catalogue sync applies all-or-nothing, and keeps its last 50 reports per pack. A manual backup run as root keeps the service user's ownership. The health check reports unhealthy when FFmpeg or `libopus` is missing, and ignores a heartbeat left by a previous run.
 
@@ -111,7 +112,7 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - The stream-side `/radio stats` figures were checked on the real flagship stream: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported. The **Discord-side** figures (voice endpoint, WebSocket and UDP ping, packets per second) are implemented but **not yet observed on a live call**.
 - No live Discord end-to-end test has been recorded: minimum-permission install, audibility from a separate client, station switching with identity checks, permission scenarios, and kick, move and delete handling.
 - No 72-hour soak test has been run.
-- The Docker image has not yet been published to GHCR, and the Docker, Linux (systemd) and container-platform deployments have not been smoke-tested.
+- The release workflow publishes the Docker image to GHCR, but the Docker, Linux (systemd) and container-platform deployments have not been smoke-tested on real hosts.
 - No CPU, memory or bandwidth benchmarks, and no check of DAVE negotiation on live calls.
 - Encoding above the voice channel's bitrate setting (up to 510 kbps) relies on the project owner's statement that the setting does not cap a bot's stream. It **has not been verified against a live call**, and the bitrate received by an external client has not been confirmed.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
