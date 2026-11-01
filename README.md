@@ -57,7 +57,7 @@ Measured on a small cloud server, one stream at 128 kbps used about 8% of one CP
 You need a computer that stays on (Linux, a Raspberry Pi 4/5, a cloud server, or a Mac or Windows PC for trying it out), and a Discord bot token. **New to this? Follow the [beginner's install guide](docs/install.md)**: it walks through every click.
 
 1. **Create a Discord application and bot.** Copy the **Application ID** and the **bot token**; see [docs/install.md, step 1](docs/install.md#1-create-your-discord-bot).
-2. **Run the installer** on Linux or macOS (on Windows, inside WSL; see the guide):
+2. **Run the installer** on Linux or macOS. On Windows, if you don't have a Linux machine to hand, it can run inside WSL (see the guide):
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/DangerMouseUK/radiobot/main/install.sh | bash
@@ -293,7 +293,7 @@ Version **1.0.3** is the current release; 1.0.0 was the first public release. Li
 - **Encoding above the channel's bitrate setting:** in the live test the bot sent 128 kbps into a channel set to 96 kbps and it sounded right, but the bitrate a listener's client actually receives hasn't been measured.
 - **Resource use is measured for one stream only** (see [Requirements](#requirements)): about 8% of one CPU core and about 200 MB of memory at 128 kbps. Several streams at once, long runs, and a Raspberry Pi haven't been measured yet.
 - **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
-- **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker, and were exercised on Ubuntu 24.04 (WSL). `radio-bot update` has also taken a real Docker install from 1.0.1 to 1.0.3 (backup first, healthy straight away, settings kept); that run found the old-image clean-up bug fixed in the next release. A fresh install hasn't yet been run against real Docker on a Linux server, a Raspberry Pi, macOS or Windows.
+- **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker. `radio-bot update` has also taken a real Docker install from 1.0.1 to 1.0.3 (backup first, healthy straight away, settings kept); that run found the old-image clean-up bug fixed in the next release. A fresh install hasn't yet been run against real Docker on a Linux server, a Raspberry Pi, macOS or Windows.
 - **Rights:** no permission has been requested from or granted by any broadcaster. If you operate an instance, that is your responsibility; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
 ## Development
