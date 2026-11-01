@@ -41,7 +41,7 @@ Other scripts:
 | `pnpm validate-catalogue` | Validates every station pack (plus `EXTRA_PACKS_DIR`). Add `--pack <dir>` to check one pack folder, or `--probe <stationId…>` / `--probe --pack-id <id>` for live probes, `--compare` for audio comparisons and `--json <file>` for an evidence report. Runs from `dist/`, so run `pnpm build` first. CI runs `node scripts/validate-catalogue.ts` straight from source. |
 | `pnpm register-commands` | Force guild command registration (optionally pass guild IDs). Needs a build. |
 | `pnpm healthcheck` / `pnpm backup` | Check the heartbeat file / write a manual database backup. Need a build. |
-| `pnpm test:lifecycle` | Linux or WSL only: runs `install.sh` and `scripts/radio-bot.sh` (install, update, backup, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it, plus `shellcheck`. |
+| `pnpm test:lifecycle` | Linux only: runs `install.sh` and `scripts/radio-bot.sh` (install, update, backup, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it, plus `shellcheck`. |
 
 Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`); shared helpers are in `tests/helpers.ts`. Test files are named `*.test.ts`.
 

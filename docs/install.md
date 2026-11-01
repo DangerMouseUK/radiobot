@@ -66,7 +66,7 @@ You don't need to install Docker yourself: if it's missing, the installer offers
 
 ### On Windows
 
-Radio Bot runs inside Windows' built-in Linux environment, WSL.
+If you don't have a Linux machine to hand, Radio Bot can run inside WSL, the Linux environment built into Windows.
 
 1. Install [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/). Keep the **Use WSL 2** option selected. Restart if asked, then open Docker Desktop and wait until it says Docker is running.
 2. Open **PowerShell** and run this. It installs Ubuntu inside Windows, and may ask you to restart:

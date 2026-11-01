@@ -22,7 +22,7 @@ pnpm lint                          # biome check . (CI fails on any finding)
 pnpm format                        # biome format --write .
 pnpm test                          # vitest run: unit + integration
 pnpm test:unit | pnpm test:integration
-pnpm test:lifecycle                # Linux/WSL only: install.sh + radio-bot.sh against a fake docker
+pnpm test:lifecycle                # Linux only: install.sh + radio-bot.sh against a fake docker
 pnpm vitest run tests/unit/session.test.ts      # a single file
 pnpm build                         # tsc -p tsconfig.build.json → dist/
 node scripts/validate-catalogue.ts # validate every station pack, straight from source
