@@ -9,3 +9,4 @@ coverage
 tests/fixtures/generated
 backups
 compose.override.yaml
+logs

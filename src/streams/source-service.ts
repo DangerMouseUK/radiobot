@@ -10,7 +10,7 @@ import type { Logger } from '../observability/logger.ts';
 import type { Metrics } from '../observability/metrics.ts';
 import type { GuildRepository } from '../persistence/repositories/guilds.ts';
 import type { StationRepository } from '../persistence/repositories/stations.ts';
-import { KeyedSemaphore, Semaphore } from '../shared/async.ts';
+import { delay, KeyedSemaphore, Semaphore } from '../shared/async.ts';
 import { cooldownMs } from '../shared/backoff.ts';
 import { errorCode, RadioError } from '../shared/errors.ts';
 import { urlHost } from '../shared/redact.ts';
@@ -107,6 +107,8 @@ export interface SourceServiceDeps {
   probeBudget?: ProbeBudget;
   /** The network check itself; tests replace it to observe scheduling. Defaults to `probeSource`. */
   probeImpl?: typeof probeSource;
+  /** Check results kept per source (PROBE_HISTORY_LIMIT). */
+  probeHistoryLimit?: number;
 }
 
 export interface ProbeReport {
@@ -135,6 +137,10 @@ export class SourceService {
   /** The background check running on each host, which a play's check may interrupt. */
   readonly #backgroundByHost = new Map<string, { sourceId: string; abort: AbortController }>();
   readonly #inflight = new Map<string, Promise<ProbeReport>>();
+  /** Sources waiting for a background check, so a source is never queued twice. */
+  readonly #queued = new Set<string>();
+  /** Background checks wait until this time while a stream is starting somewhere. */
+  #holdUntil = 0;
   readonly #log: Logger;
 
   constructor(deps: SourceServiceDeps) {
@@ -314,6 +320,17 @@ export class SourceService {
     } else {
       state = 'unverified';
     }
+    // One commit for the source's new state and its history row: atomic, and one disk sync.
+    this.#d.stations.transaction(() => this.#recordProbe(source, o, state, decision));
+    return decision;
+  }
+
+  #recordProbe(
+    source: StationSource,
+    o: ProbeOutcome,
+    state: VerificationState,
+    decision: IdentityDecision,
+  ): void {
     this.#d.stations.applyProbePatch(source.id, {
       lastProbeAt: o.startedAt,
       verificationState: state,
@@ -366,7 +383,7 @@ export class SourceService {
       confidence: decision.confidence,
       probeVersion: PROBE_VERSION,
     });
-    return decision;
+    this.#d.stations.pruneSourceHistory(source.id, this.#d.probeHistoryLimit ?? 30);
   }
 
   /**
@@ -493,14 +510,38 @@ export class SourceService {
     if (due.length > 0) this.refreshInBackground(due.map((s) => s.id));
   }
 
-  /** Queues background checks; they run one at a time (and each check at the lowest CPU priority). */
+  /**
+   * Queues background checks; they run one at a time (and each check at the lowest CPU priority).
+   * A source already queued is not queued again, and whether it is still due is decided when its
+   * turn comes: plays in several servers, failovers and reconnects all ask for the same checks.
+   */
   refreshInBackground(sourceIds: string[]): void {
     for (const id of sourceIds) {
+      if (this.#queued.has(id)) continue;
+      this.#queued.add(id);
       this.#background
-        .run(() => this.#probeInBackground(id))
-        .catch((err: unknown) =>
-          this.#log.debug({ sourceId: id, code: errorCode(err) }, 'background probe failed'),
-        );
+        .run(async () => {
+          await this.#waitForQuiet();
+          this.#queued.delete(id);
+          const s = this.#d.stations.getSource(id);
+          if (!s || this.isStationDisabled(s.stationId) || !this.needsProbe(s)) return null;
+          return this.#probeInBackground(id);
+        })
+        .catch((err: unknown) => {
+          this.#queued.delete(id);
+          this.#log.debug({ sourceId: id, code: errorCode(err) }, 'background probe failed');
+        });
+    }
+  }
+
+  /** A stream is starting: background checks wait `ms` so they don't compete with its start-up. */
+  holdBackground(ms: number): void {
+    this.#holdUntil = Math.max(this.#holdUntil, Date.now() + ms);
+  }
+
+  async #waitForQuiet(): Promise<void> {
+    for (let wait = this.#holdUntil - Date.now(); wait > 0; wait = this.#holdUntil - Date.now()) {
+      await delay(wait);
     }
   }
 

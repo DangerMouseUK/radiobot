@@ -14,6 +14,7 @@ import { checkFfmpeg, ProcessRegistry } from './audio/ffmpeg.ts';
 import { CustomStationService } from './catalogue/custom-provider.ts';
 import { PackRegistry, seedPacks } from './catalogue/packs.ts';
 import { CatalogueSync } from './catalogue/sync.ts';
+import { scheduleCatalogueSyncs } from './catalogue/sync-schedule.ts';
 import type { AppConfig } from './config/env.ts';
 import { ComponentIds } from './discord/components/custom-id.ts';
 import { type AppContext, isVisible, RateLimits } from './discord/context.ts';
@@ -88,6 +89,7 @@ export function createApp(
     disabledSourceIds: config.disabledSourceIds,
     brandLabels: (provider) => packs.brandLabels(provider),
     disabledStationIds: config.disabledStationIds,
+    probeHistoryLimit: config.probeHistoryLimit,
   });
 
   // Least privilege: Guilds + GuildVoiceStates only. No message content, members or presence intents.
@@ -191,6 +193,7 @@ export function createApp(
   // The session keeps its voice connection open until the clear finishes (bounded).
   sessions.setLeaveHook((guildId, channelId) => voiceStatus.clear(guildId, channelId));
   const timers: NodeJS.Timeout[] = [];
+  let stopping = false;
   let diagnostics: Server | null = null;
   const hbPath = heartbeatPath(config.databasePath);
 
@@ -216,27 +219,15 @@ export function createApp(
     }
   };
 
+  let syncSchedule: { stop(): void } | null = null;
   const scheduleSync = () => {
     if (!config.catalogSyncEnabled) return;
-    const interval = config.catalogSyncIntervalHours * 3_600_000;
-    // One independent, jittered schedule per pack that declares an official list.
-    for (const pack of catalogueSync.syncablePacks()) {
-      const packId = pack.meta.id;
-      const last = catalogueSync.lastSync(packId).at;
-      const due = last ? Math.max(0, Date.parse(last) + interval - Date.now()) : 10 * 60_000;
-      const jitter = Math.round(Math.random() * 15 * 60_000);
-      const t = setTimeout(async function run() {
-        try {
-          await catalogueSync.sync(packId, 'scheduled');
-        } finally {
-          const next = setTimeout(run, interval + Math.round(Math.random() * 15 * 60_000));
-          next.unref?.();
-          timers.push(next);
-        }
-      }, Math.max(due, 60_000) + jitter);
-      t.unref?.();
-      timers.push(t);
-    }
+    syncSchedule = scheduleCatalogueSyncs({
+      packIds: catalogueSync.syncablePacks().map((p) => p.meta.id),
+      intervalMs: config.catalogSyncIntervalHours * 3_600_000,
+      lastSync: (packId) => catalogueSync.lastSync(packId).at,
+      sync: (packId) => catalogueSync.sync(packId, 'scheduled'),
+    });
   };
 
   async function start(): Promise<void> {
@@ -289,7 +280,12 @@ export function createApp(
         .restoreOnBoot()
         .catch((err: unknown) => logger.error({ err: safeErr(err) }, 'restore failed'));
       presence.update();
-      for (const g of c.guilds.cache.keys()) void controller.refreshPanel(g);
+      // Only servers that have a control panel, one after another: asking every server for its
+      // settings would also create a settings row for each one that never used the bot.
+      for (const g of guilds.guildsWithPanel()) {
+        if (stopping) break;
+        if (c.guilds.cache.has(g)) await controller.refreshPanel(g);
+      }
     });
 
     timers.push(setInterval(heartbeat, 30_000));
@@ -357,7 +353,9 @@ export function createApp(
 
   async function stop(reason: string): Promise<void> {
     logger.info({ reason }, 'shutting down');
+    stopping = true;
     for (const t of timers) clearTimeout(t);
+    syncSchedule?.stop();
     // Clear channel statuses while the bot is still connected (bounded, so shutdown never hangs).
     await Promise.race([voiceStatus.clearAll(), new Promise((r) => setTimeout(r, 2_000))]);
     ctx.eventLoop.stop();

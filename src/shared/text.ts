@@ -42,8 +42,11 @@ export function levenshtein(a: string, b: string): number {
 
 /** 0..1 similarity based on edit distance of normalised strings. */
 export function similarity(a: string, b: string): number {
-  const na = normalizeName(a);
-  const nb = normalizeName(b);
+  return normalizedSimilarity(normalizeName(a), normalizeName(b));
+}
+
+/** `similarity` for names already passed through `normalizeName`. */
+export function normalizedSimilarity(na: string, nb: string): number {
   const max = Math.max(na.length, nb.length);
   return max === 0 ? 1 : 1 - levenshtein(na, nb) / max;
 }

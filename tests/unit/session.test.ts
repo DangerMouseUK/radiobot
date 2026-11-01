@@ -45,6 +45,7 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
       wsPingMs: 20,
       endpoint: 'c-lhr05-test.discord.media:443',
       packetsPlayed: 0,
+      packetTiming: { late: 2, worstGapMs: 57 },
       encryptionMode: 'aead',
       status: 'ready',
     };
@@ -88,6 +89,7 @@ class FakePipeline extends EventEmitter {
       if (this.stopped) return;
       this.stats.firstOutputAt = Date.now();
       this.stats.lastOutputAt = Date.now();
+      this.emit('firstAudio');
       if (behaviour === 'ok') {
         this.#ticker = setInterval(() => {
           this.stats.lastOutputAt = Date.now();
@@ -145,6 +147,7 @@ function setup(
     onLeaving?: (channelId: string) => void;
     mayStream?: () => boolean;
     pipelineThrows?: boolean;
+    prepareThrows?: boolean | (() => boolean);
   } = {},
 ) {
   const { guilds } = memoryDb();
@@ -159,17 +162,23 @@ function setup(
   let opened = 0;
   let closed = 0;
   let connects = 0;
+  let prepares = 0;
   const refreshed: Array<{ stationId: string; at: number }> = [];
+  const holds: number[] = [];
   const session = new GuildSession({
     guildId: 'g1',
     sources: {
       prepareForPlayback: async (_g, _s, o) => {
         // Like SourceService: probing under an aborted signal is cancelled.
         if (o.signal?.aborted) throw new RadioError('CANCELLED', 'Playback request superseded.');
+        prepares++;
+        const throws = typeof opts.prepareThrows === 'function' ? opts.prepareThrows() : opts.prepareThrows;
+        if (throws) throw new Error('database is locked');
         return selectSource(sources, null, { exclude: o.exclude });
       },
       recordPlaybackSuccess: () => {},
       refreshStation: (stationId) => refreshed.push({ stationId, at: Date.now() }),
+      holdBackground: (ms) => holds.push(ms),
       recordPlaybackFailure: (id) => {
         const n = (failures.get(id) ?? 0) + 1;
         failures.set(id, n);
@@ -239,6 +248,8 @@ function setup(
     opened: () => opened,
     closed: () => closed,
     connects: () => connects,
+    prepares: () => prepares,
+    holds,
   };
 }
 
@@ -639,8 +650,8 @@ describe('GuildSession', () => {
     await until(() => t.session.state === 'PLAYING');
   });
 
-  it('still reports superseded when a newer command replaces a failing start', async () => {
-    const t = setup({ behaviour: (_u, n) => (n === 0 ? 'fail-early' : 'ok'), timings: { backoff: [200] } });
+  it('still reports superseded when a newer command replaces a start that is waiting for audio', async () => {
+    const t = setup({ behaviour: () => 'silent', timings: { backoff: [200] } });
     const first = t.session.play('fg:fg-dj-radio', 'voice-1', null);
     await wait(20);
     t.session.stop();
@@ -660,6 +671,74 @@ describe('GuildSession', () => {
     expect(t.pipelines).toHaveLength(1);
     expect(t.session.isStreaming).toBe(false);
     expect(t.notices.filter((n) => n.code === 'STREAM_LIMIT')).toHaveLength(1);
+  });
+
+  it('waits before trying again when a start fails before any source is chosen', async () => {
+    const t = setup({ prepareThrows: true, timings: { noSourceRetryMs: 150 } });
+    const r = await t.session.play('mypack:my-station', 'voice-1', null);
+    expect(r.ok).toBe(false);
+    // Once, not in a tight loop that would starve the thread sending voice packets.
+    expect(t.prepares()).toBe(1);
+    expect(t.session.state).toBe('ERROR');
+    expect(t.failures.size).toBe(0);
+    // ...and it does try again, later.
+    await until(() => t.prepares() === 2);
+  });
+
+  it('does not retry after a stop that comes before the delayed retry', async () => {
+    const t = setup({ prepareThrows: true, timings: { noSourceRetryMs: 100 } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    t.session.stop();
+    await wait(200);
+    expect(t.prepares()).toBe(1);
+  });
+
+  it('waits before trying again when a playing stream fails and its restart fails before choosing a source', async () => {
+    let failNext = false;
+    const t = setup({ prepareThrows: () => failNext, timings: { noSourceRetryMs: 60_000 } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    expect(t.session.state).toBe('PLAYING');
+    failNext = true;
+    t.pipelines[0]!.fail('FFMPEG_EXIT');
+    await wait(150);
+    // A same-source retry or two with back-off, then a wait: never a burst of restarts.
+    expect(t.prepares()).toBeLessThan(5);
+    expect(t.session.state).toBe('ERROR');
+  });
+
+  it("does not blame the previous station's source when the next station fails to start", async () => {
+    let failNext = false;
+    const t = setup({ prepareThrows: () => failNext, timings: { noSourceRetryMs: 60_000 } });
+    await t.session.play('mypack:first', 'voice-1', null);
+    expect(t.session.state).toBe('PLAYING');
+    failNext = true;
+    await t.session.play('mypack:second', 'voice-1', null);
+    expect(t.session.state).toBe('ERROR');
+    expect(t.failures.size).toBe(0);
+  });
+
+  it('waits for first audio by event, holds background checks at each start, and leaves no listener behind', async () => {
+    const t = setup();
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    // Once when the start begins and again when audio flows, so checks wait for it to settle.
+    expect(t.holds).toEqual([FAST.stableMs, FAST.stableMs]);
+    expect(t.pipelines[0]!.listenerCount('firstAudio')).toBe(0);
+    await t.session.play('mypack:other', 'voice-1', null);
+    expect(t.holds).toHaveLength(4);
+    // A start stopped while waiting for audio leaves no listener either.
+    const silent = setup({ behaviour: () => 'silent' });
+    const pending = silent.session.play('mypack:my-station', 'voice-1', null);
+    await until(() => silent.pipelines.length === 1);
+    silent.session.stop();
+    await pending;
+    expect(silent.pipelines[0]!.listenerCount('firstAudio')).toBe(0);
+  });
+
+  it('reports superseded when a newer command replaces a start before its failure is known', async () => {
+    const t = setup({ behaviour: (_u, n) => (n === 0 ? 'fail-early' : 'ok'), timings: { backoff: [200] } });
+    const first = t.session.play('mypack:my-station', 'voice-1', null);
+    t.session.stop();
+    expect((await first).code).toBe('CANCELLED');
   });
 
   it('closes the opened input when the encoder cannot be created', async () => {

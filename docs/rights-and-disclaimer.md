@@ -99,7 +99,7 @@ Radio Bot runs on your hardware, under your Discord application. **You, the oper
 
 ### Logs
 
-Logs are JSON lines written to stdout and kept by your container runtime. They stay on your host. The shipped Compose file keeps at most about 50 MB, rotated. Logs contain server IDs, reason codes, stream host names and timings, and, when someone records an identity review with `/radio source verify`, that person's user ID. Tokens, URL query strings and credentials are redacted. Probe history in the database is pruned to `PROBE_HISTORY_LIMIT` results per source and at most `PROBE_HISTORY_DAYS` days old (30 and 30 by default).
+Logs are JSON lines written to stdout and kept by your container runtime. They stay on your host. The shipped Compose file keeps at most about 50 MB, rotated. Replacing the container deletes its log, so `radio-bot update` first saves the last 500 lines to the install's `logs` folder, readable only by your user (the newest 5 files are kept). Logs contain server IDs, reason codes, stream host names and timings, and, when someone records an identity review with `/radio source verify`, that person's user ID. Tokens, URL query strings and credentials are redacted. Probe history in the database is pruned to `PROBE_HISTORY_LIMIT` results per source and at most `PROBE_HISTORY_DAYS` days old (30 and 30 by default).
 
 ### Exports and backups
 

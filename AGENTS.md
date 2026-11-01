@@ -51,7 +51,8 @@ src/
   index.ts              entry: config → logger → createApp() → start; SIGTERM/SIGINT teardown
   app.ts                wiring: DB, repositories, packs, URL policy, HTTP client, sessions, Discord client, timers
   config/env.ts         every environment variable (Zod); invalid config → exit code 78
-  catalogue/            station packs (packs.ts), official-list sync (sync.ts, sync-adapters.ts),
+  catalogue/            station packs (packs.ts), official-list sync (sync.ts, sync-adapters.ts,
+                        sync-schedule.ts),
                         per-server custom stations (custom-provider.ts), search, shared types
   streams/              THE SOURCE-VALIDATION BOUNDARY: url-policy, safe-fetch (SSRF-safe client),
                         playlists (PLS/M3U/HLS), input (ICY demux, HLS reader), probe (ffprobe + decode),
@@ -59,14 +60,15 @@ src/
                         source-service (orchestrates all of it)
   audio/                ffmpeg.ts (process registry, version checks), encoder.ts (bitrate plan, args),
                         pipeline.ts (stdin → FFmpeg → Ogg Opus, rate meters)
-  voice/                link.ts (@discordjs/voice wrapper + stats), session.ts (per-guild state machine,
-                        watchdog, recovery, failover), session-manager.ts (all guilds, boot/resume)
+  voice/                link.ts (@discordjs/voice wrapper + stats), packet-timing.ts (late-packet count),
+                        state-machine.ts, session.ts (per-guild state machine, watchdog, recovery,
+                        failover), session-manager.ts (all guilds, boot/resume)
   discord/              controller.ts (every interaction), commands/definitions.ts (/radio),
                         permissions/authorize.ts, components/custom-id.ts (signed IDs), ui/ (views, format),
                         register.ts, notifier.ts, presence.ts (bot status),
                         voice-status.ts (voice channel status),
                         voice-access.ts, context.ts
-  persistence/          db.ts (node:sqlite, migrations, backups), repositories/ (stations, guilds, meta)
+  persistence/          db.ts (node:sqlite, migrations, backups), repositories/ (stations, guilds; MetaRepository lives in guilds.ts)
   observability/        logger, health (health.json heartbeat, diagnostics server), metrics, netstats,
                         event-loop (event-loop delay for /radio stats)
   import-export/        /radio export and import
@@ -81,9 +83,31 @@ tests/unit/             fast, pure tests;  tests/integration/  local fixture rad
 tests/helpers.ts        memoryDb(), makeSource(), silentLogger()
 tests/lifecycle/        run.sh + fake-docker: end-to-end test of the installer and manager
 docs/                   install.md (beginner guide, start here), install-docker/-linux/-container-platforms,
-                        architecture, audio, verification, permissions, PRD, troubleshooting
+                        architecture, audio-quality, station-verification, permissions, rights-and-disclaimer,
+                        PRD, troubleshooting
 deploy/systemd/         hardened unit file for bare-metal installs
 ```
+
+## The stream comes first
+
+This rule outranks every other rule in this file, and every feature. The live stream must play at the best quality the station offers, from the station through to Discord, with no audible hiccup, on a host with **1 vCPU and 1 GB of memory**. Everything else the bot does is secondary and must be written so that it cannot disturb the stream. Code that runs cleanly on one core runs cleanly on any machine; the reverse isn't true.
+
+**Why it breaks easily.** `@discordjs/voice` sends one Opus packet every 20 ms from a timer on Node's main thread. Every command, button, autocomplete, database query (`node:sqlite` is synchronous), timer and log call runs on that same thread. While the thread is busy, packets wait, then leave in a burst. Discord's client then stretches the audio and speeds it up again, and a gap of about 55 ms or more is heard as a small cut. Measured on a one-core host, a single `/radio stats` delayed a packet by 47 ms.
+
+These are coding rules. A change that breaks one is a bug, even if the tests pass:
+
+1. **Budget the main thread.** Any stretch of synchronous work (a handler, a timer, an event callback, up to its next `await`) should take under 10 ms on a 1-vCPU host. 20 ms or more is a bug. Work that grows with the catalogue (stations × sources), the number of servers or stored history must be batched, cached, paged or capped. One query that returns what's needed beats a query per station, and never run one per keystroke when the answer can be cached.
+2. **Heavy work leaves the main thread.** Decoding, probing, comparing and anything else CPU-bound runs in a child process through `ProcessRegistry`, at the lowest priority (`lowerPriority()`). Only the live encoder runs at normal priority. Otherwise, split the work into small slices that yield to the event loop between them. While streams play, the main thread does no large synchronous file I/O, compression, hashing or JSON work.
+3. **Background work yields to playback.**
+   - Background jobs run one at a time.
+   - They don't start during a stream's first 30 s.
+   - They back off when they fail.
+   - Anything a listener is waiting for interrupts them.
+   - When in doubt, do less and do it later.
+4. **The audio path stays minimal.** Code that runs for every packet (every 20 ms) is constant-time: no logging, I/O, `await` or per-packet allocation of its own. Add no buffering or latency beyond what the pipeline needs. Encode once, add no processing, and follow the source's bitrate (invariants 1–3).
+5. **Memory is bounded.** Caches, histories and queues have a limit. The bot and one FFmpeg encoder must fit comfortably in 1 GB alongside the operating system.
+6. **Measure, don't guess.** A change that adds work on the main thread says in its pull request what that work costs and how this was measured, for example a timing against the bundled catalogue. On a running bot, use the event-loop delay and the late-packet count in `/radio stats`. Profile before optimising: in 1.0.4 the cost of `/radio stats` turned out to be statement compilation, not the code that looked slow.
+7. **Logging costs nothing when it's off.** Never log per packet. When building a debug log entry costs anything, guard it with `logger.isLevelEnabled('debug')`.
 
 ## Invariants: do not break these
 

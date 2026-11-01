@@ -90,7 +90,7 @@ Only the stream *name* (`icy-name`) is used for identity. `StreamTitle` (the cur
 - Both sources are sampled **at the same time** for about 40 s each, with a total budget of 90 s. HLS sources are opened 1 segment from the live edge for comparisons, instead of the usual 3, so the two feeds are close in time.
 - Each sample is decoded to 8 kHz mono PCM, in memory only. It is reduced to a log-energy envelope at 100 frames per second, and then to its signed frame-to-frame change (energy flux).
 - The first and last second of the envelope are trimmed, and outliers are clipped. This removes a decode-start artefact that otherwise lined unrelated stations up at lag 0.
-- The two envelopes are cross-correlated over **±30 s** of lag, to allow for CDN and HLS delay, with at least **15 s** of overlap.
+- The two envelopes are cross-correlated over **±30 s** of lag, to allow for CDN and HLS delay, with at least **15 s** of overlap. The comparison runs in slices of 64 lags that give the event loop back in between, so its millions of multiply-adds never hold up voice packets.
 - The result **supports** identity when **both** of these hold (constants in `identity.ts`):
   - the normalised peak score is **≥ 0.3** (`CORRELATION_THRESHOLD`);
   - the peak stands out from the other lags with a prominence of **≥ 5** (`PROMINENCE_THRESHOLD`).
@@ -137,7 +137,7 @@ It also includes a short explanation, for example "All eligible sources carry eq
 
 Probing order (`prepareForPlayback`):
 
-- When an eligible source exists, it is used immediately. The station's other due sources (last checked more than 24 h ago, or failing and past their back-off) are re-checked in the background only once the stream has played steadily for 30 s, one at a time and at the lowest CPU priority, so a live stream is never disturbed. A check someone is waiting for interrupts a background check on the same host; the interrupted check records nothing and runs again later.
+- When an eligible source exists, it is used immediately. The station's other due sources (last checked more than 24 h ago, or failing and past their back-off) are re-checked in the background only once the stream has played steadily for 30 s, one at a time and at the lowest CPU priority, so a live stream is never disturbed. A source is queued once and skipped if it was checked meanwhile, and no background check starts while any stream on the installation is in its first 30 s. A check someone is waiting for interrupts a background check on the same host; the interrupted check records nothing and runs again later.
 - When none is eligible, unprobed or stale sources are probed in the foreground, one after another (when someone wants a station and none of its sources works, its failing sources are re-checked despite the back-off, at most every 10 min within a day of last working, then hourly. Paused sources are skipped): the admin's preferred source first, then direct before HLS, then by priority. This stops as soon as one becomes eligible, and the rest are refreshed in the background.
 
 ## Pin, prefer and auto

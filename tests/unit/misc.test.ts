@@ -1,8 +1,12 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildEncodeArgs, planEncoder, sourceBitrate } from '../../src/audio/encoder.ts';
 import type { StationSource } from '../../src/catalogue/types.ts';
 import { ConfigError, loadConfig } from '../../src/config/env.ts';
 import { applyImport, exportGuild, parseImport, previewImport } from '../../src/import-export/config-io.ts';
+import { writeHeartbeat } from '../../src/observability/health.ts';
 import { backoffDelayMs, cooldownMs } from '../../src/shared/backoff.ts';
 import { RateLimiter } from '../../src/shared/rate-limit.ts';
 import { redactText, redactUrl } from '../../src/shared/redact.ts';
@@ -320,5 +324,26 @@ describe('small utilities', () => {
     expect(canTransition('STOPPING', 'PLAYING')).toBe(false);
     expect(canTransition('IDLE', 'PLAYING')).toBe(false);
     expect(canTransition('PLAYING', 'IDLE')).toBe(true);
+  });
+});
+
+describe('heartbeat file', () => {
+  it('keeps the form radio-bot update reads the number of playing servers from', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'radio-bot-hb-'));
+    try {
+      const path = join(dir, 'health.json');
+      writeHeartbeat(path, {
+        at: new Date().toISOString(),
+        pid: 1,
+        discordReady: true,
+        activeStreams: 12,
+        ffmpegProcesses: 12,
+        dbOk: true,
+      });
+      // scripts/radio-bot.sh: grep -oE '"activeStreams":[0-9]+'
+      expect(readFileSync(path, 'utf8').match(/"activeStreams":[0-9]+/)?.[0]).toBe('"activeStreams":12');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

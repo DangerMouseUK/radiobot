@@ -52,7 +52,7 @@ If `node` is not at `/usr/bin/node` (check with `command -v node`), edit `ExecSt
 
 If the configuration is invalid the bot exits with code 78, and the unit doesn't restart it (`RestartPreventExitStatus=78`): fix the env file, then `sudo systemctl restart radio-bot`. `journalctl -u radio-bot` shows which variable is wrong.
 
-The unit runs the bot as an unprivileged, throwaway user (`DynamicUser=yes`) with a read-only view of the system. systemd creates the data directory for it.
+The unit runs the bot as an unprivileged, throwaway user (`DynamicUser=yes`) with a read-only view of the system. systemd creates the data directory for it. It also gives the bot a slightly higher CPU priority than ordinary jobs (`Nice=-5`), because voice packets go out every 20 ms and a busy moment on a small host can make a few late; stream checks still run their FFmpeg processes at the lowest priority.
 
 ## Where the data lives
 
@@ -77,7 +77,7 @@ Back up `/var/lib/radio-bot/` like any other application data. Nothing is writte
 
 ```bash
 cd /opt/radio-bot
-sudo git fetch --tags && sudo git checkout v1.0.1   # the release you want
+sudo git fetch --tags && sudo git checkout vX.Y.Z   # the release you want
 sudo pnpm install --frozen-lockfile --ignore-scripts
 sudo pnpm run build
 sudo pnpm prune --prod --ignore-scripts

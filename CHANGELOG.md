@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Updates warn before stopping playback.** If the bot is playing in any server, `radio-bot update` says so before it restarts the bot, and asks whether to go ahead: a server only starts playing again by itself when an admin has turned on **Resume after restart** in `/radio config`. When updating from 1.0.3, it shows the warning but doesn't ask, because the older copy of the command starts the update.
+- **The old version's logs are kept.** Replacing the container deletes its logs, so `radio-bot update` first saves the last 500 lines to the `logs` folder of the install (the newest 5 files are kept). If they can't be saved, it says so and carries on with the update.
+- **Late voice packets are counted.** `/radio stats` shows how many voice packets went out more than 40 ms after the one before since the bot joined, and the longest gap, and says when that gap is long enough to hear.
+- At debug level (`LOG_LEVEL=debug`), every command, button and suggestion is logged with how long it took and the CPU time the bot used meanwhile, so a delay can be matched to what caused it.
+
+### Changed
+
+- **Much less work on the thread that sends voice packets.** Database statements are compiled once and reused; stations and sources are read once and reused until they change; and search keeps each station's normalised names. In a local test, suggestions, availability badges and pack coverage became 7–60 times faster: the availability of every bundled station takes 0.04 ms instead of 2.4 ms. The audio comparison behind `/radio rescan compare:true` now works in short slices instead of one long burst. `/radio stats`, `/radio browse` and suggestions all run on that thread.
+- Background source checks no longer pile up: a source is queued once however many servers ask, it is skipped if it was checked in the meantime, and nothing starts while any stream is in its first 30 s. Each check's results are written in one go, and probe history is trimmed as it is written instead of by an hourly scan of the whole table.
+- The identity check closes the station's connection as soon as it has its sample, and stops the other stream's capture if one side fails.
+- At start-up, only servers with a control panel are refreshed, one at a time, and the bot no longer creates a settings record for every server it is in.
+- The systemd unit gives the bot a slightly higher CPU priority than ordinary jobs (`Nice=-5`). Docker installs can't do this without running the container as root, so they keep normal priority.
+- The docs say that a one-core host is enough, but that other scheduled jobs on the same machine can cause brief audio hiccups.
+
+### Fixed
+
+- **`radio-bot update` now removes old images.** Each update used to leave the previous Docker image behind, about 1 GB per release, which slowly filled small disks: the clean-up looked for a label the published images don't carry, and skipped tagged images anyway. Once the new version is healthy, the update now removes the other versions of the bot's image, including ones left by earlier updates. If the new version doesn't start, the old image is kept so you can go back. Published images are also labelled "Radio Bot" again.
+- If a start failed before a source was chosen (for example, an unexpected database error), the bot could try again immediately and indefinitely, which could freeze audio for every server. It now waits and retries, like any other start with no source.
+- Scheduled catalogue syncs no longer keep a timer for every past run, and none is started after shutdown begins.
+- A database commit that failed (for example on a full disk) left the database connection broken until the bot restarted, so every later save failed. It is now rolled back cleanly and the next save works.
+- Two error logs now go through the same redaction as the rest, so a stream address with a token in it can't reach the logs.
+
 ## [1.0.3] - 2026-11-01
 
 ### Changed

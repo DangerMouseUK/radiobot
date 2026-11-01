@@ -10,3 +10,4 @@ tests/fixtures/generated/
 catalog/packs/*/evidence/*.tmp
 backups/
 compose.override.yaml
+logs/

@@ -24,6 +24,8 @@ export interface PipelineLike {
   readonly stderrTail: string[];
   on(event: 'failed', fn: (err: RadioError) => void): unknown;
   on(event: 'metadata', fn: (m: NowPlayingMeta | null) => void): unknown;
+  once(event: 'firstAudio', fn: () => void): unknown;
+  off(event: 'firstAudio', fn: () => void): unknown;
   stop(): void;
 }
 
@@ -37,6 +39,8 @@ export interface SourceSelector {
   recordPlaybackFailure(sourceId: string, code: string): boolean;
   /** Re-checks the station's other due sources in the background, once playback is stable. */
   refreshStation?(stationId: string): void;
+  /** A stream is starting: background checks wait this long, so they don't compete with it. */
+  holdBackground?(ms: number): void;
 }
 
 export type SessionNoticeKind =
@@ -155,6 +159,9 @@ export interface SessionLiveStats {
     packetsPlayed: number | null;
     /** Packets per second sent to Discord over the last sampling window (expect ~50). */
     packetsPerSecond: number | null;
+    /** Packets sent more than 40 ms after the one before, while playing, and the longest gap. */
+    latePackets: number;
+    worstPacketGapMs: number | null;
     ws: LatencySummary | null;
   };
 }
@@ -576,6 +583,10 @@ export class GuildSession {
     // Tears down the previous run, aborting its probes and requests. The new run's controller is
     // created afterwards: created first, the teardown would abort it and cancel every start.
     this.#teardownAudio();
+    // The source belongs to the run that chose it. If this run fails before choosing one, a
+    // failure must not be blamed on the last run's source (and fail over from it at once, again
+    // and again, if every start keeps failing the same way).
+    this.#source = null;
     const abort = new AbortController();
     this.#runAbort = abort;
     try {
@@ -583,6 +594,8 @@ export class GuildSession {
       if (!linked) return this.#superseded();
       if (this.#state === 'CONNECTED' || this.#state === 'ERROR') this.#setState('BUFFERING');
       else if (this.#state === 'SWITCHING') this.#setState('BUFFERING');
+      // Until this stream has played steadily, background checks for any server wait.
+      this.#d.sources.holdBackground?.(this.#t.stableMs);
 
       let selection = await this.#d.sources.prepareForPlayback(this.guildId, stationId, {
         exclude: this.#excluded,
@@ -629,7 +642,7 @@ export class GuildSession {
       });
       this.#link!.play(pipeline.output);
       this.#startedAt = Date.now();
-      const firstAudio = await this.#waitFirstAudio(pipeline, runId);
+      const firstAudio = await this.#waitFirstAudio(pipeline, abort.signal);
       if (gen !== this.#gen || runId !== this.#runId) {
         // The source failed before its first audio and recovery took over; no command superseded it.
         const failedHere = this.#failingRun === runId && commands === this.#commands;
@@ -649,6 +662,8 @@ export class GuildSession {
         };
       }
       this.#setState('PLAYING');
+      // Audio is flowing now; background checks wait until it has had time to settle.
+      this.#d.sources.holdBackground?.(this.#t.stableMs);
       this.#lastError = null;
       this.#voiceReconnectAttempts = 0;
       this.#persist('playing', { lastSuccessfulSourceId: source.id, lastErrorCode: null });
@@ -722,7 +737,7 @@ export class GuildSession {
         }
         return { ok: false, code, message, selection: this.#selection, plan: null };
       }
-      if (!isRadioError(err)) this.#log.error({ err }, 'unexpected start failure');
+      if (!isRadioError(err)) this.#log.error({ err: safeErr(err) }, 'unexpected start failure');
       void this.#handleFailure(this.#runId, code, message, true);
       return {
         ok: false,
@@ -770,22 +785,25 @@ export class GuildSession {
     };
   }
 
-  #waitFirstAudio(pipeline: PipelineLike, runId: number): Promise<boolean> {
+  /**
+   * Resolves true on the encoder's first audio, false on a timeout or when the run is torn down
+   * (a failure, a stop or a newer request aborts `signal`). Event-driven: nothing polls.
+   */
+  #waitFirstAudio(pipeline: PipelineLike, signal: AbortSignal): Promise<boolean> {
     return new Promise((resolve) => {
-      if (pipeline.stats.firstOutputAt !== null) {
-        resolve(true);
+      if (pipeline.stats.firstOutputAt !== null || signal.aborted) {
+        resolve(pipeline.stats.firstOutputAt !== null);
         return;
       }
-      const started = Date.now();
-      const tick = setInterval(() => {
-        if (runId !== this.#runId || pipeline.stats.firstOutputAt !== null) {
-          clearInterval(tick);
-          resolve(pipeline.stats.firstOutputAt !== null);
-        } else if (Date.now() - started > this.#t.firstAudioTimeoutMs) {
-          clearInterval(tick);
-          resolve(false);
-        }
-      }, 100);
+      const finish = () => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', finish);
+        pipeline.off('firstAudio', finish);
+        resolve(pipeline.stats.firstOutputAt !== null);
+      };
+      const timer = setTimeout(finish, this.#t.firstAudioTimeoutMs);
+      signal.addEventListener('abort', finish, { once: true });
+      pipeline.once('firstAudio', finish);
     });
   }
 
@@ -799,6 +817,15 @@ export class GuildSession {
     const gen = this.#gen;
     if (this.#desired() !== 'playing' || this.#destroyed) return;
     const source = this.#source;
+    if (!source) {
+      // The start failed before a source was chosen, so there is nothing to fail over from.
+      // Starting again at once would repeat the same failure in a tight loop; wait instead.
+      this.#log.warn({ code }, 'playback failed before a source was chosen; retrying later');
+      this.#enterError(code, message);
+      this.#persist('playing', { lastErrorCode: code });
+      this.#scheduleNoSourceRetry(gen);
+      return;
+    }
     this.#teardownAudio();
     this.#lastError = { code, message, at: new Date().toISOString() };
     this.#d.metrics.incident(this.guildId, code, faultDomain(code), message);
@@ -1064,6 +1091,8 @@ export class GuildSession {
               encryptionMode: v.encryptionMode,
               packetsPlayed: v.packetsPlayed,
               packetsPerSecond,
+              latePackets: v.packetTiming.late,
+              worstPacketGapMs: v.packetTiming.worstGapMs,
               ws: this.#wsPing.summary(),
             }
           : null,

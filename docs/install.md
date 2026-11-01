@@ -22,7 +22,7 @@ Radio Bot is **self-hosted**: it runs on a computer you control, using a Discord
 - **A computer that stays on.** The bot only plays while this computer is running. Any of these will do:
   - a Linux computer or home server (Ubuntu, Debian, Fedora and so on), on 64-bit Intel/AMD or ARM;
   - a Raspberry Pi 4 or 5 running the **64-bit** Raspberry Pi OS;
-  - a small cloud server (a "VPS") from any provider. One CPU core and 1 GB of memory is plenty for a few servers: one playing stream uses about 8% of a core and about 200 MB of memory (see the [README's requirements](../README.md#requirements));
+  - a small cloud server (a "VPS") from any provider. One CPU core and 1 GB of memory is plenty for a few servers: one playing stream uses about 8% of a core and about 200 MB of memory (see the [README's requirements](../README.md#requirements)). Other regular jobs on the same small server (stats collectors, backups) can cause brief audio hiccups;
   - a Mac or a Windows PC, which is fine for trying it out, but the bot stops whenever the computer sleeps.
 - **An internet connection.** The bot only connects outwards, so you don't need to open ports on your router or buy a domain. Each server that is listening uses roughly 60–150 MB of upload per hour for typical stations, depending on the station's own quality (see [Using less bandwidth](#using-less-bandwidth) if that matters to you).
 - **A Discord account,** and a Discord server where you're allowed to add bots (you own it, or you have the **Manage Server** permission).
@@ -163,13 +163,13 @@ Run these in a terminal on the computer where you installed Radio Bot. On Window
 | `radio-bot invite` | Prints the link that adds the bot to a server |
 | `radio-bot backup` | Saves a copy of the bot's database (settings, favourites, custom stations) into the `backups` folder in `~/radio-bot` |
 | `radio-bot restore <file>` | Puts a backup back, replacing the current data. The file can be named from the folder you're in, or from `~/radio-bot` (for example `backups/radio-bot-manual-….sqlite`) |
-| `radio-bot update` | Updates to the newest release. It backs up the database first |
+| `radio-bot update` | Updates to the newest release. If the bot is playing somewhere, it tells you first and asks whether to go ahead: playback stops during the update and only starts again by itself in servers where **Resume after restart** is on in `/radio config`. It then backs up the database, keeps the last 500 lines of the old version's log in the `logs` folder in `~/radio-bot` (the newest 5 are kept) and, once the new version is running, deletes the old Docker image to free disk space |
 | `radio-bot uninstall` | Removes Radio Bot and the `~/radio-bot` folder. While the bot is running it offers to save a copy of its data first; backups already in `~/radio-bot/backups` are moved to a `radio-bot-backup-…` folder in your home folder. It asks separately before deleting the bot's data |
 | `radio-bot help` | Lists these commands |
 
 **The bot starts by itself** when the computer starts (as long as Docker does; on a Mac or Windows PC, set Docker Desktop to start when you sign in). If it crashes, Docker restarts it.
 
-**Updating.** Run `radio-bot update` now and then; `radio-bot status` tells you when there's something new. Read [CHANGELOG.md](../CHANGELOG.md) to see what changed. If an update ever goes wrong, `radio-bot update v1.0.0` (with the version you were on) takes you back, but only if the newer version didn't change the database. If it did, the bot refuses to start on the older version rather than risk your data. In that case, put back the backup the update made, using `radio-bot restore`.
+**Updating.** Run `radio-bot update` now and then; `radio-bot status` tells you when there's something new. Read [CHANGELOG.md](../CHANGELOG.md) to see what changed. If an update ever goes wrong, `radio-bot update v1.0.0` (with the version you were on) downloads that version again and takes you back, but only if the newer version didn't change the database. If it did, the bot refuses to start on the older version rather than risk your data. In that case, put back the backup the update made, using `radio-bot restore`.
 
 **Backups.** The update command backs up automatically, but run `radio-bot backup` before making big changes, and copy the `~/radio-bot/backups` folder somewhere else now and then. Backups hold your server's settings and IDs, never your bot token.
 

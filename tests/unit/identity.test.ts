@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Station } from '../../src/catalogue/types.ts';
 import {
   correlateEnvelopes,
+  correlateEnvelopesInSlices,
   correlationEvidence,
   decideIdentity,
   metadataSignal,
@@ -161,5 +162,23 @@ describe('audio correlation', () => {
     const silence = new Int16Array(30 * 8000);
     const r = correlateEnvelopes(onsetEnvelope(silence), onsetEnvelope(programme(9, 30)));
     expect(correlationEvidence(r, 'x').verdict).toBe('inconclusive');
+  });
+  it('gives the same answer as the one-pass comparison, yielding to the event loop as it goes', async () => {
+    const full = programme(42, 50);
+    const a = onsetEnvelope(full.subarray(0, 30 * 8000));
+    const b = onsetEnvelope(full.subarray(7 * 8000, 37 * 8000));
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 0);
+    const sliced = await correlateEnvelopesInSlices(a, b);
+    clearInterval(timer);
+    expect(sliced).toEqual(correlateEnvelopes(a, b));
+    expect(ticks).toBeGreaterThan(0);
+  });
+
+  it('stops when cancelled', async () => {
+    const a = onsetEnvelope(programme(1, 30));
+    const ctl = new AbortController();
+    ctl.abort();
+    await expect(correlateEnvelopesInSlices(a, a, 30, ctl.signal)).rejects.toThrow(/cancelled/);
   });
 });

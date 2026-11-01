@@ -1,4 +1,5 @@
 import { type APIEmbed, type Interaction, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import pino from 'pino';
 import { describe, expect, it } from 'vitest';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
 import { PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
@@ -6,7 +7,7 @@ import type { Station } from '../../src/catalogue/types.ts';
 import { loadConfig } from '../../src/config/env.ts';
 import { ComponentIds } from '../../src/discord/components/custom-id.ts';
 import { type AppContext, RateLimits } from '../../src/discord/context.ts';
-import { RadioController } from '../../src/discord/controller.ts';
+import { describeInteraction, RadioController } from '../../src/discord/controller.ts';
 import { exportGuild } from '../../src/import-export/config-io.ts';
 import { EventLoopMonitor } from '../../src/observability/event-loop.ts';
 import { Metrics } from '../../src/observability/metrics.ts';
@@ -733,5 +734,90 @@ describe('/radio help', () => {
     expect(member.text).not.toMatch(/\*\*Admin\*\*/);
     expect(member.text).toMatch(/`\/radio add`/);
     expect(member.ephemeral).toBe(true);
+  });
+});
+
+describe('interaction log', () => {
+  it('logs what each interaction was and how long it took, at debug level only', async () => {
+    const t = setup();
+    const lines: Array<Record<string, unknown>> = [];
+    const capture = { write: (s: string) => lines.push(JSON.parse(s)) };
+    (t.ctx as { logger: unknown }).logger = pino({ level: 'debug' }, capture);
+    await t.command(t.people.owner, { sub: 'status' });
+    await t.command(t.people.owner, { group: 'queue', sub: 'list' });
+    await t.click(t.people.owner, t.ids.make(GUILD, 'stop'));
+    const handled = lines.filter((l) => l.msg === 'interaction handled');
+    expect(handled.map((l) => l.interaction)).toEqual([
+      'command status',
+      'command queue list',
+      'button stop',
+    ]);
+    for (const l of handled) {
+      expect(l.guildId).toBe(GUILD);
+      expect(typeof l.ms).toBe('number');
+      expect(typeof l.cpuMs).toBe('number');
+    }
+    lines.length = 0;
+    (t.ctx as { logger: unknown }).logger = pino({ level: 'info' }, capture);
+    await t.command(t.people.owner, { sub: 'status' });
+    expect(lines.filter((l) => l.msg === 'interaction handled')).toEqual([]);
+  });
+});
+
+describe('describeInteraction', () => {
+  const fake = (o: Record<string, unknown>) => ({
+    isChatInputCommand: () => false,
+    isAutocomplete: () => false,
+    isMessageComponent: () => false,
+    isButton: () => false,
+    ...o,
+  });
+  const options = (group: string | null, sub: string | null) => ({
+    getSubcommandGroup: () => group,
+    getSubcommand: () => sub,
+  });
+
+  it('names commands, suggestions, buttons and menus without logging what was typed', () => {
+    expect(
+      describeInteraction(fake({ isAutocomplete: () => true, options: options(null, 'play') }) as never),
+    ).toBe('autocomplete play');
+    expect(
+      describeInteraction(
+        fake({ isChatInputCommand: () => true, commandName: 'radio', options: options(null, null) }) as never,
+      ),
+    ).toBe('command radio');
+    expect(
+      describeInteraction(
+        fake({ isMessageComponent: () => true, customId: 'rb1:cfg-idle:x:0:sig' }) as never,
+      ),
+    ).toBe('menu cfg-idle');
+    expect(
+      describeInteraction(
+        fake({
+          isMessageComponent: () => true,
+          isButton: () => true,
+          customId: `rb1:${'a'.repeat(40)}:x`,
+        }) as never,
+      ),
+    ).toBe(`button ${'a'.repeat(16)}`);
+    expect(describeInteraction(fake({ type: 1 }) as never)).toBe('type 1');
+  });
+});
+
+describe('Next and Previous station buttons', () => {
+  it('move to another playable station of the same pack, and back again', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const all = t.stations.listStations(GUILD);
+    const playable = ['available', 'degraded', 'unverified'];
+    const start = all.find((s) => playable.includes(t.ctx.sources.availability(s)))!;
+    Object.assign(t.sessions.ensure(GUILD), { connected: true, channelId: V1, stationId: start.id });
+    const next = await t.click(t.people.admin, t.ids.make(GUILD, 'next'));
+    expect(next.violations).toEqual([]);
+    const moved = t.sessions.plays.at(-1)!.stationId;
+    expect(moved).not.toBe(start.id);
+    expect(t.stations.getStation(moved)?.provider).toBe(start.provider);
+    await t.click(t.people.admin, t.ids.make(GUILD, 'prev'));
+    expect(t.sessions.plays.at(-1)!.stationId).toBe(start.id);
   });
 });

@@ -21,6 +21,10 @@ RestartSec=5
 # Exit code 78 means the configuration is invalid; restarting won't help until it is fixed.
 RestartPreventExitStatus=78
 TimeoutStopSec=20
+# Voice packets go out every 20 ms, so the bot (and the FFmpeg encoder it starts) gets the CPU ahead
+# of ordinary jobs on a small host. systemd sets this before dropping privileges; stream checks
+# still lower their own FFmpeg processes to the lowest priority.
+Nice=-5
 
 # Runs as a throwaway system user; systemd creates /var/lib/radio-bot for its data.
 DynamicUser=yes

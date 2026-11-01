@@ -64,11 +64,38 @@ echo "# next" >>"$T/origin/CHANGELOG.md"
 git -C "$T/origin" -c user.email=t@example.org -c user.name=test commit -qam v1.0.1
 git -C "$T/origin" tag v1.0.1
 git -C "$T/origin" tag v1.1.0-rc.1
-out=$(FAKE_PULL_OK=1 radio-bot update 2>&1 | strip)
+out=$(printf 'n\n' | tty_run "FAKE_PLAYING=2 radio-bot update")
+check "warns that playback stops" has "$out" "Radio Bot is playing in 2 servers."
+check "can be cancelled at the warning" has "$out" "Cancelled; nothing was changed."
+check "cancelling leaves the version alone" test "$(radio-bot version)" = v1.0.0
+out=$(printf 'y\n' | tty_run "FAKE_PULL_OK=1 FAKE_PLAYING=2 radio-bot update")
 check "backs up before updating" has "$out" "Backing up the database first"
 check "downloads the published image" has "$out" "Image downloaded."
 check "skips pre-releases" test "$(radio-bot version)" = v1.0.1
 check "reports the update" has "$out" "Updated v1.0.0 → v1.0.1"
+check "warns only once" test "$(grep -c "is playing in 2 servers" <<<"$out")" = 1
+# shellcheck disable=SC2016
+check "saves the old version's logs" bash -c 'ls "$1"/logs/radio-bot-v1.0.0-*.log' _ "$RADIO_BOT_DIR"
+check "removes the previous image" grep -q "docker image rm ghcr.io/dangermouseuk/radio-bot:v1.0.0$" "$T/state/calls.log"
+check "keeps the running image" grep -q "^ghcr.io/dangermouseuk/radio-bot:v1.0.1 " "$T/state/images"
+echo "ghcr.io/dangermouseuk/radio-bot:v0.9.0 sha256:v0.9.0" >>"$T/state/images"
+finish() { bash "$RADIO_BOT_DIR/scripts/radio-bot.sh" __finish-update v1.0.0 </dev/null 2>&1 | strip; }
+out=$(FAKE_CRASH=1 finish)
+check "keeps older images when the new version fails" grep -q "radio-bot:v0.9.0 " "$T/state/images"
+out=$(FAKE_PLAYING=1 finish)
+check "warns when an older copy of the script started the update" has "$out" "Radio Bot is playing in 1 server."
+check "removes older images once healthy" test "$(wc -l <"$T/state/images")" -eq 1
+echo "ghcr.io/dangermouseuk/radio-bot:<none> sha256:dangling" >>"$T/state/images"
+for i in 1 2 3 4 5 6; do touch -d "$i days ago" "$RADIO_BOT_DIR/logs/radio-bot-v0.$i.0-old.log"; done
+out=$(finish)
+check "removes a dangling image of the bot" test "$(wc -l <"$T/state/images")" -eq 1
+check "keeps only the newest 5 saved logs" test "$(find "$RADIO_BOT_DIR/logs" -name 'radio-bot-*.log' | wc -l)" -eq 5
+# shellcheck disable=SC2016
+check "keeps the log it just saved" bash -c 'ls -t "$1"/logs/radio-bot-*.log | head -n 1 | grep -qv -- -old.log' _ "$RADIO_BOT_DIR"
+chmod 000 "$RADIO_BOT_DIR/logs"
+out=$(finish)
+chmod 700 "$RADIO_BOT_DIR/logs"
+check "finishes the update even when the log can't be saved" has "$out" "Updated v1.0.0"
 echo "local edit" >>"$RADIO_BOT_DIR/README.md"
 out=$(radio-bot update 2>&1 | strip)
 check "refuses to update over edited files" has "$out" "were edited"

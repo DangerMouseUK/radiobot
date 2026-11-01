@@ -1,4 +1,4 @@
-import { normalizeName, similarity } from '../shared/text.ts';
+import { levenshtein, normalizeName } from '../shared/text.ts';
 import type { Station } from './types.ts';
 
 export interface SearchHit {
@@ -8,42 +8,87 @@ export interface SearchHit {
   exact: boolean;
 }
 
-function words(s: string): string[] {
-  return normalizeName(s).split(' ').filter(Boolean);
+/** A station's names, normalised once. */
+interface Prepared {
+  id: string;
+  slug: string;
+  name: string;
+  aliases: string[];
+  nameWords: string[];
+  tags: string[];
+  tagWords: string[][];
+  category: string | null;
 }
 
-export function scoreStation(station: Station, query: string): SearchHit | null {
-  const q = normalizeName(query);
-  if (!q) return { station, score: 1, exact: false };
-  const raw = query.trim().toLowerCase();
-  if (raw === station.id.toLowerCase() || raw === station.slug || q === normalizeName(station.slug)) {
-    return { station, score: 1000, exact: true };
+/**
+ * Station rows are shared and read-only (the repository caches them until the next write), so
+ * each one's normalised names are worked out once, not on every keystroke of a suggestion.
+ */
+const prepared = new WeakMap<Station, Prepared>();
+
+function prepare(station: Station): Prepared {
+  let p = prepared.get(station);
+  if (!p) {
+    const name = normalizeName(station.displayName);
+    const aliases = station.aliases.map(normalizeName);
+    const tags = station.tags.map(normalizeName);
+    p = {
+      id: station.id.toLowerCase(),
+      slug: normalizeName(station.slug),
+      name,
+      aliases,
+      nameWords: [...name.split(' ').filter(Boolean), ...aliases.flatMap((a) => a.split(' '))],
+      tags,
+      tagWords: tags.map((t) => t.split(' ')),
+      category: station.category ? normalizeName(station.category) : null,
+    };
+    prepared.set(station, p);
   }
-  const name = normalizeName(station.displayName);
-  const aliases = station.aliases.map(normalizeName);
-  if (q === name) return { station, score: 950, exact: true };
-  if (aliases.includes(q)) return { station, score: 900, exact: true };
-  const tags = station.tags.map(normalizeName);
+  return p;
+}
+
+/** Edit-distance similarity of two already-normalised strings; null when it can't reach `min`. */
+function similarityAtLeast(a: string, b: string, min: number): number | null {
+  const max = Math.max(a.length, b.length);
+  if (max === 0) return 1;
+  // The distance is at least the difference in length, so most names are ruled out without it.
+  if (1 - Math.abs(a.length - b.length) / max < min) return null;
+  const sim = 1 - levenshtein(a, b) / max;
+  return sim >= min ? sim : null;
+}
+
+function score(station: Station, q: string, raw: string): SearchHit | null {
+  if (!q) return { station, score: 1, exact: false };
+  const p = prepare(station);
+  if (raw === p.id || raw === station.slug || q === p.slug) return { station, score: 1000, exact: true };
+  if (q === p.name) return { station, score: 950, exact: true };
+  if (p.aliases.includes(q)) return { station, score: 900, exact: true };
   const qWords = q.split(' ');
-  const nameWords = [...words(station.displayName), ...aliases.flatMap((a) => a.split(' '))];
   let score = 0;
-  if (name.startsWith(q)) score = Math.max(score, 700 - (name.length - q.length));
-  if (qWords.every((w) => nameWords.some((nw) => nw.startsWith(w))))
-    score = Math.max(score, 600 - name.length);
-  if (tags.includes(q)) score = Math.max(score, 500);
-  if (qWords.every((w) => tags.some((t) => t.split(' ').some((tw) => tw.startsWith(w)))))
+  if (p.name.startsWith(q)) score = Math.max(score, 700 - (p.name.length - q.length));
+  if (qWords.every((w) => p.nameWords.some((nw) => nw.startsWith(w))))
+    score = Math.max(score, 600 - p.name.length);
+  if (p.tags.includes(q)) score = Math.max(score, 500);
+  if (qWords.every((w) => p.tagWords.some((tw) => tw.some((x) => x.startsWith(w)))))
     score = Math.max(score, 420);
-  if (name.includes(q)) score = Math.max(score, 400);
-  if (station.category && normalizeName(station.category).includes(q)) score = Math.max(score, 350);
-  const sim = Math.max(similarity(q, name), ...aliases.map((a) => similarity(q, a)), 0);
+  if (p.name.includes(q)) score = Math.max(score, 400);
+  if (p.category?.includes(q)) score = Math.max(score, 350);
+  let sim = similarityAtLeast(q, p.name, 0.6) ?? 0;
+  for (const a of p.aliases) sim = Math.max(sim, similarityAtLeast(q, a, 0.6) ?? 0);
   if (sim >= 0.6) score = Math.max(score, Math.round(300 * sim));
   return score > 0 ? { station, score, exact: false } : null;
 }
 
+export function scoreStation(station: Station, query: string): SearchHit | null {
+  return score(station, normalizeName(query), query.trim().toLowerCase());
+}
+
 /** Ranked, partial/fuzzy station search (FR-001). Pack stations sort before custom ones on ties. */
 export function searchStations(stations: Station[], query: string, limit = 25): SearchHit[] {
+  const q = normalizeName(query);
+  const raw = query.trim().toLowerCase();
   return stations
-    .map((s) => scoreStation(s, query))
+    .map((s) => score(s, q, raw))
     .filter((h): h is SearchHit => h !== null)
     .sort(
       (a, b) =>
@@ -74,7 +119,7 @@ export function resolveStation(stations: Station[], query: string): Resolution {
     if (exact.length === 1 || exact[1]!.score < top.score) return { kind: 'match', station: top.station };
     return { kind: 'ambiguous', candidates: exact.map((h) => h.station) };
   }
-  // A single name/word match that clearly dominates everything else (e.g. "ushuaia ibiza").
+  // A single name/word match that clearly dominates everything else (e.g. "my station").
   const [top, next] = hits;
   if (top && top.score >= 500 && (!next || next.score < 450)) return { kind: 'match', station: top.station };
   return { kind: 'ambiguous', candidates: hits.slice(0, 10).map((h) => h.station) };

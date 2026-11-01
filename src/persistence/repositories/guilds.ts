@@ -131,6 +131,13 @@ export class GuildRepository {
     this.#defaults = defaults;
   }
 
+  /** Servers that have a control panel message to keep up to date. */
+  guildsWithPanel(): string[] {
+    return this.#db
+      .all<{ guild_id: string }>('SELECT guild_id FROM guild_settings WHERE panel_message_id IS NOT NULL')
+      .map((r) => r.guild_id);
+  }
+
   /** Returns settings, creating a row with installation defaults on first access. */
   getSettings(guildId: string): GuildSettings {
     const r = this.#db.get('SELECT * FROM guild_settings WHERE guild_id = ?', [guildId]);
