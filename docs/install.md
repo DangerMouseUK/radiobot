@@ -22,7 +22,7 @@ Radio Bot is **self-hosted**: it runs on a computer you control, using a Discord
 - **A computer that stays on.** The bot only plays while this computer is running. Any of these will do:
   - a Linux computer or home server (Ubuntu, Debian, Fedora and so on), on 64-bit Intel/AMD or ARM;
   - a Raspberry Pi 4 or 5 running the **64-bit** Raspberry Pi OS;
-  - a small cloud server (a "VPS") from any provider. Radio Bot hasn't been benchmarked yet, but one CPU core and 1 GB of memory is a sensible starting point for a few servers;
+  - a small cloud server (a "VPS") from any provider. One CPU core and 1 GB of memory is plenty for a few servers: one playing stream uses about 8% of a core and about 200 MB of memory (see the [README's requirements](../README.md#requirements));
   - a Mac or a Windows PC, which is fine for trying it out, but the bot stops whenever the computer sleeps.
 - **An internet connection.** The bot only connects outwards, so you don't need to open ports on your router or buy a domain. Each server that is listening uses roughly 60–150 MB of upload per hour for typical stations, depending on the station's own quality (see [Using less bandwidth](#using-less-bandwidth) if that matters to you).
 - **A Discord account,** and a Discord server where you're allowed to add bots (you own it, or you have the **Manage Server** permission).

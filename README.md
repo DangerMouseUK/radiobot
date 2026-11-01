@@ -26,6 +26,7 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 
 ## Contents
 
+- [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [Other ways to deploy](#other-ways-to-deploy)
 - [Discord application setup](#discord-application-setup)
@@ -38,6 +39,18 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 - [Development](#development)
 - [Documentation](#documentation)
 - [Licence](#licence)
+
+## Requirements
+
+| | Minimum | Recommended |
+|---|---|---|
+| CPU | 1 core, 64-bit (x86-64 or ARM64, such as a Raspberry Pi 4 or 5) | 1–2 cores |
+| Memory | 512 MB | 1 GB |
+| Disk | 2 GB free (the Docker image, the database and backups) | 5 GB |
+| Network | Outbound only, including UDP for Discord voice; no open ports | |
+| Bandwidth | Each playing server uses the station's bitrate in and about the same out: roughly 60–70 MB per hour each way at 128 kbps, and up to about 230 MB per hour out at the 510 kbps maximum | |
+
+Measured on a small cloud server, one stream at 128 kbps used about 8% of one CPU core and about 200 MB of memory in total (the bot plus its FFmpeg process). Each extra stream adds roughly the same CPU and about 60 MB, so the default limit of 3 streams (`MAX_ACTIVE_GUILD_STREAMS`) fits comfortably within the minimum. These figures haven't been measured on a Raspberry Pi or over long periods yet.
 
 ## Quick start
 
@@ -276,7 +289,7 @@ Version **1.0.0** is the first public release. Lint, the strict typecheck and th
 - **End-to-end pipeline, without Discord:** a bundled station ran through the safe client, one libopus encode and `@discordjs/voice` at about 486 kbps Opus against the 510 kbps target, with one encoder process and nothing left running afterwards. The stream-side stats were checked live: the redirect to a regional server, 128 kbps in, and the TCP round trip and jitter were all reported.
 - **"Identity verified" mostly rests on provenance** (the official player maps the stream to the station) plus a successful probe. Audio comparison has confirmed two stations; the others haven't been compared or checked by listening. `/radio rescan compare:true` and `/radio source verify` exist to strengthen this.
 - **Encoding above the channel's bitrate setting:** in the live test the bot sent 128 kbps into a channel set to 96 kbps and it sounded right, but the bitrate a listener's client actually receives hasn't been measured.
-- **Not measured yet:** CPU, memory and bandwidth on real hosting. Upload follows the station's bitrate, up to 510 kbps (about four times a 128 kbps station).
+- **Resource use is measured for one stream only** (see [Requirements](#requirements)): about 8% of one CPU core and about 200 MB of memory at 128 kbps. Several streams at once, long runs, and a Raspberry Pi haven't been measured yet.
 - **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
 - **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker, and were exercised on Ubuntu 24.04 (WSL). They haven't yet been run against real Docker on a fresh Linux server, a Raspberry Pi, macOS or Windows.
 - **Rights:** no permission has been requested from or granted by any broadcaster. If you operate an instance, that is your responsibility; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
