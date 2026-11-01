@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
@@ -40,132 +49,174 @@ export interface Fixtures {
   hlsDir: string;
 }
 
+/**
+ * Claims fixture generation for this worker. Test files run in parallel processes, and without
+ * the claim they would all write the same files at once, so one could read a half-written file.
+ */
+function claimLock(lock: string): boolean {
+  try {
+    closeSync(openSync(lock, 'wx'));
+    return true;
+  } catch {
+    try {
+      // A lock left by a crashed run goes stale after 5 minutes.
+      if (Date.now() - statSync(lock).mtimeMs > 5 * 60_000) rmSync(lock, { force: true });
+      else return false;
+    } catch {
+      /* the lock vanished meanwhile */
+    }
+    try {
+      closeSync(openSync(lock, 'wx'));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Waits (synchronously, like the generation itself) for another worker to finish the fixtures. */
+function waitForFixtures(done: string, lock: string, timeoutMs = 180_000): void {
+  const started = Date.now();
+  const nap = new Int32Array(new SharedArrayBuffer(4));
+  while (!existsSync(done)) {
+    if (!existsSync(lock)) throw new Error('Test fixture generation failed in another worker.');
+    if (Date.now() - started > timeoutMs) throw new Error('Timed out waiting for test fixtures.');
+    Atomics.wait(nap, 0, 0, 100);
+  }
+}
+
 export function generateFixtures(): Fixtures {
   const { ffmpeg } = binaries();
   mkdirSync(DIR, { recursive: true });
   const p = (n: string) => join(DIR, n);
-  if (!existsSync(p('done.flag'))) {
-    ff(ffmpeg, [
-      '-f',
-      'lavfi',
-      '-i',
-      programmeFilter(1, 20),
-      '-ac',
-      '2',
-      '-ar',
-      '44100',
-      '-c:a',
-      'libmp3lame',
-      '-b:a',
-      '128k',
-      p('stereo-128.mp3'),
-    ]);
-    ff(ffmpeg, [
-      '-f',
-      'lavfi',
-      '-i',
-      programmeFilter(2, 20),
-      '-ac',
-      '1',
-      '-ar',
-      '22050',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '48k',
-      '-f',
-      'adts',
-      p('mono-22k.aac'),
-    ]);
-    ff(ffmpeg, [
-      '-f',
-      'lavfi',
-      '-i',
-      programmeFilter(3, 20),
-      '-ac',
-      '2',
-      '-ar',
-      '48000',
-      '-c:a',
-      'libopus',
-      '-b:a',
-      '96k',
-      p('stereo.opus'),
-    ]);
-    ff(ffmpeg, [
-      '-f',
-      'lavfi',
-      '-i',
-      programmeFilter(4, 60),
-      '-ac',
-      '2',
-      '-ar',
-      '44100',
-      '-c:a',
-      'libmp3lame',
-      '-b:a',
-      '64k',
-      p('prog-a.mp3'),
-    ]);
-    ff(ffmpeg, [
-      '-f',
-      'lavfi',
-      '-i',
-      programmeFilter(5, 60),
-      '-ac',
-      '2',
-      '-ar',
-      '44100',
-      '-c:a',
-      'libmp3lame',
-      '-b:a',
-      '64k',
-      p('prog-b.mp3'),
-    ]);
-    for (const [name, br] of [
-      ['lo', '64k'],
-      ['hi', '160k'],
-    ] as const) {
-      mkdirSync(p(`hls-${name}`), { recursive: true });
+  const lock = p('generating.lock');
+  if (!existsSync(p('done.flag')) && claimLock(lock)) {
+    try {
       ff(ffmpeg, [
         '-f',
         'lavfi',
         '-i',
-        programmeFilter(6, 16),
+        programmeFilter(1, 20),
         '-ac',
         '2',
         '-ar',
         '44100',
         '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '128k',
+        p('stereo-128.mp3'),
+      ]);
+      ff(ffmpeg, [
+        '-f',
+        'lavfi',
+        '-i',
+        programmeFilter(2, 20),
+        '-ac',
+        '1',
+        '-ar',
+        '22050',
+        '-c:a',
         'aac',
         '-b:a',
-        br,
+        '48k',
         '-f',
-        'hls',
-        '-hls_time',
-        '2',
-        '-hls_playlist_type',
-        'vod',
-        '-hls_segment_filename',
-        p(`hls-${name}/seg%03d.m2t`),
-        p(`hls-${name}/index.m3u8`),
+        'adts',
+        p('mono-22k.aac'),
       ]);
+      ff(ffmpeg, [
+        '-f',
+        'lavfi',
+        '-i',
+        programmeFilter(3, 20),
+        '-ac',
+        '2',
+        '-ar',
+        '48000',
+        '-c:a',
+        'libopus',
+        '-b:a',
+        '96k',
+        p('stereo.opus'),
+      ]);
+      ff(ffmpeg, [
+        '-f',
+        'lavfi',
+        '-i',
+        programmeFilter(4, 60),
+        '-ac',
+        '2',
+        '-ar',
+        '44100',
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '64k',
+        p('prog-a.mp3'),
+      ]);
+      ff(ffmpeg, [
+        '-f',
+        'lavfi',
+        '-i',
+        programmeFilter(5, 60),
+        '-ac',
+        '2',
+        '-ar',
+        '44100',
+        '-c:a',
+        'libmp3lame',
+        '-b:a',
+        '64k',
+        p('prog-b.mp3'),
+      ]);
+      for (const [name, br] of [
+        ['lo', '64k'],
+        ['hi', '160k'],
+      ] as const) {
+        mkdirSync(p(`hls-${name}`), { recursive: true });
+        ff(ffmpeg, [
+          '-f',
+          'lavfi',
+          '-i',
+          programmeFilter(6, 16),
+          '-ac',
+          '2',
+          '-ar',
+          '44100',
+          '-c:a',
+          'aac',
+          '-b:a',
+          br,
+          '-f',
+          'hls',
+          '-hls_time',
+          '2',
+          '-hls_playlist_type',
+          'vod',
+          '-hls_segment_filename',
+          p(`hls-${name}/seg%03d.m2t`),
+          p(`hls-${name}/index.m3u8`),
+        ]);
+      }
+      writeFileSync(
+        p('master.m3u8'),
+        [
+          '#EXTM3U',
+          '#EXT-X-STREAM-INF:BANDWIDTH=4000000,CODECS="avc1.640028,mp4a.40.2"',
+          'missing-video.m3u8',
+          '#EXT-X-STREAM-INF:BANDWIDTH=70000,CODECS="mp4a.40.2"',
+          'hls-lo/index.m3u8',
+          '#EXT-X-STREAM-INF:BANDWIDTH=170000,CODECS="mp4a.40.2"',
+          'hls-hi/index.m3u8',
+          '',
+        ].join('\n'),
+      );
+      writeFileSync(p('done.flag'), 'ok');
+    } finally {
+      rmSync(lock, { force: true });
     }
-    writeFileSync(
-      p('master.m3u8'),
-      [
-        '#EXTM3U',
-        '#EXT-X-STREAM-INF:BANDWIDTH=4000000,CODECS="avc1.640028,mp4a.40.2"',
-        'missing-video.m3u8',
-        '#EXT-X-STREAM-INF:BANDWIDTH=70000,CODECS="mp4a.40.2"',
-        'hls-lo/index.m3u8',
-        '#EXT-X-STREAM-INF:BANDWIDTH=170000,CODECS="mp4a.40.2"',
-        'hls-hi/index.m3u8',
-        '',
-      ].join('\n'),
-    );
-    writeFileSync(p('done.flag'), 'ok');
   }
+  waitForFixtures(p('done.flag'), lock);
   return {
     mp3Stereo: readFileSync(p('stereo-128.mp3')),
     aacMono: readFileSync(p('mono-22k.aac')),
