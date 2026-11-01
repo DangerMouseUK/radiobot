@@ -207,6 +207,8 @@ Station IDs look like `<pack-id>:<slug>`, for example `mypack:my-station`, and t
 
 The bot loads every pack in `catalog/packs/` and in `EXTRA_PACKS_DIR`. A pack is switched on unless its `enabledByDefault` is `false`. `ENABLED_PACKS` switches on packs that are off by default, and `DISABLED_PACKS` switches any pack off. A pack that fails validation stops start-up with a message naming the file and field.
 
+Radio Bot ships with a starter pack of Radio FG webradio stations, which you can switch off, delete or replace with your own packs.
+
 Each bundled pack's folder includes a `SOURCE_PROVENANCE.md` recording where every stream address came from.
 
 To write a pack, follow [catalog/README.md](catalog/README.md), then check it:

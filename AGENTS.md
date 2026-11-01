@@ -8,7 +8,7 @@ Instructions for AI coding agents (and humans) working in this repository. Read 
 
 - The product name is **Radio Bot** (npm package `radio-bot`, GitHub repository `DangerMouseUK/radiobot`). Never name it after a broadcaster or a station pack, or in any way that implies it belongs to a broadcaster.
 - It is **unofficial**: it is not affiliated with or endorsed by any broadcaster. Station packs name stations only so that people can find them; the names, audio and artwork belong to their owners. Keep that generic disclaimer where it is needed, and never add broadcaster logos or artwork.
-- Outside a pack's own folder (`catalog/packs/<id>/`), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them; use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays.
+- Outside a pack's own folder (`catalog/packs/<id>/`), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them; use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays. The one exception is the README's Station packs section, which says in a single sentence which pack is bundled and that it can be switched off, deleted or replaced; keep that sentence and add no more.
 - Nothing personal or site-specific belongs in the repository: no home-lab, NAS or hosting-provider set-ups, personal names, e-mail addresses, IP addresses, Discord server, channel or user IDs, or tokens. Supported deployments are generic: Docker, bare-metal Linux with systemd, and container platforms that run an always-on worker.
 
 ## Commands

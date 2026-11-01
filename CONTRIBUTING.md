@@ -11,7 +11,7 @@ Contributions that keep to these rules are very welcome. By taking part you agre
 
 **Naming:** the product is **Radio Bot** (package and image `radio-bot`; the repository is [DangerMouseUK/radiobot](https://github.com/DangerMouseUK/radiobot)). Never name it after a broadcaster or a station pack, or in any way that implies it is a broadcaster's product. It is unofficial and not affiliated with or endorsed by any broadcaster; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
-**Pack names stay in the pack:** outside a pack's own folder (`catalog/packs/<id>/`), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them. Use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays.
+**Pack names stay in the pack:** outside a pack's own folder (`catalog/packs/<id>/`), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them. Use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays. The only exception is the one sentence in the README's Station packs section saying which starter pack is bundled and that it can be switched off, deleted or replaced.
 
 ## Development setup
 
