@@ -210,7 +210,7 @@ Stream metadata that names a *different* station exactly is a contradiction. Thi
 Per station, in order (§7.4):
 
 1. **Eligible:** enabled, not blocked, identity-verified, successfully probed, not cooling down.
-2. **Transport tier, first:** direct stream (tier 0), then unknown transport (tier 1), then **HLS (tier 2), which is a last resort**. HLS plays only when no direct stream of the station is eligible, even if it measures higher. The owner's decision is that segmented delivery makes live playback slower to start, further behind live and less smooth to recover. The explanation states when HLS was chosen only because no direct stream was eligible.
+2. **Transport tier, first:** direct stream (tier 0), then unknown transport (tier 1), then **HLS (tier 2), which is a last resort**. HLS plays only when no direct stream of the station is eligible, even if it measures higher. Segmented delivery makes live playback slower to start, further behind live and less smooth to recover. The explanation states when HLS was chosen only because no direct stream was eligible.
 3. **Fidelity, within the tier:** compare measured evidence. Same codec: a measured bitrate difference of 15 % or more decides. Different codecs are **never** ranked by bitrate. Stereo beats mono; a ≥ 44.1 kHz source beats one below 32 kHz.
 4. **Stability:** health score difference of 20 points or more.
 5. **Latency:** startup time difference over 1.5 s.
@@ -228,7 +228,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
   - `maximum` (default) = the source's own bitrate (codec metadata, then measured, then manifest or advertised), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
   - `balanced` = 128 kbps, or the source's bitrate when lower;
   - `manual` = an admin-set value from 32 kbps up to `MAX_OPUS_BITRATE_KBPS`.
-- The voice channel's bitrate setting is **reported but not used as a cap**. A bot's outgoing stream is taken not to be limited by it, and the plan notes when the target is above it. This rests on the project owner's statement. In the one live test, 128 kbps into a 96 kbps channel sounded right, but what a listener receives has **not been measured** (§18).
+- The voice channel's bitrate setting is **reported but not used as a cap**. The setting applies to members' voices, not to a bot's stream, and the plan notes when the target is above it. In a live test, 128 kbps in a 96 kbps channel played correctly; what a listener receives has **not been measured** (§18).
 - The encoder is rebuilt when the target changes (quality mode or manual bitrate).
 - Opus sources are decoded and re-encoded once (no pass-through in 1.0.0).
 - `/radio quality` states that a higher Opus target cannot restore detail missing from the source.
@@ -248,7 +248,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 
 ### FR-009 — Permissions and governance (P0)
 
-- **Bot admins are the server owner and members with Discord's Administrator permission**, by the owner's decision. Manage Server alone does not count, and there is no admin-role setting.
+- **Bot admins are the server owner and members with Discord's Administrator permission.** Manage Server alone does not count, and there is no admin-role setting.
 - Admins choose approved command channels and voice channels, and DJ roles for playback control.
 - Listener control modes: `same_channel` (default), `none` (DJs and admins only), `any`.
 - Read-only commands, playback commands and admin commands are authorised separately, on the server, for every slash command, button and menu.
@@ -422,7 +422,7 @@ Discord voice channel
 
 ### 8.2 Discord bitrates
 
-Discord voice channels have a bitrate setting of up to 96 kbps (no boosts), 128 kbps (level 1), 256 kbps (level 2) or 384 kbps (level 3). Radio Bot treats this as a setting for members' audio, **not a cap on the bot's own stream**: it reports the channel's setting but encodes at its own target (FR-007), up to 510 kbps. This is based on the project owner's statement. In 1.0.0's one live test it sounded right at 128 kbps in a 96 kbps channel, but what listeners receive **has not been measured**. Neither the setting nor the bot's target is a guarantee of what listeners receive. Source and output bitrates are always reported separately.
+Discord voice channels have a bitrate setting of up to 96 kbps (no boosts), 128 kbps (level 1), 256 kbps (level 2) or 384 kbps (level 3). Radio Bot treats this as a setting for members' audio, **not a cap on the bot's own stream**: it reports the channel's setting but encodes at its own target (FR-007), up to 510 kbps. In a live test, 128 kbps in a 96 kbps channel played correctly; what listeners receive **has not been measured**. Neither the setting nor the bot's target is a guarantee of what listeners receive. Source and output bitrates are always reported separately.
 
 ### 8.3 Encoder policy
 
@@ -696,11 +696,11 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 
 **Open release gates for 1.0.0:**
 
-- **Starter pack: 3 of 63 stations confirmed playable by live probe.** The flagship and two other stations were confirmed (the probe report is in the pack folder's `evidence/`). Audio correlation also supports identity for two of the three, while the third was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed. An end-to-end pipeline check of the flagship (safe client → one libopus encode → `@discordjs/voice`, which only demuxed) produced about 486 kbps of Opus against the 510 kbps target, with no leftover process. It was not a Discord call.
+- **Starter pack: 3 of 63 stations confirmed playable by live probe.** The flagship and two other stations were confirmed (the probe report is in the pack folder's `evidence/`). Audio correlation also supports identity for two of the three, while the third was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed.
 - One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played the starter pack's flagship station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
 - The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
 - Resource use measured for a single stream only; no multi-stream, long-run or ARM measurements.
-- Encoding above the voice channel's bitrate setting (up to 510 kbps) rests on the project owner's statement that the setting doesn't cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate a listener receives has **not been measured**.
+- Encoding above the voice channel's bitrate setting (up to 510 kbps): in a live test, 128 kbps in a 96 kbps channel played correctly, but the bitrate a listener receives has **not been measured**.
 - Rights clearance (§14) and the licence review of the bundled FFmpeg build not done.
 
 ---

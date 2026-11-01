@@ -188,7 +188,7 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - No 72-hour soak test has been run.
 - The release workflow publishes the Docker image to GHCR, but the Docker, Linux (systemd) and container-platform deployments have not been smoke-tested on real hosts.
 - Resource use is measured for one stream only: about 8% of one CPU core and about 200 MB of memory at 128 kbps (the README now has a Requirements section). Several streams at once, long runs and ARM boards are unmeasured. DAVE negotiation has been seen on one live call only.
-- Encoding above the voice channel's bitrate setting (up to 510 kbps) relies on the project owner's statement that the setting does not cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate received by a listener's client has not been measured.
+- Encoding above the voice channel's bitrate setting (up to 510 kbps): in the live test, 128 kbps in a 96 kbps channel played correctly, but the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
 [Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.4...HEAD

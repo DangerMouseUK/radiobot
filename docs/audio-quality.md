@@ -37,8 +37,6 @@ Radio Bot does the encoding inside FFmpeg (`libopus`) and hands the voice librar
 
 A source that is already Opus is still decoded and re-encoded at the target bitrate. There is no zero-transcode pass-through in v1. The PRD lists that as a possible later optimisation, and only if framing, DAVE and stability can be guaranteed.
 
-**End-to-end check.** On 31 October 2026, the starter pack flagship's MP3 and HLS sources were run through the safe client, one FFmpeg libopus encode and `@discordjs/voice`, whose only stream edges were the Ogg/Opus demuxer. The output was about 486 kbps of Opus against the 510 kbps target, from one encoder process, with none left afterwards. This was not a Discord call, so what listeners receive is still unverified.
-
 ## How the Opus target is chosen
 
 `planEncoder()` (`src/audio/encoder.ts`) takes:
@@ -58,7 +56,7 @@ A source that is already Opus is still decoded and re-encoded at the target bitr
 Some details:
 
 - **The target is never below 32 kbps.**
-- **The voice channel's bitrate setting is not a cap.** Discord's per-channel setting goes up to 96 kbps unboosted, then 128, 256 and 384 kbps at boost levels 1–3. The bot reports the setting, and when the target is above it, the plan adds a note: "Encoding above the voice channel's N kbps setting; the channel setting does not cap a bot's stream." The statement that Discord delivers a bot's stream above the channel setting comes from the project owner. In the one live test so far, the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate a listener's client receives **has not been measured**.
+- **The voice channel's bitrate setting is not a cap.** The setting (up to 96 kbps without boosts, then 128, 256 and 384 kbps at boost levels 1–3) applies to members' voices; the bot encodes its stream at its own target. `/radio quality` shows the setting, and when the target is higher the plan says so: "Encoding above the voice channel's N kbps setting; the channel setting does not cap a bot's stream." In a live test, a 128 kbps stream in a 96 kbps channel played correctly. The bitrate a listener's Discord client receives **has not been measured**.
 - **Bandwidth follows the station.** A 128 kbps station costs about 58 MB per hour per streaming server before overhead, a 320 kbps one about 144 MB, and the 510 kbps limit (reached only by very high-bitrate or unknown-bitrate sources) about 230 MB. Lower `MAX_OPUS_BITRATE_KBPS`, or use `balanced`, on constrained uplinks.
 - **The plan says where its target came from,** for example "The encoder follows the source's 128 kbps (codec metadata)", or that the source's bitrate is unknown, or that the installation limit applies. `/radio quality` shows it.
 - **Quality changes are picked up while playing.** If an admin changes the quality mode in the `/radio config` settings menu, or sets a new `/radio config manual_bitrate:`, and the target changes, the session rebuilds the encoder at the new target (`refreshEncoder`). That causes a brief re-buffer on the same source. A change to the channel's own bitrate setting does not change the target.

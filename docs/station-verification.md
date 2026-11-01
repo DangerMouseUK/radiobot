@@ -110,7 +110,7 @@ Identity facts about pack sources are shared by every server on the installation
 `selectSource()` in `src/streams/ranking.ts` follows PRD §7.4:
 
 1. **Gate.** Only eligible sources are considered, and a source that just failed in this session is also excluded.
-2. **Transport tier, first.** Direct streams (tier 0) come before sources of unknown transport (tier 1), which come before HLS (tier 2). **HLS is a last resort.** It is used only when no direct stream of the station is eligible, even if the HLS rendition measures higher. The project owner's reasoning is that segmented delivery makes live playback start more slowly, sit further behind live and recover less smoothly. The explanation then says either "Only HLS is available right now; no direct stream of this station is eligible." or "HLS sources are kept as a last-resort fallback (segmented delivery)."
+2. **Transport tier, first.** Direct streams (tier 0) come before sources of unknown transport (tier 1), which come before HLS (tier 2). **HLS is a last resort.** It is used only when no direct stream of the station is eligible, even if the HLS rendition measures higher. Segmented delivery makes live playback start more slowly, sit further behind live and recover less smoothly. The explanation then says either "Only HLS is available right now; no direct stream of this station is eligible." or "HLS sources are kept as a last-resort fallback (segmented delivery)."
 3. **Fidelity, from evidence only, within a tier.** `compareFidelity(a, b)`:
    - Stereo beats mono.
    - A clear difference in audio bandwidth counts: one source below 32 kHz and the other at 44.1 kHz or above.
