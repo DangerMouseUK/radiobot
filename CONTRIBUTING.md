@@ -9,7 +9,7 @@ Thank you for helping. Radio Bot is a small, self-hosted Discord radio bot. Its 
 
 Contributions that keep to these rules are very welcome. By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-**Naming:** the product is **Radio Bot** (package and image `radio-bot`; the repository is [DangerMouseUK/radiobot](https://github.com/DangerMouseUK/radiobot)). Please don't call it "FG Radio" or anything else that implies it is a broadcaster's product. It is unofficial; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
+**Naming:** the product is **Radio Bot** (package and image `radio-bot`; the repository is [DangerMouseUK/radiobot](https://github.com/DangerMouseUK/radiobot)). Don't call it "FG Radio" or anything else that implies it is a broadcaster's product. It is unofficial; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
 ## Development setup
 
@@ -17,7 +17,7 @@ You need:
 
 - **Node.js 24.17 or newer.** `package.json` enforces it with `engines`. The code runs straight from `.ts` files through Node's type stripping (`pnpm dev`, CI's catalogue check) and uses the built-in `node:sqlite`.
 - **pnpm.** The version is pinned in `packageManager`. Run `corepack enable` and Node will provide the right one.
-- **FFmpeg and FFprobe with `libopus`,** for playback and for the stream integration tests. `ffmpeg-static` and `ffprobe-static` are dev dependencies for local tests, or you can use a system FFmpeg and set `FFMPEG_PATH` and `FFPROBE_PATH`.
+- **FFmpeg and FFprobe with `libopus`,** for playback and for the stream integration tests. `ffmpeg-static` and `ffprobe-static` are dev dependencies for local tests, or you can use a system FFmpeg and set `FFMPEG_PATH` and `FFPROBE_PATH`. On Linux, point the tests at the system FFmpeg (`FFMPEG_PATH=/usr/bin/ffmpeg FFPROBE_PATH=/usr/bin/ffprobe pnpm test`), because the `ffmpeg-static` Linux build crashes on the HLS fixtures.
 
 ```sh
 corepack enable
@@ -50,13 +50,13 @@ Use a separate Discord application and a private test server for development. Ne
 - New behaviour has tests. Bug fixes have a test that failed before the fix.
 - Documentation is updated where behaviour changed: `README.md`, `docs/` and `CHANGELOG.md` under *Unreleased*. The docs must describe what the code actually does.
 - Commits and pull request descriptions explain *why*, not just *what*.
-- There are no secrets anywhere: no tokens, no `.env`, no signed or tokenised stream URLs, and no real user, server or channel IDs in fixtures.
+- There are no secrets anywhere: no tokens, no `.env`, no signed or tokenised stream URLs, and no real user, server or channel IDs in fixtures. For IDs, use the fakes the secret scanner already allows (`123456789012345678`, `223456789012345678`, `111111111111111111` and so on; see `.gitleaks.toml`).
 
 ## Rules for particular areas
 
 ### Catalogue changes
 
-Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The bundled starter pack is `catalog/packs/fg/`. A new pack must be **unofficial-labelled** (with a `disclaimer` and no logos or artwork) unless the broadcaster has agreed otherwise. For these files:
+Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The bundled starter pack is `catalog/packs/fg/`. A new pack must be **labelled as unofficial** (with a `disclaimer` and no logos or artwork) unless the broadcaster has agreed otherwise. For these files:
 
 - **Every source mapping needs provenance and evidence:**
   - **Provenance:** how the URL is tied to the station, and when. For example: "Official radiofg.com web player entry `<officialId>` redirected to this mount on YYYY-MM-DD". Put this in `provenanceDetail`, and add a row or section to `SOURCE_PROVENANCE.md`.

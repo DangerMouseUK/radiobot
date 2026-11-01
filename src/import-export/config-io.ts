@@ -142,6 +142,16 @@ export function parseImport(text: string): GuildExport {
   return r.data;
 }
 
+/** Readable names for the setting values shown in an import preview. */
+const VALUE_LABEL: Record<string, string> = {
+  same_channel: 'listeners in the bot’s channel',
+  none: 'DJs and admins only',
+  any: 'anyone',
+  leave_when_empty: 'leave',
+  pause_when_empty: 'pause',
+  '24x7': 'keep playing (24/7)',
+};
+
 /** Validates against the current guild/catalogue and describes what would change. */
 export function previewImport(
   guildId: string,
@@ -155,20 +165,21 @@ export function previewImport(
   const lines: string[] = [];
   const warnings: string[] = [];
   const s = data.settings;
+  const show = (v: unknown) =>
+    v === null ? 'none' : typeof v === 'boolean' ? (v ? 'on' : 'off') : (VALUE_LABEL[String(v)] ?? String(v));
   const diff = (label: string, a: unknown, b: unknown) => {
-    if (JSON.stringify(a) !== JSON.stringify(b))
-      lines.push(`• ${label}: ${JSON.stringify(a)} → ${JSON.stringify(b)}`);
+    if (JSON.stringify(a) !== JSON.stringify(b)) lines.push(`• ${label}: ${show(a)} → ${show(b)}`);
   };
-  diff('Allowed text channels', cur.allowedTextChannelIds.length, s.allowedTextChannelIds.length);
-  diff('Allowed voice channels', cur.allowedVoiceChannelIds.length, s.allowedVoiceChannelIds.length);
-  diff('DJ roles', cur.djRoleIds.length, s.djRoleIds.length);
-  diff('Member control', cur.memberControlMode, s.memberControlMode);
+  diff('Number of command channels', cur.allowedTextChannelIds.length, s.allowedTextChannelIds.length);
+  diff('Number of voice channels', cur.allowedVoiceChannelIds.length, s.allowedVoiceChannelIds.length);
+  diff('Number of DJ roles', cur.djRoleIds.length, s.djRoleIds.length);
+  diff('Who else can control the radio', cur.memberControlMode, s.memberControlMode);
   diff('Default station', cur.defaultStationId, s.defaultStationId);
-  diff('Quality mode', cur.qualityMode, s.qualityMode);
-  diff('Idle mode', cur.idleMode, s.idleMode);
+  diff('Quality', cur.qualityMode, s.qualityMode);
+  diff('When the channel is empty', cur.idleMode, s.idleMode);
   diff('Autostart', cur.autostart, s.autostart);
-  diff('Resume on restart', cur.resumeOnRestart, s.resumeOnRestart);
-  diff('Voice lock', cur.voiceLock, s.voiceLock);
+  diff('Resume after restart', cur.resumeOnRestart, s.resumeOnRestart);
+  diff('Lock to preferred channel', cur.voiceLock, s.voiceLock);
   const unknownChannels = [
     ...s.allowedTextChannelIds,
     ...s.allowedVoiceChannelIds,
@@ -188,11 +199,11 @@ export function previewImport(
   lines.push(`• Favourites: ${data.favourites.length}`);
   lines.push(`• Source preferences: ${data.sourcePreferences.length}`);
   const importable = data.customStations.filter((c) => !c.urlRedacted);
-  lines.push(`• Custom stations to add: ${importable.length} (each is re-validated before it is added)`);
+  lines.push(`• Custom stations to add: ${importable.length} (each one is checked again before it is added)`);
   const redacted = data.customStations.length - importable.length;
   if (redacted > 0)
     warnings.push(
-      `${redacted} custom station URL(s) were redacted on export and will be skipped; re-add them manually.`,
+      `${redacted} custom station URL(s) were left out of the export and will be skipped. Add them again with /radio add.`,
     );
   return { data, lines, warnings };
 }

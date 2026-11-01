@@ -125,18 +125,18 @@ describe('guild settings import', () => {
     const p = previewImport(DST, data, t.guilds, t.stations, existingChannels, existingRoles);
     expect(p.lines).toEqual(
       expect.arrayContaining([
-        '• Member control: "same_channel" → "none"',
-        '• Default station: null → "fg:fg-chic"',
+        '• Who else can control the radio: listeners in the bot’s channel → DJs and admins only',
+        '• Default station: none → fg:fg-chic',
         '• Favourites: 3',
         '• Source preferences: 1',
-        '• Custom stations to add: 1 (each is re-validated before it is added)',
+        '• Custom stations to add: 1 (each one is checked again before it is added)',
       ]),
     );
     expect(p.warnings).toEqual([
       '2 channel ID(s) do not exist here and will be dropped.',
       '1 role ID(s) do not exist here and will be dropped.',
       '1 station ID(s) are not in this catalogue and will be skipped.',
-      '1 custom station URL(s) were redacted on export and will be skipped; re-add them manually.',
+      '1 custom station URL(s) were left out of the export and will be skipped. Add them again with /radio add.',
     ]);
   });
 

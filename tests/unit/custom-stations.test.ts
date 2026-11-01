@@ -107,7 +107,7 @@ describe('adding custom stations (FR-011)', () => {
       t.service.add(G, 'u', { name: 'Dead', url: 'https://dead.example.org/' }),
     ).rejects.toMatchObject({
       code: 'HTTP_STATUS',
-      userMessage: expect.stringMatching(/Nothing was added/),
+      userMessage: expect.stringMatching(/nothing was added/),
     });
     await expect(
       t.service.add(G, 'u', { name: 'Slow', url: 'https://slow.example.org/' }),

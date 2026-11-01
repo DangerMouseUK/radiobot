@@ -6,7 +6,7 @@ The bot needs **outbound** internet access to Discord (HTTPS, WebSocket and UDP 
 
 You run your own Discord application with your own token. Radio Bot is unofficial and is not affiliated with or endorsed by Radio FG / Maison FG or any broadcaster. Before running it for anyone other than yourself, read [rights-and-disclaimer.md](rights-and-disclaimer.md).
 
-> Status: this path follows standard Node.js and systemd practice. Like the other deployment paths, it has not yet been smoke-tested end to end against a live Discord server for v1.0.0.
+> Status: this path follows standard Node.js and systemd practice, but it has not yet been tested end to end against a live Discord server for v1.0.0.
 
 ## Requirements
 
@@ -38,7 +38,7 @@ sudo chmod 600 /etc/radio-bot/radio-bot.env
 sudo nano /etc/radio-bot/radio-bot.env
 ```
 
-Set at least `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`. Leave `DATABASE_PATH` commented out, as it is in `.env.example`: the service unit sets it to `/var/lib/radio-bot/radio-bot.sqlite`, and systemd lets a value in the env file override the unit's, which would point the bot at a directory it cannot write to. Leave `FFMPEG_PATH`/`FFPROBE_PATH` commented out if `ffmpeg` and `ffprobe` are on the system `PATH`.
+Set at least `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`. Leave `DATABASE_PATH` commented out, as it is in `.env.example`. The service unit sets it to `/var/lib/radio-bot/radio-bot.sqlite`, and a value in the env file would override the unit's and point the bot at a directory it cannot write to. Leave `FFMPEG_PATH`/`FFPROBE_PATH` commented out if `ffmpeg` and `ffprobe` are on the system `PATH`.
 
 ## 3. Install the service
 

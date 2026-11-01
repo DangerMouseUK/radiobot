@@ -114,7 +114,8 @@ export class SourceService {
 
   /** Probes one source (deduplicated, rate-bounded: global and per-host limits). */
   probe(sourceId: string, opts: { signal?: AbortSignal; budget?: ProbeBudget } = {}): Promise<ProbeReport> {
-    if (opts.signal?.aborted) return Promise.reject(new RadioError('CANCELLED', 'Probe cancelled.'));
+    if (opts.signal?.aborted)
+      return Promise.reject(new RadioError('CANCELLED', 'The stream check was cancelled.'));
     let shared = this.#inflight.get(sourceId);
     if (!shared) {
       // The probe itself is bounded by its own budget and is not tied to any caller's signal,
@@ -380,7 +381,7 @@ export class SourceService {
       } catch (err) {
         if (errorCode(err) === 'CANCELLED') throw err;
       }
-      if (opts.signal?.aborted) throw new RadioError('CANCELLED', 'Playback request superseded.');
+      if (opts.signal?.aborted) throw new RadioError('CANCELLED', 'Replaced by a newer request.');
       selection = this.select(guildId, stationId, opts.exclude);
     }
     if (remaining.length > 0) this.refreshInBackground(remaining);
@@ -416,7 +417,7 @@ export class SourceService {
     const selection = this.select(guildId, stationId);
     const incumbent = selection.selected;
     if (!incumbent)
-      throw new RadioError('NO_ELIGIBLE_SOURCE', 'No verified source exists to compare against.');
+      throw new RadioError('NO_ELIGIBLE_SOURCE', 'There is no verified source to compare against.');
     const targets = this.sourcesFor(stationId).filter(
       (s) => s.id !== incumbent.id && s.enabled && (opts.all || s.identityStatus !== 'verified'),
     );
@@ -526,7 +527,7 @@ function latestCorrelation(evidence: IdentityEvidence[]): IdentityEvidence | nul
 
 function raceSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new RadioError('CANCELLED', 'Probe wait cancelled.'));
+    const onAbort = () => reject(new RadioError('CANCELLED', 'The stream check was cancelled.'));
     if (signal.aborted) {
       onAbort();
       return;

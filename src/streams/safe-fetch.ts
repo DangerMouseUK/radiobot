@@ -77,7 +77,8 @@ export class SafeHttpClient {
         typeof options === 'object' && options !== null && (options as { all?: boolean }).all === true;
       this.#resolve(hostname)
         .then((addresses) => {
-          if (addresses.length === 0) throw new RadioError('DNS_FAILED', 'The stream host did not resolve.');
+          if (addresses.length === 0)
+            throw new RadioError('DNS_FAILED', 'The stream’s host name could not be found.');
           for (const a of addresses) this.policy.assertAddressAllowed(a.address);
           if (wantAll) callback(null, addresses);
           else callback(null, addresses[0]!.address, addresses[0]!.family);
@@ -86,7 +87,7 @@ export class SafeHttpClient {
           callback(
             err instanceof RadioError
               ? err
-              : new RadioError('DNS_FAILED', 'The stream host could not be resolved.', { cause: err }),
+              : new RadioError('DNS_FAILED', 'The stream’s host name could not be found.', { cause: err }),
           );
         });
     }) as LookupFunction;
@@ -258,7 +259,7 @@ export function statusError(status: number): RadioError {
       `The stream host refused access (HTTP ${status}). Radio Bot does not bypass access restrictions.`,
     );
   }
-  return new RadioError('HTTP_STATUS', `The stream server answered HTTP ${status}.`);
+  return new RadioError('HTTP_STATUS', `The stream server returned an error (HTTP ${status}).`);
 }
 
 export function headerString(headers: IncomingHttpHeaders, name: string): string | null {

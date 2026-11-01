@@ -29,7 +29,7 @@ node scripts/validate-catalogue.ts # validate every station pack, straight from 
 
 **Definition of done** for any change: `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` succeeds. If you touch `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` must pass too. CI (`.github/workflows/ci.yml`) runs all of these, then builds the Docker image and smoke-tests it (FFmpeg has `libopus`; a missing token exits with code 78).
 
-The tests need FFmpeg and FFprobe. They use `ffmpeg-static` / `ffprobe-static` from the dev dependencies, or a system FFmpeg via `FFMPEG_PATH` / `FFPROBE_PATH`. The tests never touch the real network, real radio stations or Discord.
+The tests need FFmpeg and FFprobe. They use `ffmpeg-static` / `ffprobe-static` from the dev dependencies, or a system FFmpeg via `FFMPEG_PATH` / `FFPROBE_PATH`. **On Linux, use the system FFmpeg** (`FFMPEG_PATH=/usr/bin/ffmpeg FFPROBE_PATH=/usr/bin/ffprobe pnpm test`): `ffmpeg-static`'s Linux build crashes while decoding the HLS fixtures, which is why CI installs the distro FFmpeg, as the Docker image does. The tests never touch the real network, real radio stations or Discord.
 
 ## TypeScript and style
 
@@ -157,6 +157,7 @@ The README's "Project status" section lists what has **not** been verified, such
 ## Safety and secrets
 
 - Never commit `.env`, tokens, real Discord IDs, or signed or tokenised stream URLs. Logs and errors pass through redaction (`src/shared/redact.ts`, the logger's redact paths); keep new fields that could hold secrets or URLs covered.
+- CI runs gitleaks on every push and pull request and over the whole history weekly. `.gitleaks.toml` keeps every default rule and allowlists only the fake values used in docs and tests (`replace-with-your-…` placeholders, `123456789012345678`-style and repeated-digit IDs). Use those fakes in new docs and tests; never widen the allowlist to make a real-looking value pass.
 - Use a separate Discord application and a private test server for any live testing.
 - Don't commit, push, tag or publish images unless the maintainer asks.
 - A release tag `vX.Y.Z` must equal `package.json`'s `version` and the default image tag in `compose.yaml`; the release workflow refuses otherwise, and `radio-bot update` relies on that match to pull the right image.

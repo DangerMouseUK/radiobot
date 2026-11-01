@@ -148,7 +148,6 @@ export interface SessionLiveStats {
     /** Packets per second sent to Discord over the last sampling window (expect ~50). */
     packetsPerSecond: number | null;
     ws: LatencySummary | null;
-    udp: LatencySummary | null;
   };
 }
 
@@ -238,7 +237,6 @@ export class GuildSession {
   #failingRun = -1;
   #connectedSince: number | null = null;
   #wsPing = new LatencySeries(24);
-  #udpPing = new LatencySeries(24);
   #packetSamples: Array<{ at: number; packets: number }> = [];
   #destroyed = false;
 
@@ -519,7 +517,6 @@ export class GuildSession {
     this.#link = link;
     this.#connectedSince = Date.now();
     this.#wsPing = new LatencySeries(24);
-    this.#udpPing = new LatencySeries(24);
     this.#packetSamples = [];
     link.on('lost', (reason) => this.#onLinkLost(link, reason));
     link.on('reconnected', () => {
@@ -551,14 +548,15 @@ export class GuildSession {
       return this.#streamLimitReached(gen);
     }
     const commands = this.#commands;
-    this.#runAbort?.abort();
-    const abort = new AbortController();
-    this.#runAbort = abort;
     this.#clearTimer('retry');
     this.#clearTimer('stable');
     const wasPlaying = this.#pipeline !== null;
     if (wasPlaying && this.#state === 'PLAYING') this.#setState('SWITCHING');
+    // Tears down the previous run, aborting its probes and requests. The new run's controller is
+    // created afterwards: created first, the teardown would abort it and cancel every start.
     this.#teardownAudio();
+    const abort = new AbortController();
+    this.#runAbort = abort;
     try {
       const linked = await this.#ensureLink(gen, channelId);
       if (!linked) return this.#superseded();
@@ -603,7 +601,10 @@ export class GuildSession {
       this.#nowPlaying = null;
       pipeline.on('failed', (err) => void this.#handleFailure(runId, err.code, err.userMessage));
       pipeline.on('metadata', (m) => {
-        if (runId === this.#runId) this.#nowPlaying = m;
+        if (runId !== this.#runId) return;
+        if (m?.title !== this.#nowPlaying?.title)
+          this.#log.debug({ title: m?.title ?? null }, 'stream title');
+        this.#nowPlaying = m;
       });
       this.#link!.play(pipeline.output);
       this.#startedAt = Date.now();
@@ -620,7 +621,7 @@ export class GuildSession {
         return {
           ok: false,
           code: 'STREAM_STALLED',
-          message: 'The station did not deliver audio in time; retrying.',
+          message: 'The station did not send any audio in time. Retrying…',
           selection,
           plan,
           retrying: true,
@@ -671,21 +672,23 @@ export class GuildSession {
           guildId: this.guildId,
           kind: 'degraded',
           code: null,
-          message: `Degraded — using fallback source (${source.label ?? source.id}).`,
+          message: `The usual source failed, so the radio is playing from a fallback (${source.label ?? source.id}).`,
         });
       } else if (opts.reason === 'recover') {
         this.#d.notify({
           guildId: this.guildId,
           kind: 'recovered',
           code: null,
-          message: 'Stream recovered.',
+          message: 'The stream has recovered and is playing again.',
         });
       }
       return { ok: true, code: null, message: 'Playing.', selection, plan };
     } catch (err) {
       if (gen !== this.#gen) return this.#superseded();
       const code = errorCode(err);
-      const message = isRadioError(err) ? err.userMessage : 'Unexpected error while starting playback.';
+      const message = isRadioError(err)
+        ? err.userMessage
+        : 'Something went wrong while starting the station.';
       if (code === 'CANCELLED') return this.#superseded();
       if (code.startsWith('VOICE_')) {
         this.#persist('playing', { lastErrorCode: code });
@@ -721,7 +724,7 @@ export class GuildSession {
    */
   #streamLimitReached(gen: number): StartResult {
     const message =
-      'This Radio Bot installation is already streaming to its configured maximum number of servers. I will try again in a couple of minutes.';
+      'This bot is already playing in as many servers as its operator allows. I will try again in a couple of minutes.';
     const first = this.#lastError?.code !== 'STREAM_LIMIT';
     this.#teardownAudio();
     this.#lastError = { code: 'STREAM_LIMIT', message, at: new Date().toISOString() };
@@ -738,7 +741,7 @@ export class GuildSession {
     return {
       ok: false,
       code: 'CANCELLED',
-      message: 'Superseded by a newer request.',
+      message: 'Replaced by a newer request.',
       selection: null,
       plan: null,
     };
@@ -801,7 +804,7 @@ export class GuildSession {
       guildId: this.guildId,
       kind: 'failover',
       code,
-      message: `Source failed (${message}). Trying a verified fallback…`,
+      message: `The current source failed: ${message} Switching to a verified fallback…`,
     });
     if (gen !== this.#gen) return;
     this.#gen++;
@@ -860,7 +863,7 @@ export class GuildSession {
   #scheduleVoiceReconnect(code: ReasonCode, message: string): void {
     const attempt = this.#voiceReconnectAttempts++;
     if (attempt >= this.#t.reconnectBackoff.length) {
-      this.#enterError(code, `${message} Could not reconnect; use /radio play to try again.`);
+      this.#enterError(code, `${message} I couldn’t reconnect. Use /radio play to try again.`);
       return;
     }
     this.#lastError = { code, message, at: new Date().toISOString() };
@@ -896,7 +899,6 @@ export class GuildSession {
     if (!this.#link) return;
     const v = this.#link.stats();
     this.#wsPing.add(v.wsPingMs);
-    this.#udpPing.add(v.udpPingMs);
     if (v.packetsPlayed !== null) {
       this.#packetSamples.push({ at: Date.now(), packets: v.packetsPlayed });
       if (this.#packetSamples.length > 13) this.#packetSamples.shift();
@@ -1040,7 +1042,6 @@ export class GuildSession {
               packetsPlayed: v.packetsPlayed,
               packetsPerSecond,
               ws: this.#wsPing.summary(),
-              udp: this.#udpPing.summary(),
             }
           : null,
     };

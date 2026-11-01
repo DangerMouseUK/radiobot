@@ -146,11 +146,11 @@ export function runWithInput(
     };
     const timer = setTimeout(() => {
       terminate(child);
-      finish(() => reject(new RadioError('PROBE_TIMEOUT', 'The audio inspection took too long.')));
+      finish(() => reject(new RadioError('PROBE_TIMEOUT', 'Checking the stream took too long.')));
     }, opts.timeoutMs);
     const onAbort = () => {
       terminate(child);
-      finish(() => reject(new RadioError('CANCELLED', 'Inspection cancelled.')));
+      finish(() => reject(new RadioError('CANCELLED', 'The stream check was cancelled.')));
     };
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     if (opts.signal?.aborted) onAbort();
@@ -158,7 +158,9 @@ export function runWithInput(
       outSize += c.length;
       if (opts.maxStdout && outSize > opts.maxStdout) {
         terminate(child);
-        finish(() => reject(new RadioError('BODY_TOO_LARGE', 'Inspection output exceeded its limit.')));
+        finish(() =>
+          reject(new RadioError('BODY_TOO_LARGE', 'The stream check produced more output than allowed.')),
+        );
         return;
       }
       out.push(c);

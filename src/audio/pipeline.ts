@@ -107,7 +107,7 @@ export class AudioPipeline extends EventEmitter<PipelineEvents> {
       this.#fail(
         isRadioError(err)
           ? err
-          : new RadioError('HTTP_ERROR', 'The station connection failed.', { cause: err }),
+          : new RadioError('HTTP_ERROR', 'The connection to the station failed.', { cause: err }),
       );
     });
     input.stream.on('end', () => {

@@ -50,14 +50,14 @@ export function isAudioActive(state: PlaybackState): boolean {
 
 export const STATE_LABEL: Record<PlaybackState, string> = {
   IDLE: 'Idle',
-  JOINING: 'Joining voice channel',
-  CONNECTED: 'Connected (not playing)',
-  BUFFERING: 'Buffering',
+  JOINING: 'Joining the voice channel',
+  CONNECTED: 'In the voice channel, not playing',
+  BUFFERING: 'Starting the stream',
   PLAYING: 'Playing',
   SWITCHING: 'Switching station',
   RECOVERING: 'Reconnecting to the stream',
   FAILING_OVER: 'Switching to a fallback source',
   STOPPING: 'Stopping',
   LEAVING: 'Leaving',
-  ERROR: 'Error',
+  ERROR: 'Stopped by a problem',
 };

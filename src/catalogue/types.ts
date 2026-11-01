@@ -117,7 +117,7 @@ export const AVAILABILITY_LABEL: Record<StationAvailability, string> = {
   unverified: 'Unverified',
   unavailable: 'Temporarily unavailable',
   no_source: 'No stream source known',
-  retired: 'Removed/retired',
+  retired: 'Retired',
 };
 
 export interface StationWithSources {

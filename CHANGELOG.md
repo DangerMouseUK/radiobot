@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-10-31
+## [1.0.0] - 2026-11-01
 
-First public release of the code. Not yet tagged or published: this entry describes the code as built for 1.0.0 (`package.json` version `1.0.0`); the open items are listed under *Release status* below.
+First public release. The items not yet verified are listed under *Release status* below.
 
 > **Unofficial integration, not endorsed by the broadcaster.** Radio Bot is an independent project. It is not affiliated with, endorsed by or sponsored by Radio FG, Maison FG or any other broadcaster. The bundled starter station pack names their stations only to identify them. The MIT licence covers this project's original code only. The rights and branding release gate (PRD §14) is **not** resolved by this release; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
@@ -24,7 +24,7 @@ First public release of the code. Not yet tagged or published: this entry descri
 - **The bundled starter pack, Radio FG / Maison FG (`fg`).** It has all 63 stations on the official webradio list as of 31 October 2026, and 126 candidate sources from the official web player's redirects. 122 sources are enabled. 4 are disabled because the site's own mapping was broken: two HLS 404s, one duplicate mislabelled as `.m3u8`, and one direct mount returning 401. Provenance is in `catalog/packs/fg/SOURCE_PROVENANCE.md`.
 - **Pack validation at start-up.** Start-up checks the schema; unique pack IDs, slugs and (across packs) source IDs; names and aliases unique within a pack; declared categories; source-to-station references; and that no URL is mapped to two stations.
 - **Per-pack catalogue sync through adapters** (`radiofg-apidata`, `json-name-list`). It reconciles names and stable IDs with each pack's official list, on one daily schedule per syncable pack, or on `/radio sync [pack]`. It never harvests stream URLs and ignores signed play URLs. Renames keep station IDs and favourites. Missing stations are kept and flagged. New stations need a reviewed source mapping. Each run produces a report.
-- Truthful station availability labels: Available, Degraded, Unverified, Temporarily unavailable, No stream source known, Removed/retired. Nothing else is ever played in a station's place.
+- Truthful station availability labels: Available, Degraded, Unverified, Temporarily unavailable, No stream source known, Retired. Nothing else is ever played in a station's place.
 
 **Source inspection and selection**
 
@@ -37,7 +37,7 @@ First public release of the code. Not yet tagged or published: this entry descri
 **Audio and voice**
 
 - Playback with a single encode: source bytes → FFmpeg (stdin only, `-protocol_whitelist pipe`) → `libopus` 48 kHz stereo, music mode, 20 ms, VBR → Ogg Opus → `@discordjs/voice` with `StreamType.OggOpus`. There is no second encode, and no normalisation, EQ or compression.
-- In `maximum` mode the Opus target matches the source's own bitrate (codec metadata, then measured, then manifest or advertised) up to `MAX_OPUS_BITRATE_KBPS` (default 510 kbps), so a 128 kbps station is sent at 128 kbps, not padded to 510; an unknown source bitrate uses the limit. `balanced` is 128 kbps or the source's rate if lower, or an admin-set value, capped at `MAX_OPUS_BITRATE_KBPS` in `manual` mode. The voice channel's bitrate setting is reported but not used as a cap, and a note appears when encoding above it. The encoder is rebuilt when the target changes.
+- In `maximum` mode the Opus target matches the source's own bitrate (codec metadata, then measured, then manifest or advertised) up to `MAX_OPUS_BITRATE_KBPS` (default 510 kbps), so a 128 kbps station is sent at 128 kbps, not padded to 510; an unknown source bitrate uses the limit. `balanced` uses 128 kbps, or the source's rate if that is lower, and `manual` uses an admin-set value capped at `MAX_OPUS_BITRATE_KBPS`. The voice channel's bitrate setting is reported but not used as a cap, and a note appears when encoding above it. The encoder is rebuilt when the target changes.
 - DAVE end-to-end encryption is requested. The bot joins self-deafened.
 - An HLS reader (live edge, rendition ranking that ignores `BANDWIDTH` values which are really sample rates such as 44100, segment retry, resync, encrypted HLS refused), PLS/M3U resolution, and ICY metadata demuxing, which supplies now-playing text from stream metadata only.
 - Recovery:
@@ -59,8 +59,8 @@ First public release of the code. Not yet tagged or published: this entry descri
 - `/radio stats` (Administrators): a private live statistics panel with Refresh and Close. It shows:
   - **stream**: hosts with region hints, connected IP and port, HLS segments, input rate over 10 s and 60 s, and TCP round trip to the stream endpoint;
   - **output**: Opus target, Ogg Opus rate and packets per second to Discord;
-  - **Discord connection**: voice endpoint, RTC region, voice WebSocket and UDP ping with jitter, gateway ping, encryption/DAVE;
-  - **bot health**.
+  - **Discord connection**: voice endpoint, RTC region, voice WebSocket ping with jitter, gateway ping, encryption/DAVE;
+  - **bot health**, including the event-loop delay over the last minute, so late voice packets can be told apart from network problems.
 - Server-side authorisation on every command, button and menu. Access levels are admin (server owner or Discord's Administrator permission only; Manage Server doesn't count and there is no admin-role setting), DJ (DJ roles) and member. Listener control modes are `none`, `same_channel` and `any`. There are command and voice channel allowlists, which admins bypass for commands, and an optional voice-channel lock.
 - Signed, guild-bound, expiring component IDs, plus a persistent control panel that is re-rendered after restarts.
 - Rate limits on play/switch, probes, custom-station adds, syncs and button clicks. Installation-wide limits on concurrent streams and probes, and a per-server limit on custom stations.
@@ -98,7 +98,10 @@ A full code review before tagging found and fixed these; each has a regression t
 - **Boot:** resume and autostart skip retired stations and stations of packs switched off with `DISABLED_PACKS`.
 - **Streams:** a probe no longer accepts a direct stream that ends within the sample (such as a short "offline" file). A playlist with any encrypted segment stays refused as encrypted. HLS playlist and segment 401/403/451 report `ACCESS_DENIED`. A probe that runs out of time reports `PROBE_TIMEOUT`, not `CANCELLED`. A duplicated or invalid `icy-metaint` header can no longer let metadata bytes reach FFmpeg. A huge `#EXT-X-TARGETDURATION` is clamped. Source selection no longer depends on database row order, and the explanation no longer calls a conclusive comparison "not conclusively determined".
 - **Discord:** picking from the "Which station did you mean?" list always started playback, whatever command produced it; only `/radio play` now offers the picker (keeping its `channel`), and other commands ask for the exact name. An ambiguous name in `/radio queue add` no longer reports an internal error. Stream track titles are shown as plain text (no links or headings). `/radio rescan` stays within Discord's per-message size limit. `/radio join` and `/radio edit url:` are rate-limited, and importing the same file twice no longer duplicates custom stations, whose probes now count against the add limit.
+- **Playback (found in the first live Discord test):** every start cancelled itself, so nothing ever played and `/radio play` answered "Superseded". Tearing down the previous run aborted the new run's requests as well. The session tests now use a stream opener that honours cancellation, as the real HTTP client does. `/radio stats` no longer shows a voice UDP ping: `@discordjs/voice` 0.19 stopped measuring it, so the line could only ever say "not measured yet".
+- **Probe:** the decode check stops at the start of the sample's last packet. The sample is cut wherever the sampling window closes, usually mid-frame, and MP3 reported that cut as a decode error ("invalid new backstep") on some probes by chance.
 - **Final QA:** changing the idle mode while an empty-channel timer was pending no longer lets the old timer leave or pause. Applying an import now updates the playing stream's quality and idle behaviour at once. The stats panel's Close button is authorised like every other button. `manual` quality with no bitrate set follows the station like `maximum` (it used the 510 kbps limit). Truncated text never splits an emoji. `radio-bot restart` now recreates the container, so edits to `.env` take effect; `radio-bot uninstall` moves earlier backups out of the folder before deleting it, and says when it can't copy the data; `radio-bot restore` accepts a file named from the current folder; the manager refuses Docker Compose older than 2.24, which `compose.yaml` needs; and the installer explains when it asks for the `sudo` password.
+- **Secret scanning:** `.gitleaks.toml` allowlists the documented fake IDs and the `replace-with-your-…` placeholders, which gitleaks reported as Discord credentials on the first push. Every default rule stays on.
 - **Data:** a source moved to another station by a pack update is moved on upgrade, with its old evidence and pins cleared. A failed custom-station URL edit restores the previous source exactly. Import ignores other servers' custom stations and repeated favourites. Removing the bot from a server also clears its command-registration record, so a re-invite registers `/radio` again. Catalogue sync applies all-or-nothing, and keeps its last 50 reports per pack. A manual backup run as root keeps the service user's ownership. The health check reports unhealthy when FFmpeg or `libopus` is missing, and ignores a heartbeat left by a previous run.
 
 ### Release status: not yet verified
@@ -108,12 +111,12 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - **Only 3 of the starter pack's 63 stations are confirmed by live probe.** On 31 October 2026 (`catalog/packs/fg/evidence/probe-2026-10-31.json`), FG DJ RADIO, FG CHIC and FG DANCE all played: direct MP3 at 128 kbps, HLS AAC-LC at 128 kbps, and FG DJ RADIO's direct AAC-LC at 128 kbps, all 44.1 kHz stereo. One flagship HLS address timed out. The other 60 stations use the same host and pattern but have not been probed.
 - An end-to-end pipeline check (no Discord call) of FG DJ RADIO, MP3 and HLS, produced about 486 kbps Opus against a 510 kbps target. It used a single encoder process, the voice library only demuxed, and no process was left behind.
 - Identity "verified" for pack sources rests on official-player provenance. Audio correlation additionally supports FG DJ RADIO (MP3 against HLS at 0.58, MP3 against AAC at 0.61) and FG DANCE (MP3 against HLS at 0.90). FG CHIC was inconclusive in the latest run, having matched in earlier runs. No listening review has been recorded.
-- The stream-side `/radio stats` figures were checked on the real flagship stream: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported. The **Discord-side** figures (voice endpoint, WebSocket and UDP ping, packets per second) are implemented but **not yet observed on a live call**.
-- No live Discord end-to-end test has been recorded: minimum-permission install, audibility from a separate client, station switching with identity checks, permission scenarios, and kick, move and delete handling.
+- The stream-side `/radio stats` figures were checked on the real flagship stream: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported. The **Discord-side** figures (voice endpoint, WebSocket ping, packets per second, encryption) were seen on the live call below.
+- One live Discord test has been run. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. It found the self-cancelling start that is fixed above. Not yet tested live: station switching with identity checks, permission scenarios, and kick, move and delete handling.
 - No 72-hour soak test has been run.
-- The Docker image has not yet been published to GHCR, and the Docker, Linux (systemd) and container-platform deployments have not been smoke-tested.
-- No CPU, memory or bandwidth benchmarks, and no check of DAVE negotiation on live calls.
-- Encoding above the voice channel's bitrate setting (up to 510 kbps) relies on the project owner's statement that the setting does not cap a bot's stream. It **has not been verified against a live call**, and the bitrate received by an external client has not been confirmed.
+- The release workflow publishes the Docker image to GHCR, but the Docker, Linux (systemd) and container-platform deployments have not been smoke-tested on real hosts.
+- No CPU, memory or bandwidth benchmarks. DAVE negotiation has been seen on one live call only.
+- Encoding above the voice channel's bitrate setting (up to 510 kbps) relies on the project owner's statement that the setting does not cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
 [Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.0...HEAD

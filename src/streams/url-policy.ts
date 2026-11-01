@@ -96,7 +96,10 @@ export class UrlPolicy {
       !host.includes('.') ||
       host.endsWith('.')
     ) {
-      throw new RadioError('URL_HOST_NOT_ALLOWED', 'That host name is internal or not publicly resolvable.');
+      throw new RadioError(
+        'URL_HOST_NOT_ALLOWED',
+        'That host name is internal or cannot be looked up on the public internet.',
+      );
     }
     if (
       !/^[a-z0-9.-]+$/.test(host) ||

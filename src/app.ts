@@ -13,6 +13,7 @@ import { RadioController } from './discord/controller.ts';
 import { Notifier } from './discord/notifier.ts';
 import { PresenceUpdater, presenceEntries } from './discord/presence.ts';
 import { registerGuildCommands } from './discord/register.ts';
+import { EventLoopMonitor } from './observability/event-loop.ts';
 import { heartbeatPath, startDiagnosticsServer, writeHeartbeat } from './observability/health.ts';
 import { createLogger, type Logger, safeErr } from './observability/logger.ts';
 import { Metrics } from './observability/metrics.ts';
@@ -139,6 +140,7 @@ export function createApp(
     ids,
     notifier,
     limits: new RateLimits(),
+    eventLoop: new EventLoopMonitor(),
     startedAt: new Date(),
     ffmpegInfo: null,
   };
@@ -263,6 +265,12 @@ export function createApp(
     });
 
     timers.push(setInterval(heartbeat, 30_000));
+    // A blocked event loop sends voice packets late: listeners hear a drop, then a catch-up.
+    ctx.eventLoop.start(60_000, (s) => {
+      if (s.maxMs >= 50)
+        logger.warn({ eventLoopDelay: s }, 'event loop was delayed; voice packets may have been late');
+      else logger.debug({ eventLoopDelay: s }, 'event loop delay');
+    });
     // Every 20 s, and only on a change: well within Discord's limit on status updates.
     timers.push(setInterval(() => presence.update(), 20_000));
     timers.push(
@@ -295,6 +303,7 @@ export function createApp(
           byKind: registry.activeByKind(),
         },
         counters: metrics.snapshot(),
+        eventLoopDelay: { current: ctx.eventLoop.current(), lastMinute: ctx.eventLoop.lastWindow() },
         incidents: metrics.recentIncidents(null, 20),
         sessions: sessions.all().map((s) => {
           const st = s.status();
@@ -316,6 +325,7 @@ export function createApp(
   async function stop(reason: string): Promise<void> {
     logger.info({ reason }, 'shutting down');
     for (const t of timers) clearTimeout(t);
+    ctx.eventLoop.stop();
     diagnostics?.close();
     sessions.shutdown();
     notifier.close();
