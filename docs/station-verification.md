@@ -120,7 +120,7 @@ Identity facts about pack sources are shared by every server on the installation
 5. **Latency.** A difference in measured start-up time of more than 1.5 s decides.
 6. **Catalogue priority**, then source ID. This is what decides between, say, a 128 kbps MP3 and a 128 kbps AAC stream of similar health: different codecs aren't ranked, so the order the pack lists them in settles it, and the explanation says so.
 
-While a station plays, anyone who can control the radio can play it from another usable source with the picker under `/radio sources` (or the Sources button). That choice lasts until the station changes; if the chosen source fails, the bot goes back to choosing automatically. Only usable sources are offered, and each choice is checked again when it is made.
+While a station plays, anyone who can control the radio can play it from another usable source with the picker under `/radio sources` (or the Sources button). When an admin has pinned the station to one source, only admins can switch it. That choice lasts until the station changes, and a stop is never undone by it; if the chosen source fails, the bot goes back to choosing automatically. Only usable sources are offered, and each choice is checked again when it is made.
 
 An admin can still `pin` or `prefer` an HLS source for their server. That choice overrides the tier order, but not the eligibility gate.
 

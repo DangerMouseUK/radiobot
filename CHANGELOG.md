@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Favourites are easy to get back to.** The station list from **Browse stations** has a **Favourites** button that shows only this server's favourites (and **All stations** to go back), and now-playing messages have the Browse stations button too, not just the control panel. Pressing **Favourite** now says where favourites show up, and `/radio help` explains favourites and the default station.
 - The default station can be cleared: choose **No default station** in `/radio config default_station`.
-- **Choosing another source.** `/radio sources` (and the Sources button) lists a station's sources best first, marks what is playing now, and shows why each can or can't be used. While the station plays, anyone who can control the radio can switch to another usable source from a menu; it lasts until the station changes, and if that source fails the bot goes back to the best one by itself. Admins get buttons to make the playing source this server's preference, or to go back to automatic choice.
+- **Choosing another source.** `/radio sources` (and the Sources button) lists a station's sources best first, marks what is playing now, and shows why each can or can't be used. While the station plays, anyone who can control the radio can switch to another usable source from a menu (unless an admin has pinned the station to one source); it lasts until the station changes, and if that source fails the bot goes back to the best one by itself. Admins get buttons to make the playing source this server's preference, or to go back to automatic choice.
 
 ### Changed
 
@@ -45,6 +45,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A summary of repeated problem notices was lost if the clock jumped forward (for example after the host was suspended); it is now sent.
+- Open station lists from `/radio browse` are limited to the newest 500 as well as expiring after 15 minutes; an older list's buttons say it has expired.
 - **`radio-bot update` now removes old images.** Each update used to leave the previous Docker image behind, about 1 GB per release, which slowly filled small disks: the clean-up looked for a label the published images don't carry, and skipped tagged images anyway. Once the new version is healthy, the update now removes the other versions of the bot's image, including ones left by earlier updates. If the new version doesn't start, the old image is kept so you can go back. Published images are also labelled "Radio Bot" again.
 - If a start failed before a source was chosen (for example, an unexpected database error), the bot could try again immediately and indefinitely, which could freeze audio for every server. It now waits and retries, like any other start with no source.
 - Scheduled catalogue syncs no longer keep a timer for every past run, and none is started after shutdown begins.

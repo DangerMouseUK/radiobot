@@ -340,7 +340,18 @@ export class GuildSession {
    * until the station changes; if the source fails, the bot goes back to choosing automatically.
    * The caller checks that the source belongs to the playing station and is usable.
    */
-  async useSource(sourceId: string): Promise<StartResult> {
+  async useSource(stationId: string, sourceId: string): Promise<StartResult> {
+    // Checked here as well as by the caller: a stop, or another station, may have come in
+    // between. A stop is authoritative; a source choice never restarts playback.
+    if (this.#stationId !== stationId || this.#desired() !== 'playing') {
+      return {
+        ok: false,
+        code: 'CANCELLED',
+        message: 'That station isn’t playing any more, so its source can’t be changed.',
+        selection: null,
+        plan: null,
+      };
+    }
     this.#commands++;
     this.#gen++;
     this.#clearTimer('retry');
@@ -634,6 +645,9 @@ export class GuildSession {
       if (force && selection.selected?.id !== force) {
         const forced = selection.ordered.find((s) => s.id === force);
         if (forced) selection = { ...selection, selected: forced };
+        // A listener's choice that can't be used now (cooling down, failing) is dropped, so a
+        // later restart doesn't jump back to it.
+        else if (force === this.#manualSourceId) this.#manualSourceId = null;
       }
       this.#selection = selection;
       const source = selection.selected;

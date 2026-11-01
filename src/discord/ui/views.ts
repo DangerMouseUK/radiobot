@@ -339,8 +339,14 @@ const IDLE_LABEL: Record<GuildSettings['idleMode'], string> = {
 export function configView(ctx: AppContext, guildId: string, s: GuildSettings, page: ConfigPage): View {
   const id = (field: string) => ctx.ids.make(guildId, 'cfg', field, 30 * 60_000);
   const station = s.defaultStationId ? ctx.stations.getStation(s.defaultStationId) : null;
+  // Long lists are shortened, so a field never exceeds Discord's 1024-character limit.
   const fmtIds = (ids: string[], kind: '#' | '@&') =>
-    ids.length ? ids.map((x) => `<${kind}${x}>`).join(', ') : 'any';
+    ids.length === 0
+      ? 'any'
+      : `${ids
+          .slice(0, 6)
+          .map((x) => `<${kind}${x}>`)
+          .join(', ')}${ids.length > 6 ? ` and ${ids.length - 6} more` : ''}`;
   const embed = new EmbedBuilder()
     .setTitle('Radio Bot settings')
     .setColor(COLOR.info)
@@ -350,36 +356,45 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
     .addFields(
       {
         name: 'Access',
-        value: [
-          `Commands work in: ${fmtIds(s.allowedTextChannelIds, '#')}`,
-          `Voice channels: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
-          `DJ roles: ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
-          `Listeners can control: ${s.memberControlMode === 'same_channel' ? 'from the bot’s voice channel' : s.memberControlMode === 'any' ? 'from anywhere' : 'no (DJs and admins only)'}`,
-          '-# Admins are the server owner and members with the Administrator permission.',
-        ].join('\n'),
+        value: truncate(
+          [
+            `Commands work in: ${fmtIds(s.allowedTextChannelIds, '#')}`,
+            `Voice channels: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
+            `DJ roles: ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
+            `Listeners can control: ${s.memberControlMode === 'same_channel' ? 'from the bot’s voice channel' : s.memberControlMode === 'any' ? 'from anywhere' : 'no (DJs and admins only)'}`,
+            '-# Admins are the server owner and members with the Administrator permission.',
+          ].join('\n'),
+          1024,
+        ),
       },
       {
         name: 'Playback',
-        value: [
-          `Default station: ${station?.displayName ?? 'none'}`,
-          `Preferred voice channel: ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>${s.voiceLock ? ' (locked)' : ''}` : 'none'}`,
-          `When the channel is empty: ${IDLE_LABEL[s.idleMode]}`,
-          `Quality: ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
-          `Autostart: ${s.autostart ? 'on' : 'off'} · Resume after restart: ${s.resumeOnRestart ? 'on' : 'off'}`,
-          ...(s.autostart && (!station || !s.preferredVoiceChannelId)
-            ? [
-                `⚠️ Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
-              ]
-            : []),
-          '-# The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
-        ].join('\n'),
+        value: truncate(
+          [
+            `Default station: ${station?.displayName ?? 'none'}`,
+            `Preferred voice channel: ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>${s.voiceLock ? ' (locked)' : ''}` : 'none'}`,
+            `When the channel is empty: ${IDLE_LABEL[s.idleMode]}`,
+            `Quality: ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
+            `Autostart: ${s.autostart ? 'on' : 'off'} · Resume after restart: ${s.resumeOnRestart ? 'on' : 'off'}`,
+            ...(s.autostart && (!station || !s.preferredVoiceChannelId)
+              ? [
+                  `⚠️ Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
+                ]
+              : []),
+            '-# The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
+          ].join('\n'),
+          1024,
+        ),
       },
       {
         name: 'Notifications',
-        value: [
-          `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
-          `Voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`,
-        ].join('\n'),
+        value: truncate(
+          [
+            `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
+            `Voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`,
+          ].join('\n'),
+          1024,
+        ),
       },
     )
     .setFooter({ text: `Page: ${PAGE_LABEL[page]}` });

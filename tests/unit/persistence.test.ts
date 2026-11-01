@@ -417,14 +417,16 @@ describe('station and source cache', () => {
     expect(stations.getStation('mypack:b')?.catalogueStatus).toBe('missing_from_official');
     expect(stations.listStations(null).map((x) => x.id)).toEqual(['mypack:a', 'mypack:b']);
     expect(all).not.toHaveBeenCalled();
-    // A source that moves station, or a new priority, lands in the right place; a delete goes.
+    // A new source, a move to another station or priority, or a delete re-reads the source list
+    // (rare, and cheaper than re-sorting it per row while a pack is seeded) and lands right.
     stations.upsertSeedSource({ ...source('s1', 'mypack:b', 1), url: 'https://moved.example.com/' });
     stations.upsertSeedSource(source('s3', 'mypack:a', 0));
     expect(stations.listSources('mypack:a').map((x) => x.id)).toEqual(['s3', 's2']);
     expect(stations.listSources('mypack:b').map((x) => x.id)).toEqual(['s1']);
     stations.deleteSource('s2');
     expect(stations.listAllSources().map((x) => x.id)).toEqual(['s3', 's1']);
-    expect(all).not.toHaveBeenCalled();
+    // The station list was not re-read for any of it.
+    expect(all.mock.calls.every(([sql]) => String(sql).includes('station_sources'))).toBe(true);
   });
 
   it("lists each server's own custom stations without scanning every server's", () => {

@@ -83,32 +83,22 @@ function deriveStations(all: Station[]): Pick<StationsCache, 'builtin' | 'builti
 const byPriority = (a: StationSource, b: StationSource) =>
   a.priority - b.priority || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-const byStationThenPriority = (a: StationSource, b: StationSource) =>
-  (a.stationId < b.stationId ? -1 : a.stationId > b.stationId ? 1 : 0) || byPriority(a, b);
-
-/** Puts one re-read source row (or its absence, once deleted) into the cached lists. */
-function refreshSource(cache: SourcesCache, id: string, row: Row | undefined): void {
-  const prev = cache.byId.get(id) ?? null;
-  const next = row ? freezeSource(mapSource(row)) : null;
-  if (next) cache.byId.set(id, next);
-  else cache.byId.delete(id);
-  if (prev && next && prev.stationId === next.stationId && prev.priority === next.priority) {
-    cache.all[cache.all.indexOf(prev)] = next;
-    const list = cache.byStation.get(next.stationId)!;
-    list[list.indexOf(prev)] = next;
-    return;
-  }
-  cache.all = cache.all.filter((x) => x.id !== id);
-  if (next) cache.all.push(next);
-  cache.all.sort(byStationThenPriority);
-  for (const stationId of new Set([prev?.stationId, next?.stationId])) {
-    if (!stationId) continue;
-    const list = (cache.byStation.get(stationId) ?? []).filter((x) => x.id !== id);
-    if (next?.stationId === stationId) list.push(next);
-    list.sort(byPriority);
-    if (list.length) cache.byStation.set(stationId, list);
-    else cache.byStation.delete(stationId);
-  }
+/**
+ * Puts one re-read source row into the cached lists, when it only changed in place (the
+ * frequent case: check and playback results). Returns false for an insert, a delete, or a move
+ * to another station or priority; the caller then lets the cache be read again, which is cheaper
+ * than re-sorting it once per row while a pack is seeded.
+ */
+function refreshSource(cache: SourcesCache, id: string, row: Row | undefined): boolean {
+  const prev = cache.byId.get(id);
+  if (!prev || !row) return false;
+  const next = freezeSource(mapSource(row));
+  if (prev.stationId !== next.stationId || prev.priority !== next.priority) return false;
+  cache.byId.set(id, next);
+  cache.all[cache.all.indexOf(prev)] = next;
+  const list = cache.byStation.get(next.stationId)!;
+  list[list.indexOf(prev)] = next;
+  return true;
 }
 
 function freezeStation(st: Station): Station {
@@ -405,9 +395,11 @@ export class StationRepository {
       result = this.#db.run(sql, params);
       return result;
     } finally {
-      if (result && cache)
+      const patched =
+        result !== null &&
+        cache !== null &&
         refreshSource(cache, id, this.#db.get('SELECT * FROM station_sources WHERE id = ?', [id]));
-      else this.#sourceWrites++;
+      if (!patched) this.#sourceWrites++;
     }
   }
 

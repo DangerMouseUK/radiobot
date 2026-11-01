@@ -745,7 +745,7 @@ describe('GuildSession', () => {
     const t = setup();
     await t.session.play('mypack:my-station', 'voice-1', null);
     expect(t.session.status().source?.id).toBe('primary');
-    const r = await t.session.useSource('fallback');
+    const r = await t.session.useSource('mypack:my-station', 'fallback');
     expect(r.ok).toBe(true);
     expect(t.session.status().source?.id).toBe('fallback');
     expect(t.session.status().manualSourceId).toBe('fallback');
@@ -764,8 +764,37 @@ describe('GuildSession', () => {
   it("goes back to the automatic choice when a listener's chosen source fails", async () => {
     const t = setup({ timings: { backoff: [5] } });
     await t.session.play('mypack:my-station', 'voice-1', null);
-    await t.session.useSource('fallback');
+    await t.session.useSource('mypack:my-station', 'fallback');
     t.pipelines.at(-1)!.fail('NOT_FOUND');
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'primary');
+    expect(t.session.status().manualSourceId).toBeNull();
+  });
+
+  it('never restarts playback for a source choice after a stop, or for another station', async () => {
+    const t = setup();
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    t.session.stop();
+    const started = t.pipelines.length;
+    const afterStop = await t.session.useSource('mypack:my-station', 'fallback');
+    expect(afterStop.ok).toBe(false);
+    expect(t.pipelines.length).toBe(started);
+    expect(t.guilds.getIntent('g1')?.desiredState).toBe('stopped');
+    await t.session.play('mypack:other', 'voice-1', null);
+    const stale = await t.session.useSource('mypack:my-station', 'fallback');
+    expect(stale.ok).toBe(false);
+    expect(t.session.status().manualSourceId).toBeNull();
+  });
+
+  it('forgets a chosen source once it can no longer be used', async () => {
+    const t = setup({ timings: { backoff: [5] } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    await t.session.useSource('mypack:my-station', 'fallback');
+    // The chosen source drops out (here: it is no longer offered at all) before a restart.
+    t.sources.splice(
+      t.sources.findIndex((s) => s.id === 'fallback'),
+      1,
+    );
+    t.pipelines.at(-1)!.fail('STREAM_EOF');
     await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'primary');
     expect(t.session.status().manualSourceId).toBeNull();
   });

@@ -44,12 +44,17 @@ class FakeSession {
   /** The source playing now, and every source a listener switched to. */
   playingSourceId: string | null = null;
   readonly usedSources: string[] = [];
+  desiredState = 'playing';
   status() {
     return this.playingSourceId
-      ? { source: { id: this.playingSourceId }, manualSourceId: this.usedSources.at(-1) ?? null }
+      ? {
+          source: { id: this.playingSourceId },
+          manualSourceId: this.usedSources.at(-1) ?? null,
+          desiredState: this.desiredState,
+        }
       : null;
   }
-  async useSource(id: string) {
+  async useSource(_stationId: string, id: string) {
     this.usedSources.push(id);
     this.playingSourceId = id;
     return { ok: true, code: null, message: 'Playing.' };
@@ -985,13 +990,55 @@ describe('choosing another source while a station plays', () => {
   it('lets only admins make a source the server preference, and go back to automatic', async () => {
     const { t, st, usable } = playing();
     t.putInVoice(t.people.member, V1);
-    const denied = await t.click(t.people.member, t.ids.make(GUILD, 'srcpref', usable[0]!));
+    // The button names the station; the source it prefers is the one playing when it is pressed.
+    const denied = await t.click(t.people.member, t.ids.make(GUILD, 'srcpref', st.id));
     expect(denied.text).toMatch(/Only the server owner/);
     expect(t.guilds.getPreference(GUILD, st.id)).toBeNull();
-    await t.click(t.people.admin, t.ids.make(GUILD, 'srcpref', usable[0]!));
+    await t.click(t.people.admin, t.ids.make(GUILD, 'srcpref', st.id));
     expect(t.guilds.getPreference(GUILD, st.id)).toMatchObject({ mode: 'prefer', sourceId: usable[0] });
     await t.click(t.people.admin, t.ids.make(GUILD, 'srcauto', st.id));
     expect(t.guilds.getPreference(GUILD, st.id)?.mode ?? 'auto').toBe('auto');
+  });
+
+  it('never undoes a stop: the picker refuses once the station is stopped', async () => {
+    const { t, st, usable, session } = playing();
+    t.putInVoice(t.people.member, V1);
+    session.desiredState = 'stopped';
+    const pick = await t.click(t.people.member, t.ids.make(GUILD, 'usesrc', st.id), 'string', [usable[1]!]);
+    expect(pick.text).toMatch(/isn’t playing any more/);
+    expect(session.usedSources).toEqual([]);
+  });
+
+  it("keeps an admin's pin: listeners can't switch a pinned station, admins still can", async () => {
+    const { t, st, usable, session } = playing();
+    t.guilds.setPreference(GUILD, st.id, 'pin', usable[0]!, OWNER);
+    t.putInVoice(t.people.member, V1);
+    const view = await t.command(t.people.member, { sub: 'sources', strings: { station: st.id } });
+    expect(view.componentIds.some((id) => decode(t.ids, id)?.action === 'usesrc')).toBe(false);
+    const pick = await t.click(t.people.member, t.ids.make(GUILD, 'usesrc', st.id), 'string', [usable[1]!]);
+    expect(pick.text).toMatch(/pinned/);
+    expect(session.usedSources).toEqual([]);
+    t.putInVoice(t.people.admin, V1);
+    await t.click(t.people.admin, t.ids.make(GUILD, 'usesrc', st.id), 'string', [usable[1]!]);
+    expect(session.usedSources).toEqual([usable[1]]);
+  });
+});
+
+describe('settings with long channel and role lists', () => {
+  it('stays within Discord’s field limit however many are chosen', async () => {
+    const t = setup();
+    const ids = (start: number) =>
+      Array.from({ length: 25 }, (_, n) => `7${String(start + n).padStart(17, '0')}`);
+    t.guilds.updateSettings(GUILD, {
+      allowedTextChannelIds: ids(100),
+      allowedVoiceChannelIds: ids(200),
+      djRoleIds: ids(300),
+    });
+    const view = await t.command(t.people.owner, { sub: 'config' });
+    expect(view.violations).toEqual([]);
+    const fields = view.calls[0]!.payload.embeds![0]!.toJSON().fields!;
+    for (const f of fields) expect(f.value.length).toBeLessThanOrEqual(1024);
+    expect(fields[0]!.value).toMatch(/and 19 more/);
   });
 });
 
@@ -1006,5 +1053,20 @@ describe('open browse lists', () => {
     const latest = await t.command(t.people.member, { sub: 'browse' });
     const fresh = latest.componentIds.find((id) => decode(t.ids, id)?.action === 'browse')!;
     expect((await t.click(t.people.member, fresh)).text).not.toMatch(/expired/);
+  });
+});
+
+describe('the Favourites filter in Browse', () => {
+  it('goes back to the category the list was opened with', async () => {
+    const t = setup();
+    const category = t.ctx.packs.categories()[0]!.id;
+    t.guilds.toggleFavourite(GUILD, t.stations.listStations(GUILD)[0]!.id);
+    const browse = await t.command(t.people.member, { sub: 'browse', strings: { category } });
+    const toggle = browse.componentIds.find((id) => decode(t.ids, id)?.action === 'bfav')!;
+    const footer = (i: {
+      calls: Array<{ payload: { embeds?: Array<{ toJSON(): { footer?: { text: string } } }> } }>;
+    }) => i.calls[0]!.payload.embeds![0]!.toJSON().footer?.text ?? '';
+    expect(footer(await t.click(t.people.member, toggle))).toMatch(/category: favourites/);
+    expect(footer(await t.click(t.people.member, toggle))).toContain(`category: ${category}`);
   });
 });

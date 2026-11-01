@@ -126,7 +126,8 @@ interface PendingImport {
 /** Handles every /radio interaction. All checks run server-side on every call. */
 export class RadioController {
   readonly #ctx: AppContext;
-  readonly #browse = new Map<string, BrowseState & { expires: number }>();
+  /** Open browse lists; `before` is the category to go back to from the Favourites filter. */
+  readonly #browse = new Map<string, BrowseState & { expires: number; before?: string | null }>();
   readonly #imports = new Map<string, PendingImport>();
 
   constructor(ctx: AppContext) {
@@ -671,7 +672,8 @@ export class RadioController {
     const components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
     // Anyone who may control the radio can play this station from another usable source while it
     // plays. Only usable sources are offered, and the click is checked again on the server.
-    if (who.control && live.playingId && selection.ordered.length > 1) {
+    const pinned = ctx.guilds.getPreference(guildId, st.id)?.mode === 'pin';
+    if (who.control && (who.admin || !pinned) && live.playingId && selection.ordered.length > 1) {
       components.push(
         row(
           new StringSelectMenuBuilder()
@@ -703,7 +705,7 @@ export class RadioController {
       if (live.playingId && (pref?.mode !== 'prefer' || pref.sourceId !== live.playingId)) {
         buttons.push(
           new ButtonBuilder()
-            .setCustomId(ctx.ids.make(guildId, 'srcpref', live.playingId))
+            .setCustomId(ctx.ids.make(guildId, 'srcpref', st.id))
             .setLabel('Prefer the playing source on this server')
             .setStyle(ButtonStyle.Secondary),
         );
@@ -728,10 +730,15 @@ export class RadioController {
     const st = visibleStation(ctx, i.guildId, stationId);
     if (!st) return this.#deny(i, 'That station is no longer available.');
     const session = ctx.sessions.get(i.guildId);
-    if (!session?.connected || session.stationId !== st.id)
+    if (!session?.connected || session.stationId !== st.id || session.status()?.desiredState !== 'playing')
       return this.#deny(i, `${st.displayName} isn’t playing any more, so its source can’t be changed.`);
     const a = this.#auth(i, 'control', session.channelId);
     if (!a.ok) return this.#deny(i, a.reason);
+    if (ctx.guilds.getPreference(i.guildId, st.id)?.mode === 'pin' && a.level !== 'admin')
+      return this.#deny(
+        i,
+        `An admin has pinned ${st.displayName} to one source, so only an admin can change it.`,
+      );
     // Checked again now, not trusted from the menu: it must be a usable source of this station.
     const source = ctx.sources.select(i.guildId, st.id).ordered.find((s) => s.id === i.values[0]);
     if (!source)
@@ -744,7 +751,7 @@ export class RadioController {
     this.#rate(ctx.limits.playUser, i.user.id, 'station changes');
     this.#rate(ctx.limits.playGuild, i.guildId, 'station changes');
     await i.deferReply({ flags: EPHEMERAL });
-    const r = await session.useSource(source.id);
+    const r = await session.useSource(st.id, source.id);
     ctx.logger.info({ guildId: i.guildId, sourceId: source.id, by: i.user.id }, 'listener chose a source');
     await i.editReply({
       embeds: [
@@ -1607,10 +1614,16 @@ export class RadioController {
         case 'srcauto': {
           const a = this.#auth(i, 'admin');
           if (!a.ok) return this.#deny(i, a.reason);
-          const source = action === 'srcpref' ? this.#ctx.stations.getSource(arg) : null;
-          const st = visibleStation(this.#ctx, i.guildId, source?.stationId ?? arg);
-          if (!st || (action === 'srcpref' && !source))
-            return this.#deny(i, 'That station or source is no longer available.');
+          const st = visibleStation(this.#ctx, i.guildId, arg);
+          // Prefer whatever this station is playing from right now (worked out at click time).
+          const session = this.#ctx.sessions.get(i.guildId);
+          const playing =
+            action === 'srcpref' && session?.stationId === arg
+              ? (session.status()?.source?.id ?? null)
+              : null;
+          const source = playing ? this.#ctx.stations.getSource(playing) : null;
+          if (!st || (action === 'srcpref' && source?.stationId !== st.id))
+            return this.#deny(i, 'That station isn’t playing from a source that can be preferred right now.');
           this.#ctx.guilds.setPreference(
             i.guildId,
             st.id,
@@ -1671,7 +1684,11 @@ export class RadioController {
           const state = this.#browse.get(arg);
           if (!state || state.expires < Date.now())
             return this.#deny(i, 'This station list has expired. Run /radio browse again.');
-          state.category = state.category === 'favourites' ? null : 'favourites';
+          if (state.category === 'favourites') state.category = state.before ?? null;
+          else {
+            state.before = state.category;
+            state.category = 'favourites';
+          }
           await i.update(browseView(this.#ctx, i.guildId, state, arg, 0));
           return;
         }
