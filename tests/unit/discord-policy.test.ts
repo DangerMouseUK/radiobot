@@ -17,6 +17,7 @@ const settings = (o: Partial<GuildSettings> = {}): GuildSettings => ({
   idleMode: 'leave_when_empty',
   autostart: false,
   resumeOnRestart: false,
+  voiceChannelStatus: true,
   notificationChannelId: null,
   panelChannelId: null,
   panelMessageId: null,

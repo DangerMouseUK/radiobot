@@ -330,7 +330,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
         `**Default station:** ${station?.displayName ?? 'none'} · **Preferred voice channel:** ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>` : 'none'}${s.voiceLock ? ' (locked)' : ''}`,
         `**When the channel is empty:** ${IDLE_LABEL[s.idleMode]} · **Quality:** ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
         `**Autostart when the bot starts:** ${s.autostart ? 'on' : 'off'} · **Resume after restart:** ${s.resumeOnRestart ? 'on' : 'off'}`,
-        `**Notifications:** ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
+        `**Notifications:** ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'} · **Voice channel status:** ${s.voiceChannelStatus ? 'on' : 'off'}`,
         '',
         'Leave a channel or role menu empty for no restriction. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config`.',
       ].join('\n'),
@@ -456,6 +456,12 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
           .setMinValues(0)
           .setMaxValues(1)
           .setDefaultChannels(s.notificationChannelId ? [s.notificationChannelId] : []),
+      ),
+      row(
+        new ButtonBuilder()
+          .setCustomId(id('vstatus'))
+          .setLabel(`Show what's playing as the voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`)
+          .setStyle(s.voiceChannelStatus ? ButtonStyle.Success : ButtonStyle.Secondary),
       ),
       nav,
     );

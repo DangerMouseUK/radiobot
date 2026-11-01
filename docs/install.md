@@ -117,7 +117,7 @@ If the installer asks for your computer password, that's `sudo`, the command tha
 Open the invite link the installer printed. If you've lost it, run `radio-bot invite` to print it again. It looks like this, with your own Application ID in it:
 
 ```text
-https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot%20applications.commands&permissions=3197952
+https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot%20applications.commands&permissions=281474979908608
 ```
 
 Choose your server, click **Continue**, and then **Authorise**. Leave all the listed permissions ticked. The bot asks only for what it needs:
@@ -130,6 +130,7 @@ Choose your server, click **Continue**, and then **Authorise**. Leave all the li
 | Attach Files | `/radio export` sends a settings file |
 | Connect | Join a voice channel |
 | Speak | Play the radio |
+| Set Voice Channel Status | Show the station and song under the voice channel's name (optional) |
 
 Never give the bot **Administrator**; it doesn't need it. If your voice channels have custom permissions, make sure the bot's role can **View Channel**, **Connect** and **Speak** in the channel you want it to play in.
 
@@ -147,6 +148,7 @@ Useful next steps:
 - **Server owners and administrators:** `/radio config` chooses which channels the bot can be used in, which roles count as DJs, what happens when everyone leaves the channel, and the audio quality. `/radio panel` posts a control panel whose buttons work for everyone allowed to control playback (DJs and admins, plus listeners if you allow it).
 - The [README's command list](../README.md#commands) explains every command and who can use it.
 - While it plays, the bot's status in the member list says what it's playing, such as "Listening to FG DJ RADIO · Artist - Title". To show only the station, or nothing, run `radio-bot config` and set `PRESENCE_MODE=station` or `PRESENCE_MODE=off`.
+- The voice channel shows it too, under the channel's name, for example "📻 FG DJ RADIO · Artist - Title". This uses the **Set Voice Channel Status** permission from the invite link. To turn it off for your server, use `/radio config` → **Notifications**.
 
 ## Looking after your bot
 

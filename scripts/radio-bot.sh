@@ -4,7 +4,7 @@
 # Run `radio-bot help` for the commands. Works on Linux and macOS (bash 3.2+).
 set -euo pipefail
 
-PERMISSIONS=3197952
+PERMISSIONS=281474979908608
 SERVICE=radio-bot
 
 # ---------------------------------------------------------------- output

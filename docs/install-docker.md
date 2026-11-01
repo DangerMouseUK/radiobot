@@ -18,7 +18,7 @@ Follow [install.md → Create your Discord bot](install.md#1-create-your-discord
 
 ### Invite URL
 
-The bot needs exactly these permissions:
+The bot asks for exactly these permissions:
 
 | Permission | Value |
 |---|---:|
@@ -28,12 +28,13 @@ The bot needs exactly these permissions:
 | Attach Files (`/radio export`) | 32768 |
 | Connect | 1048576 |
 | Speak | 2097152 |
-| **Total** | **3197952** |
+| Set Voice Channel Status (optional: the station and song as the channel's status) | 281474976710656 |
+| **Total** | **281474979908608** |
 
 Replace `APPLICATION_ID` in this URL with your own:
 
 ```text
-https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=3197952
+https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=281474979908608
 ```
 
 Open it, choose your server and authorise. You can do this before or after starting the container. The scopes are `bot` and `applications.commands`. Do **not** grant Administrator. If your voice channels have permission overwrites, make sure the bot's role can View Channel, Connect and Speak in the channel you want it to play in.

@@ -18,7 +18,7 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 - **Evidence before bitrate.** Every candidate stream is probed with `ffprobe` and a decode check, and its identity is checked against its provenance, its stream metadata and, optionally, an audio comparison. The bot plays the *correct* station first and the best-sounding source second, and `/radio sources` tells you why it chose what it did.
 - **One encode, at the station's own quality.** FFmpeg decodes once and encodes once with `libopus` at the source's bitrate, up to 510 kbps (48 kHz stereo, music mode). A 320 kbps station goes out at 320 kbps, and a 128 kbps one isn't padded out to waste bandwidth. `@discordjs/voice` only demuxes the result. There is no normalisation, EQ or limiting, and the voice channel's bitrate setting is not used as a cap.
 - **Automatic recovery.** A watchdog spots stalls and retries with backoff. If that fails, the bot switches to another verified source and puts sources that keep failing into a cooldown. It also rebuilds lost voice connections and catches up with the live stream when it falls behind.
-- **Now playing.** The current song or show title, when the stream sends one, appears in `/radio now` and on the control panel. The bot's own Discord status shows it too: "Listening to Station Name · Artist - Title".
+- **Now playing.** The current song or show title, when the stream sends one, appears in `/radio now` and on the control panel. The bot's own Discord status shows it too ("Listening to Station Name · Artist - Title"), and so does the status of the voice channel it's playing in ("📻 Station Name · Artist - Title").
 - **Queue and skip.** Line up stations with `/radio queue` and move on with `/radio skip` or the **Skip** button.
 - **Private live stats.** `/radio stats` shows administrators the input and output bitrate, the redirect host and region, and ping and jitter to both the stream server and Discord's voice server. Only they can see the message, and they can dismiss it.
 - **Secure by default.** The bot asks for the minimum Discord permissions and no privileged intents. All stream traffic goes through an SSRF-safe HTTP client, and FFmpeg reads only from stdin. Every button and command is authorised on the server side each time it is used. There is no telemetry.
@@ -84,7 +84,7 @@ Step-by-step instructions are in [docs/install.md](docs/install.md#1-create-your
 - **Developer Portal:** create an application. Under **Bot**, reset and copy the token, which goes in `DISCORD_TOKEN`. Under **General Information**, copy the Application ID, which goes in `DISCORD_APPLICATION_ID`.
 - **Gateway intents:** the bot uses only `Guilds` and `GuildVoiceStates`. Leave every privileged intent switched off: Presence, Server Members and Message Content.
 - **Scopes:** `bot` and `applications.commands`.
-- **Bot permissions** (the minimal set, integer `3197952`):
+- **Bot permissions** (the minimal set, integer `281474979908608`):
 
   | Permission | Why |
   |---|---|
@@ -94,13 +94,14 @@ Step-by-step instructions are in [docs/install.md](docs/install.md#1-create-your
   | Attach Files | `/radio export` returns a JSON file |
   | Connect | Join the voice channel |
   | Speak | Play audio |
+  | Set Voice Channel Status | Optional: show the station and song as the voice channel's status (`/radio config` → Notifications). Without it, everything else works |
 
   Administrator, Manage Channels, Manage Roles, Manage Messages, Read Message History and Message Content are not needed.
 
 - **Invite URL:** replace `APPLICATION_ID` with your own:
 
   ```text
-  https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=3197952
+  https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=281474979908608
   ```
 
 `/radio` is registered as a **guild** command in each server the bot is in, so it appears immediately. Registration happens at start-up and whenever the bot joins a new server, and it is skipped when nothing has changed. The command works only in servers, not in DMs.

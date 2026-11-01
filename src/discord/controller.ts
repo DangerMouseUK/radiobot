@@ -1595,6 +1595,9 @@ export class RadioController {
         patch = { memberControlMode: v };
       if (field === 'quality' && (v === 'maximum' || v === 'balanced' || v === 'manual'))
         patch = { qualityMode: v };
+    } else if (i.isButton() && field === 'vstatus') {
+      page = 'notify';
+      patch = { voiceChannelStatus: !cur.voiceChannelStatus };
     } else if (i.isButton()) {
       page = 'playback';
       if (field === 'autostart') patch = { autostart: !cur.autostart };

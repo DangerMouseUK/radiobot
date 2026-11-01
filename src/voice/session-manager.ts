@@ -42,6 +42,7 @@ export class SessionManager {
   readonly #sessions = new Map<string, GuildSession>();
   readonly #log: Logger;
   #stationFilter: StationFilter = () => true;
+  #onLeaving: ((guildId: string, channelId: string) => Promise<void> | void) | null = null;
 
   constructor(deps: SessionManagerDeps) {
     this.#d = deps;
@@ -54,6 +55,11 @@ export class SessionManager {
    */
   setStationFilter(filter: StationFilter): void {
     this.#stationFilter = filter;
+  }
+
+  /** Called just before a session leaves its voice channel (used to clear the channel status). */
+  setLeaveHook(fn: (guildId: string, channelId: string) => Promise<void> | void): void {
+    this.#onLeaving = fn;
   }
 
   get(guildId: string): GuildSession | null {
@@ -107,6 +113,7 @@ export class SessionManager {
         },
         mayStream: () => this.activeStreams() < this.#d.maxActiveStreams,
         notify: this.#d.notify,
+        onLeaving: (channelId) => this.#onLeaving?.(guildId, channelId),
         logger: this.#d.logger,
         metrics: this.#d.metrics,
         timings: this.#d.timings,

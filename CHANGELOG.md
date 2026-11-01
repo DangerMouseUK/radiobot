@@ -66,8 +66,9 @@ First public release. The items not yet verified are listed under *Release statu
 - Rate limits on play/switch, probes, custom-station adds, syncs and button clicks. Installation-wide limits on concurrent streams and probes, and a per-server limit on custom stations.
 - Recovery and error notices to an optional channel, with repeats coalesced.
 - Stream titles, which may be songs or shows, are shown as **On air** in now-playing views. Titles from older servers that send Latin-1 or Windows-1252 keep their accented characters. Empty and placeholder titles ("Unknown", "Advert" and similar) clear the line instead of leaving the last song showing, and separators left by an empty half ("Artist - ") are removed.
+- The voice channel's status shows what that server is playing: "📻 Station · Artist - Title", following the same title changes, cleared when playback stops or the bot leaves. It needs the optional Set Voice Channel Status permission (now in the invite link) and can be switched off per server in `/radio config` → Notifications. A server's custom station can be named here, because only that server sees it. Migration `0002` adds the setting, on by default.
 - The bot's own Discord status shows what it plays: "Listening to FG DJ RADIO · Artist - Title". `PRESENCE_MODE` chooses `track` (default), `station` or `off`. With several servers playing different stations it shows "radio in N servers", and a server's custom station is never named. It needs no extra intent or permission.
-- Least privilege: the `Guilds` and `GuildVoiceStates` intents only, and the permissions View Channels, Send Messages, Embed Links, Attach Files, Connect and Speak (`3197952`).
+- Least privilege: the `Guilds` and `GuildVoiceStates` intents only, and the permissions View Channels, Send Messages, Embed Links, Attach Files, Connect and Speak, plus the optional Set Voice Channel Status (`281474979908608`; `3197952` without it).
 
 **Custom stations and configuration**
 

@@ -555,6 +555,20 @@ describe('buttons and menus are authorised again on every click', () => {
     }
   });
 
+  it('lets an administrator switch the voice channel status off and on', async () => {
+    const t = setup();
+    expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(true);
+    const off = await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus'));
+    expect(off.violations).toEqual([]);
+    expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(false);
+    expect(off.text).toMatch(/Voice channel status:\*\* off/);
+    await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus'));
+    expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(true);
+    const denied = await t.click(t.people.member, t.ids.make(GUILD, 'cfg', 'vstatus'));
+    expect(denied.text).toMatch(/Only the server owner/);
+    expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(true);
+  });
+
   it('lets an administrator refresh stats in place', async () => {
     const t = setup();
     const i = await t.click(t.people.admin, t.ids.make(GUILD, 'stats', '', 30 * 60_000));

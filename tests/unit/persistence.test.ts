@@ -21,9 +21,10 @@ describe('migrations', () => {
   it('applies once and is idempotent', () => {
     const path = tempDb();
     const db = new Db(path);
-    expect(db.migrate().applied).toEqual([1]);
+    const all = loadMigrations().map((m) => m.version);
+    expect(db.migrate().applied).toEqual(all);
     expect(db.migrate().applied).toEqual([]);
-    expect(db.schemaVersion()).toBe(1);
+    expect(db.schemaVersion()).toBe(all.at(-1));
     db.close();
   });
 
@@ -42,22 +43,23 @@ describe('migrations', () => {
     expect(() => db.migrate()).toThrow(/newer than this build/);
   });
 
-  it('backs up an existing database before applying a new migration', () => {
+  it('backs up an existing database before applying a new migration, keeping every setting', () => {
     const path = tempDb();
     const db = new Db(path);
-    db.migrate();
+    // A 1.0.0-era database: only the first migration applied.
+    db.migrate(loadMigrations().slice(0, 1));
     const guilds = new GuildRepository(db, {
       qualityMode: 'maximum',
       idleMode: '24x7',
       resumeOnRestart: false,
     });
-    guilds.updateSettings('123456789012345678', { djRoleIds: ['223456789012345678'] });
-    const next: Migration[] = [
-      ...loadMigrations(),
-      { version: 2, name: 'test', sql: 'CREATE TABLE extra (x INTEGER);', checksum: 'abc' },
-    ];
-    const r = db.migrate(next);
-    expect(r.applied).toEqual([2]);
+    guilds.updateSettings('123456789012345678', { djRoleIds: ['223456789012345678'], autostart: true });
+    const r = db.migrate();
+    expect(r.applied).toEqual(
+      loadMigrations()
+        .slice(1)
+        .map((m) => m.version),
+    );
     expect(r.backupPath && existsSync(r.backupPath)).toBe(true);
     const backup = new Db(r.backupPath!);
     expect(backup.schemaVersion()).toBe(1);
@@ -69,19 +71,24 @@ describe('migrations', () => {
       }).getSettings('123456789012345678').djRoleIds,
     ).toEqual(['223456789012345678']);
     backup.close();
-    expect(guilds.getSettings('123456789012345678').djRoleIds).toEqual(['223456789012345678']);
+    const upgraded = guilds.getSettings('123456789012345678');
+    expect(upgraded.djRoleIds).toEqual(['223456789012345678']);
+    expect(upgraded.autostart).toBe(true);
+    // 0002 adds the voice channel status switch, on by default.
+    expect(upgraded.voiceChannelStatus).toBe(true);
     db.close();
   });
 
   it('rolls back a failing migration', () => {
     const db = new Db(':memory:');
     db.migrate();
+    const latest = db.schemaVersion();
     const bad: Migration[] = [
       ...loadMigrations(),
-      { version: 2, name: 'bad', sql: 'CREATE TABLE ok1 (x); SELECT * FROM nope;', checksum: 'b' },
+      { version: latest + 1, name: 'bad', sql: 'CREATE TABLE ok1 (x); SELECT * FROM nope;', checksum: 'b' },
     ];
     expect(() => db.migrate(bad)).toThrow();
-    expect(db.schemaVersion()).toBe(1);
+    expect(db.schemaVersion()).toBe(latest);
     expect(db.get("SELECT name FROM sqlite_master WHERE name = 'ok1'")).toBeUndefined();
   });
 

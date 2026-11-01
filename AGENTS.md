@@ -63,6 +63,7 @@ src/
   discord/              controller.ts (every interaction), commands/definitions.ts (/radio),
                         permissions/authorize.ts, components/custom-id.ts (signed IDs), ui/ (views, format),
                         register.ts, notifier.ts, presence.ts (bot status),
+                        voice-status.ts (voice channel status),
                         voice-access.ts, context.ts
   persistence/          db.ts (node:sqlite, migrations, backups), repositories/ (stations, guilds, meta)
   observability/        logger, health (health.json heartbeat, diagnostics server), metrics, netstats
@@ -107,7 +108,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 
 **Discord**
 
-11. **Minimal access.** The intents are `Guilds` and `GuildVoiceStates` only. The bot permission integer is `3197952` (View Channels, Send Messages, Embed Links, Attach Files, Connect, Speak). Adding an intent or permission needs an issue first.
+11. **Minimal access.** The intents are `Guilds` and `GuildVoiceStates` only. The bot permission integer is `281474979908608`: View Channels, Send Messages, Embed Links, Attach Files, Connect and Speak (`3197952`), plus the **optional** Set Voice Channel Status. The bot must keep working without the optional one: check it per channel and skip quietly. Adding an intent or permission needs an issue first.
 12. **Authorise on the server side, every time.** Every command, button and select menu calls `authorize()` (`src/discord/permissions/authorize.ts`) with `read`, `control` or `admin`. Component custom IDs must be built with `ComponentIds` (signed and bound to the server).
 13. **Admin means the server owner or Discord's Administrator permission. Nothing else.** There are no admin roles, and Manage Server doesn't count. DJ roles grant `control`. Installation-wide decisions (identity reviews of pack sources) also need the user to be an operator: in `OPERATOR_USER_IDS`, or the application owner or a member of its team. The admin check still applies first.
 14. **`/radio` is full.** `src/discord/commands/definitions.ts` has exactly **25** top-level options, which is Discord's maximum. A new command must go into a subcommand group (as `queue` and `source` do) or replace an existing one. Option names and descriptions must stay within Discord's length limits.

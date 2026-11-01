@@ -294,6 +294,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - Missing track data never blocks playback; the line then says there is no song or show title from the stream right now.
 - No album art.
 - The bot's own Discord status shows "Listening to" the station and track (`PRESENCE_MODE`: `track`, `station` or `off`; default `track`). It is one status for the whole installation, so it names a station only when every playing server plays that station, and otherwise says "radio in N servers". A server's custom station is never named. Updates are checked every 20 s and sent only when the text changes. No intent or permission is needed.
+- The bot's voice channel shows the same as its status ("📻 Station · title"), per server, so a custom station may be named. It needs the optional Set Voice Channel Status permission, can be switched off per server (`/radio config` → Notifications, on by default), and is cleared when playback stops or the bot leaves. Without the permission nothing is set and nothing else changes.
 
 ### FR-014 — Observability (P0/P1)
 
@@ -472,7 +473,7 @@ On start-up, for each server: if playback was wanted and **resume after restart*
 | Configure, import, export, panel, stats | No | No | Yes |
 | Identity review of station-pack sources | No | No | Admins who are also Operators |
 
-Admin = the server owner, or a member with Discord's **Administrator** permission. Manage Server does not count, and there is no admin-role setting. Operator = the Discord application's owner (or a member of the team that owns it) or a user listed in `OPERATOR_USER_IDS`; recording a review also needs admin rights in the server where the command is used. Admins may use commands outside the approved command channels. Required bot permissions: View Channels, Send Messages, Embed Links, Attach Files, Connect, Speak (permission integer 3197952). Intents: Guilds and Guild Voice States only.
+Admin = the server owner, or a member with Discord's **Administrator** permission. Manage Server does not count, and there is no admin-role setting. Operator = the Discord application's owner (or a member of the team that owns it) or a user listed in `OPERATOR_USER_IDS`; recording a review also needs admin rights in the server where the command is used. Admins may use commands outside the approved command channels. Bot permissions: View Channels, Send Messages, Embed Links, Attach Files, Connect, Speak, and the optional Set Voice Channel Status (permission integer 281474979908608; without the optional one the integer is 3197952 and everything but the channel status works). Intents: Guilds and Guild Voice States only.
 
 ### 10.2 URL and host security
 
