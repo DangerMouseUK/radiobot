@@ -35,14 +35,19 @@ export function extractJsonValue(text: string, start: number): string | null {
   return null;
 }
 
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', apos: "'", quot: '"', lt: '<', gt: '>' };
+
+/**
+ * Decodes the few HTML entities found in station names, in a single pass so that decoded
+ * text is never decoded again (`&amp;quot;` is `&quot;`, not `"`). Numeric entities outside
+ * the Unicode range are left as they are.
+ */
 export const decodeEntities = (s: string): string =>
-  s
-    .replace(/&amp;/g, '&')
-    .replace(/&#39;|&#x27;|&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)));
+  s.replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|apos|quot|lt|gt));/gi, (entity, dec, hex, name) => {
+    if (name) return NAMED_ENTITIES[(name as string).toLowerCase()]!;
+    const code = dec ? Number(dec) : Number.parseInt(hex as string, 16);
+    return code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+  });
 
 /**
  * radiofg.com webradio list. Reads only `webradios[].label` and `.id` from the page's

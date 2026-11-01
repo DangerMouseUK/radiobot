@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Official-list sync decodes each HTML entity in a station name exactly once, so `&amp;quot;` becomes `&quot;` rather than `"` (reported by CodeQL as double unescaping). A numeric entity outside the Unicode range is now left as it is instead of stopping the sync with an error, and hexadecimal entities such as `&#x26;` are decoded.
+
 ## [1.0.0] - 2026-11-01
 
 First public release. The items not yet verified are listed under *Release status* below.

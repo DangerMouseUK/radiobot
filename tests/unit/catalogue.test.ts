@@ -11,7 +11,7 @@ import {
 } from '../../src/catalogue/packs.ts';
 import { resolveStation, searchStations } from '../../src/catalogue/search.ts';
 import { CatalogueSync } from '../../src/catalogue/sync.ts';
-import { extractJsonValue, parseRadioFgApidata } from '../../src/catalogue/sync-adapters.ts';
+import { decodeEntities, extractJsonValue, parseRadioFgApidata } from '../../src/catalogue/sync-adapters.ts';
 import { metadataSignal } from '../../src/streams/identity.ts';
 import type { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { memoryDb, PRD_STATION_NAMES, silentLogger } from '../helpers.ts';
@@ -289,6 +289,20 @@ describe('official list sync (FR-002)', () => {
     expect(parseRadioFgApidata(page([{ id: 'abc', label: 'FG CHIC &amp; CHILL' }]))).toEqual([
       { externalId: 'abc', name: 'FG CHIC & CHILL' },
     ]);
+  });
+
+  it('decodes each HTML entity exactly once', () => {
+    expect(decodeEntities('&amp;quot;')).toBe('&quot;');
+    expect(decodeEntities('&amp;lt;b&amp;gt; &amp;#39;')).toBe('&lt;b&gt; &#39;');
+    expect(decodeEntities('&quot;R&amp;B&quot; &lt;3 &#39;80s&#x27; &apos;&#x26;&#38;')).toBe(
+      "\"R&B\" <3 '80s' '&&",
+    );
+  });
+
+  it('leaves invalid numeric entities as they are instead of throwing', () => {
+    expect(decodeEntities('A &#99999999; B &#x110000;')).toBe('A &#99999999; B &#x110000;');
+    const html = '<nav class="HeaderSources"><button class="dropdown-item">FG &#99999999;</button></nav>';
+    expect(parseRadioFgApidata(html).map((e) => e.name)).toEqual(['FG &#99999999;']);
   });
 
   it('falls back to the header dropdown markup', () => {
