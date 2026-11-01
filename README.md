@@ -136,7 +136,7 @@ Replies that only concern you are ephemeral (only you see them).
 | `/radio play <station> [channel]` | Control | Plays a station in your voice channel (or `channel`), or switches to it. An ambiguous name shows a picker; the bot never guesses. |
 | `/radio browse [pack] [category] [search]` | Read | Paged station picker, grouped by pack, with this server's custom stations last. Picking a station plays it (needs Control). |
 | `/radio list [scope] [pack] [page]` | Read | Station list with status and IDs: pack stations (`scope:packs`, optionally one `pack`), this server's `custom` stations, or `favourites`. |
-| `/radio now` | Read | What's playing: station, state, source format and verification, Discord output, stream metadata and what's up next, with control buttons. |
+| `/radio now` | Read | What's playing, at a glance: the song or show title from the stream, then the channel, the station's stream and what goes to Discord side by side, and one line on why this source plays (and the fallback), with control buttons and what's up next. The full figures are under Sources, Inspect and `/radio quality`. |
 | `/radio stop` | Control | Stops the audio. The bot stays in the channel for 5 minutes (or indefinitely in 24/7 mode) and cancels auto-resume. |
 | `/radio join [channel]` | Control | Joins a voice channel, and starts the default station if one is set. |
 | `/radio leave` | Control | Disconnects. The bot won't rejoin until someone plays something. |

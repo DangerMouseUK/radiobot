@@ -36,6 +36,12 @@ export class Notifier {
       prev.timer ??= setTimeout(() => this.#flush(key), WINDOW_MS - (now - prev.at));
       return;
     }
+    // The last window's summary is still due (its timer ran late, or the clock jumped ahead):
+    // send it now, so its timer isn't orphaned and the summary isn't lost.
+    if (prev?.timer) {
+      clearTimeout(prev.timer);
+      this.#flush(key);
+    }
     this.#recent.set(key, { at: now, suppressed: 0, last: notice, timer: null });
     void this.#send(notice.guildId, notice.message);
     if (this.#recent.size > 1000) this.#sweep(now);

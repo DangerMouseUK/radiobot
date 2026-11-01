@@ -345,24 +345,42 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
     .setTitle('Radio Bot settings')
     .setColor(COLOR.info)
     .setDescription(
-      [
-        `**Command channels:** ${fmtIds(s.allowedTextChannelIds, '#')}`,
-        `**Voice channels:** ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
-        '**Admins:** the server owner and members with the Administrator permission',
-        `**DJ roles:** ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
-        `**Who else can control the radio:** ${s.memberControlMode === 'same_channel' ? 'listeners in the bot’s voice channel' : s.memberControlMode === 'any' ? 'anyone' : 'nobody (DJs and admins only)'}`,
-        `**Default station:** ${station?.displayName ?? 'none'} · **Preferred voice channel:** ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>` : 'none'}${s.voiceLock ? ' (locked)' : ''}`,
-        `**When the channel is empty:** ${IDLE_LABEL[s.idleMode]} · **Quality:** ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
-        `**Autostart when the bot starts:** ${s.autostart ? 'on' : 'off'} · **Resume after restart:** ${s.resumeOnRestart ? 'on' : 'off'}`,
-        ...(s.autostart && (!station || !s.preferredVoiceChannelId)
-          ? [
-              `Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
-            ]
-          : []),
-        `**Notifications:** ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'} · **Voice channel status:** ${s.voiceChannelStatus ? 'on' : 'off'}`,
-        '',
-        'Leave a channel or role menu empty for no restriction. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config`; choose "No default station" to clear the default. The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
-      ].join('\n'),
+      'Change a setting with the menus and buttons below; the pages switch between Access, Playback and Notifications. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config` (choose "No default station" to clear the default).',
+    )
+    .addFields(
+      {
+        name: 'Access',
+        value: [
+          `Commands work in: ${fmtIds(s.allowedTextChannelIds, '#')}`,
+          `Voice channels: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
+          `DJ roles: ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
+          `Listeners can control: ${s.memberControlMode === 'same_channel' ? 'from the bot’s voice channel' : s.memberControlMode === 'any' ? 'from anywhere' : 'no (DJs and admins only)'}`,
+          '-# Admins are the server owner and members with the Administrator permission.',
+        ].join('\n'),
+      },
+      {
+        name: 'Playback',
+        value: [
+          `Default station: ${station?.displayName ?? 'none'}`,
+          `Preferred voice channel: ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>${s.voiceLock ? ' (locked)' : ''}` : 'none'}`,
+          `When the channel is empty: ${IDLE_LABEL[s.idleMode]}`,
+          `Quality: ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
+          `Autostart: ${s.autostart ? 'on' : 'off'} · Resume after restart: ${s.resumeOnRestart ? 'on' : 'off'}`,
+          ...(s.autostart && (!station || !s.preferredVoiceChannelId)
+            ? [
+                `⚠️ Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
+              ]
+            : []),
+          '-# The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
+        ].join('\n'),
+      },
+      {
+        name: 'Notifications',
+        value: [
+          `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
+          `Voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`,
+        ].join('\n'),
+      },
     )
     .setFooter({ text: `Page: ${PAGE_LABEL[page]}` });
   const nav = row(

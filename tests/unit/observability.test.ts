@@ -174,6 +174,26 @@ describe('notification channel notices (FR-008)', () => {
     t.notifier.close();
   });
 
+  it('still sends the summary, and leaves no timer behind, when the clock jumps past the window', async () => {
+    vi.useFakeTimers();
+    const t = setup();
+    t.guilds.updateSettings(GUILD, { notificationChannelId: '223456789012345678' });
+    t.notifier.notify(notice('failover', 'First.'));
+    t.notifier.notify(notice('failover', 'Repeat.'));
+    // The wall clock moves on (a suspended host, a clock correction) before the summary timer runs.
+    vi.setSystemTime(Date.now() + 6 * 60_000);
+    t.notifier.notify(notice('failover', 'Next window.'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.sent).toEqual([
+      '📻 First.',
+      '📻 Repeat. _(1 similar notice in the last 5 minutes)_',
+      '📻 Next window.',
+    ]);
+    t.notifier.close();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
   it('stays silent without a notification channel or when the channel belongs to another server', async () => {
     const quiet = setup();
     quiet.notifier.notify(notice('failover', 'x'));

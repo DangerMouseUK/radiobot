@@ -226,8 +226,10 @@ describe('browse and list views', () => {
 
   it('explains the default station, and says when autostart is missing what it needs', () => {
     const { ctx, guilds } = context();
-    const text = () =>
-      String(configView(ctx, GUILD, guilds.getSettings(GUILD), 'playback').embeds[0]!.toJSON().description);
+    const text = () => {
+      const e = configView(ctx, GUILD, guilds.getSettings(GUILD), 'playback').embeds[0]!.toJSON();
+      return [e.description, ...(e.fields ?? []).map((f) => `${f.name}\n${f.value}`)].join('\n');
+    };
     expect(text()).toMatch(/default station is what `\/radio join` plays/);
     expect(text()).not.toMatch(/Autostart needs/);
     guilds.updateSettings(GUILD, { autostart: true });
@@ -312,7 +314,10 @@ describe('settings view', () => {
     const v = configView(ctx, GUILD, s, page);
     const comps = checkComponents(v);
     for (const p of parseAll(ids, comps)) expect(p).toMatchObject({ action: 'cfg', expired: false });
-    const d = v.embeds[0]!.toJSON().description ?? '';
+    const e = v.embeds[0]!.toJSON();
+    const fields = Object.fromEntries((e.fields ?? []).map((f) => [f.name, f.value]));
+    expect(Object.keys(fields)).toEqual(['Access', 'Playback', 'Notifications']);
+    const d = Object.values(fields).join('\n');
     expect(d).toContain('<@&223456789012345678>');
     expect(d).toContain('FG CHIC');
     expect(d).toContain('manual (256 kbps)');
@@ -444,18 +449,21 @@ describe('status embeds', () => {
     expect(nowEmbed(station, status({ state: 'IDLE' }), null).toJSON().title).toBe('Radio is idle');
   });
 
-  it('shows source, output and an honest track line while playing', () => {
+  it('lays out the song, three short facts and why this source plays', () => {
     const e = nowEmbed(station, status(), '999').toJSON();
-    expect(e.title).toBe('Now playing: FG CHIC');
-    expect(e.description).toContain('in <#999>');
-    expect(e.description).toContain('MP3 · ≈128 kbps (measured)');
-    expect(e.description).toContain('**On air:** no song or show title from the stream right now.');
+    expect(e.title).toBe('▶ FG CHIC');
+    expect(e.description).toBe('-# The station isn’t sending a song or show title right now.');
+    const fields = Object.fromEntries((e.fields ?? []).map((f) => [f.name, f]));
+    expect(fields.Channel).toMatchObject({ value: '<#999>', inline: true });
+    expect(fields['Station stream']).toMatchObject({ value: 'Direct MP3 · ≈128 kbps', inline: true });
+    expect(fields['To Discord']?.value).toMatch(/^Opus · \d+ kbps$/);
+    expect(fields.Source?.value).toMatch(/Verified as this station · checked/);
     const titled = nowEmbed(
       station,
       status({ nowPlaying: { title: 'Artist - Song', receivedAt: new Date().toISOString() } as never }),
       null,
     ).toJSON();
-    expect(titled.description).toContain('**On air:** Artist - Song');
+    expect(titled.description).toMatch(/^🎵 \*\*Artist - Song\*\*\n-# From the station’s stream, updated /);
     const hostile = nowEmbed(
       station,
       status({
@@ -467,6 +475,8 @@ describe('status embeds', () => {
       null,
     ).toJSON();
     expect(hostile.description).toContain(String.raw`\[Free](https://evil.example) \*\*now\*\*`);
+    // Short enough to read at a glance: no field runs to more than a few lines.
+    for (const f of e.fields ?? []) expect(f.value.split('\n').length).toBeLessThanOrEqual(3);
   });
 
   it('shows the last error while recovering', () => {
@@ -479,7 +489,7 @@ describe('status embeds', () => {
       null,
     ).toJSON();
     expect(e.title).toBe('Reconnecting to the stream: FG CHIC');
-    expect(e.description).toContain('— The stream stalled.');
+    expect(e.description).toContain('⚠️ The stream stalled.');
   });
 
   it('reports one lossy encode and no processing in the quality embed', () => {

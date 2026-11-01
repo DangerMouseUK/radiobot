@@ -34,7 +34,6 @@ import type { DesiredState, GuildSettings, SettingsPatch } from '../persistence/
 import { errorCode, isRadioError, RadioError } from '../shared/errors.ts';
 import { truncate } from '../shared/text.ts';
 import { codecLabel } from '../streams/probe.ts';
-import { CONCLUSION_TEXT } from '../streams/ranking.ts';
 import { STATE_LABEL } from '../voice/state-machine.ts';
 import {
   type AppContext,
@@ -90,6 +89,9 @@ const DESIRED_LABEL: Record<DesiredState, string> = {
   left: 'stay out of voice',
   kicked: 'stay out of voice (a moderator disconnected it)',
 };
+
+/** Open browse lists kept for their Next, Previous and Favourites buttons (each expires after 15 min). */
+const MAX_BROWSE_LISTS = 500;
 
 /** The `default_station` choice that clears the default (not a valid station ID). */
 const NO_DEFAULT_STATION = 'none';
@@ -498,16 +500,8 @@ export class RadioController {
       });
       return;
     }
+    // The card says in one line why this source plays; Sources has the full reasoning.
     const embed = nowEmbed(station, status, target);
-    if (result.selection) {
-      embed.addFields({
-        name: 'Why this source',
-        value: truncate(
-          [CONCLUSION_TEXT[result.selection.conclusion], ...result.selection.explanation].join('\n'),
-          1024,
-        ),
-      });
-    }
     await respond({
       embeds: [this.#withQueue(embed, i.guildId)],
       components: controlRows(ctx, i.guildId, station.id),
@@ -780,15 +774,30 @@ export class RadioController {
     const status = s?.status() ?? null;
     const intent = this.#ctx.guilds.getIntent(i.guildId);
     const desired = intent?.desiredStationId ? this.#ctx.stations.getStation(intent.desiredStationId) : null;
-    const lines = [
-      `**Connection:** ${status ? STATE_LABEL[status.state] : 'Idle'}${status?.channelId ? ` in <#${status.channelId}>` : ''}`,
-      `**Set to:** ${DESIRED_LABEL[intent?.desiredState ?? 'idle']}${desired ? ` — ${desired.displayName}` : ''}`,
-    ];
-    if (status?.source) lines.push(`**Source:** ${sourceFormat(status.source)}`);
-    if (status?.lastError) lines.push(`**Last problem:** ${status.lastError.message}`);
+    const e = new EmbedBuilder()
+      .setTitle('Radio status')
+      .setColor(
+        status?.state === 'PLAYING' ? COLOR.ok : status?.state === 'ERROR' ? COLOR.error : COLOR.neutral,
+      )
+      .addFields(
+        {
+          name: 'Right now',
+          value: `${status ? STATE_LABEL[status.state] : 'Idle'}${status?.channelId ? ` in <#${status.channelId}>` : ''}`,
+          inline: true,
+        },
+        {
+          name: 'Asked to',
+          value: `${DESIRED_LABEL[intent?.desiredState ?? 'idle']}${desired ? `: ${desired.displayName}` : ''}`,
+          inline: true,
+        },
+      );
+    if (status?.source) e.addFields({ name: 'Source', value: sourceFormat(status.source), inline: true });
+    const notes: string[] = [];
+    if (status?.lastError) notes.push(`⚠️ ${status.lastError.message}`);
     if (intent?.lastErrorCode === 'RESUME_DISABLED')
-      lines.push('Playback was not resumed after the last restart because "resume after restart" is off.');
-    await i.reply({ embeds: [infoEmbed('Radio status', lines.join('\n'))], flags: EPHEMERAL });
+      notes.push('Playback wasn’t resumed after the last restart, because **Resume after restart** is off.');
+    if (notes.length) e.setDescription(notes.join('\n'));
+    await i.reply({ embeds: [e], flags: EPHEMERAL });
   }
 
   /** Admin-only, private (ephemeral) live statistics with Refresh and Close buttons. */
@@ -989,16 +998,17 @@ export class RadioController {
         const st = ctx.stations.getStation(e.stationId);
         return `${n + 1}. ${st ? stationLine(st, ctx.sources.availability(st)) : e.stationId}${e.addedById ? ` — added by <@${e.addedById}>` : ''}`;
       });
-      await i.reply({
-        embeds: [
-          infoEmbed(
-            'Station queue',
-            `${now ? `**Now:** ${now}\n\n` : ''}${lines.length ? lines.join('\n') : 'The queue is empty. Add stations with /radio queue add.'}`,
+      const e = new EmbedBuilder()
+        .setTitle(`Queue · ${q.length} ${q.length === 1 ? 'station' : 'stations'}`)
+        .setColor(COLOR.info)
+        .setDescription(
+          truncate(
+            lines.length ? lines.join('\n') : 'The queue is empty. Add stations with `/radio queue add`.',
+            4000,
           ),
-        ],
-        flags: EPHEMERAL,
-        allowedMentions: { parse: [] },
-      });
+        );
+      if (now) e.addFields({ name: 'Playing now', value: now });
+      await i.reply({ embeds: [e], flags: EPHEMERAL, allowedMentions: { parse: [] } });
       return;
     }
     const a = this.#auth(i, 'control');
@@ -1430,34 +1440,65 @@ export class RadioController {
 
   async #cmdHelp(i: Cmd): Promise<void> {
     const a = this.#auth(i, 'read');
-    const lines = [
-      '**Listen**',
-      '`/radio browse`: pick a station from the list',
-      '`/radio play <station>`: play a station in your voice channel',
-      '`/radio now` shows what is playing. `/radio stop` stops it, and `/radio leave` takes the bot out of the channel.',
-      'Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
-      '',
-      '**Favourites and the default station**',
-      'Press **Favourite** under a playing station to add it to this server’s favourites. They come first in the `/radio play` suggestions, have their own list in `/radio browse`, and Next and Previous step through them.',
-      'The default station (set by an admin) is what `/radio join` plays, and what autostart plays when the bot starts.',
-      '',
-      '**Queue**',
-      '`/radio queue add <station>` lines up a station, and `/radio skip` plays the next one.',
-      'Also: `/radio queue list` · `/radio queue remove` · `/radio queue clear`',
-      '',
-      '**Sources**',
-      'A station can have several sources (streams). The bot only plays one it has verified as the right station.',
-      '`/radio sources <station>`: its sources, best first. While it plays, you can switch to another usable source until the station changes.',
-      '`/radio inspect <station>`: codec, bitrate and the evidence behind them',
-      '',
-      a.ok && a.level === 'admin'
-        ? '**Admin**\n`/radio config` · `/radio add` · `/radio edit` · `/radio remove` · `/radio source pin|prefer|auto|verify` · `/radio rescan` · `/radio sync` · `/radio export` · `/radio import` · `/radio panel`\n`/radio stats`: live stream and connection figures, shown only to you'
-        : 'Server admins choose channels and DJ roles with `/radio config` and add custom stations with `/radio add`.',
-      '',
-      'Audio reaches Discord as 48 kHz stereo Opus at up to the station’s own bitrate (510 kbps at most). A higher bitrate can’t add detail that the station’s stream does not contain.',
-      DISCLAIMER,
-    ];
-    await i.reply({ embeds: [infoEmbed('Radio Bot help', lines.join('\n'))], flags: EPHEMERAL });
+    const admin = a.ok && a.level === 'admin';
+    const lines = (...l: string[]) => l.join('\n');
+    const e = new EmbedBuilder()
+      .setTitle('Radio Bot help')
+      .setColor(COLOR.info)
+      .setDescription('Live radio in your voice channel. Every command starts with `/radio`.')
+      .addFields(
+        {
+          name: '🎧 Listen',
+          value: lines(
+            '`/radio browse`: pick a station from the list',
+            '`/radio play <station>`: play a station in your voice channel',
+            '`/radio now` what is playing · `/radio stop` · `/radio leave`',
+            '-# Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
+          ),
+        },
+        {
+          name: '⭐ Favourites and the default station',
+          value: lines(
+            'Press **Favourite** under a playing station. Favourites come first in the `/radio play` suggestions, have their own list in Browse, and Next and Previous step through them.',
+            'The default station (set by an admin) is what `/radio join` plays, and what autostart plays when the bot starts.',
+          ),
+        },
+        {
+          name: '📋 Queue',
+          value: lines(
+            '`/radio queue add <station>` lines up a station; `/radio skip` plays the next one.',
+            '-# Also: `/radio queue list` · `/radio queue remove` · `/radio queue clear`',
+          ),
+        },
+        {
+          name: '📡 Sources',
+          value: lines(
+            'A station can have several sources (streams). The bot plays the best one it has verified as the right station.',
+            '`/radio sources <station>`: its sources, best first. While it plays, you can switch to another usable source until the station changes.',
+            '`/radio inspect <station>`: codec, bitrate and the evidence behind them',
+          ),
+        },
+        admin
+          ? {
+              name: '🛠 Admin',
+              value: lines(
+                '`/radio config` · `/radio add` · `/radio edit` · `/radio remove` · `/radio source pin|prefer|auto|verify` · `/radio rescan` · `/radio sync` · `/radio export` · `/radio import` · `/radio panel`',
+                '`/radio stats`: live stream and connection figures, shown only to you',
+              ),
+            }
+          : {
+              name: '🛠 Settings',
+              value:
+                'Server admins choose channels and DJ roles with `/radio config`, and add custom stations with `/radio add`.',
+            },
+        {
+          name: '🔊 Sound',
+          value:
+            'Audio reaches Discord as 48 kHz stereo Opus at up to the station’s own bitrate (510 kbps at most). A higher bitrate can’t add detail the station’s stream doesn’t contain.',
+        },
+      )
+      .setFooter({ text: DISCLAIMER });
+    await i.reply({ embeds: [e], flags: EPHEMERAL });
   }
 
   async #sourceGroup(i: Cmd, sub: string): Promise<void> {
@@ -1899,6 +1940,12 @@ export class RadioController {
     const now = Date.now();
     for (const [k, v] of this.#browse) if (v.expires < now) this.#browse.delete(k);
     for (const [k, v] of this.#imports) if (v.expires < now) this.#imports.delete(k);
+    // Bounded by count as well as time: a burst of /radio browse keeps only the newest lists
+    // (a Map iterates oldest first). An older list's buttons then say it has expired.
+    for (const k of this.#browse.keys()) {
+      if (this.#browse.size <= MAX_BROWSE_LISTS) break;
+      this.#browse.delete(k);
+    }
   }
 }
 

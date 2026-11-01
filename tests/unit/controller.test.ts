@@ -572,7 +572,7 @@ describe('buttons and menus are authorised again on every click', () => {
     const off = await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus'));
     expect(off.violations).toEqual([]);
     expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(false);
-    expect(off.text).toMatch(/Voice channel status:\*\* off/);
+    expect(off.text).toMatch(/Voice channel status: off/);
     await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus'));
     expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(true);
     const denied = await t.click(t.people.member, t.ids.make(GUILD, 'cfg', 'vstatus'));
@@ -740,8 +740,18 @@ describe('/radio help', () => {
     const t = setup();
     const admin = await t.command(t.people.admin, { sub: 'help' });
     const member = await t.command(t.people.member, { sub: 'help' });
-    expect(admin.text).toMatch(/\*\*Admin\*\*/);
-    expect(member.text).not.toMatch(/\*\*Admin\*\*/);
+    expect(admin.text).toMatch(/🛠 Admin\n`\/radio config`/);
+    expect(member.text).not.toMatch(/🛠 Admin/);
+    // One section per topic, not one long description.
+    const fields = admin.calls[0]!.payload.embeds![0]!.toJSON().fields!.map((f) => f.name);
+    expect(fields).toEqual([
+      '🎧 Listen',
+      '⭐ Favourites and the default station',
+      '📋 Queue',
+      '📡 Sources',
+      '🛠 Admin',
+      '🔊 Sound',
+    ]);
     expect(member.text).toMatch(/`\/radio add`/);
     expect(member.ephemeral).toBe(true);
   });
@@ -982,5 +992,19 @@ describe('choosing another source while a station plays', () => {
     expect(t.guilds.getPreference(GUILD, st.id)).toMatchObject({ mode: 'prefer', sourceId: usable[0] });
     await t.click(t.people.admin, t.ids.make(GUILD, 'srcauto', st.id));
     expect(t.guilds.getPreference(GUILD, st.id)?.mode ?? 'auto').toBe('auto');
+  });
+});
+
+describe('open browse lists', () => {
+  it('keeps at most 500, dropping the oldest first', async () => {
+    const t = setup();
+    const first = await t.command(t.people.member, { sub: 'browse' });
+    const next = first.componentIds.find((id) => decode(t.ids, id)?.action === 'browse')!;
+    for (let n = 0; n < 500; n++) await t.command(t.people.member, { sub: 'browse' });
+    const old = await t.click(t.people.member, next);
+    expect(old.text).toMatch(/This station list has expired/);
+    const latest = await t.command(t.people.member, { sub: 'browse' });
+    const fresh = latest.componentIds.find((id) => decode(t.ids, id)?.action === 'browse')!;
+    expect((await t.click(t.people.member, fresh)).text).not.toMatch(/expired/);
   });
 });

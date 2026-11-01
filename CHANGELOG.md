@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Clearer cards.** The now-playing card (from `/radio play`, `/radio now` and the control panel) leads with the song, puts the channel, the station's stream and what goes to Discord side by side, and gives one line on why this source plays; the full reasoning moved to Sources. `/radio help`, `/radio status`, the queue and `/radio config` are laid out in short sections instead of one block of text, the sources view shows each source in three short lines (the evidence stays in Inspect), and refusals and errors have a headline.
 - When two sources can't be told apart on measured quality (for example 128 kbps MP3 against 128 kbps AAC), the explanation now says the station pack's own order decided.
 - With nothing typed, `/radio play` suggests the default station first, then the favourites, each labelled, then everything else.
 - `/radio config` explains what the default station is for, and says when autostart is on but can't work because the default station or the preferred voice channel is missing.
