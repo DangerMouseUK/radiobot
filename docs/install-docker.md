@@ -127,7 +127,7 @@ As a bot admin (the server owner, or a member with Discord's **Administrator** p
      - who can play or stop (listeners in the same channel by default, only DJs and admins, or anyone);
      - quality mode (`maximum`, `balanced` or `manual`);
      - the preferred voice channel, plus *Autostart*, *Resume after restart* and *Lock to preferred channel*.
-   - **Notifications page:** a channel for recovery and error notices. This is optional, and needs Send Messages in that channel.
+   - **Notifications page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and a switch for showing what's playing as the voice channel status (on by default; needs the optional Set Voice Channel Status permission).
    - Set a default station with `/radio config default_station:` and a manual Opus target with `/radio config manual_bitrate:`.
 2. Join a voice channel and run **`/radio play station:FG DJ RADIO`**, or use **`/radio browse`**.
 3. Run **`/radio quality`** to see the source, the Discord output and the processing report.

@@ -66,7 +66,8 @@ src/
                         voice-status.ts (voice channel status),
                         voice-access.ts, context.ts
   persistence/          db.ts (node:sqlite, migrations, backups), repositories/ (stations, guilds, meta)
-  observability/        logger, health (health.json heartbeat, diagnostics server), metrics, netstats
+  observability/        logger, health (health.json heartbeat, diagnostics server), metrics, netstats,
+                        event-loop (event-loop delay for /radio stats)
   import-export/        /radio export and import
   shared/               errors (reason codes), backoff, rate limits, redaction, text, async helpers, paths
 scripts/                validate-catalogue, register-commands, healthcheck, backup (CLI entry points);

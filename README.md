@@ -175,7 +175,7 @@ Radio never ends, so the queue moves only when you skip.
 
 | Command | Level | What it does |
 |---|---|---|
-| `/radio config [default_station] [manual_bitrate]` | Admin | Interactive settings: command and voice channel allowlists, DJ roles, idle mode, listener control, quality mode, preferred channel, channel lock, autostart, resume after restart and the notice channel. |
+| `/radio config [default_station] [manual_bitrate]` | Admin | Interactive settings: command and voice channel allowlists, DJ roles, idle mode, listener control, quality mode, preferred channel, channel lock, autostart, resume after restart, the notice channel, and whether the voice channel status shows what's playing. |
 | `/radio add <name> <url> …` | Admin | Adds a custom station for this server. The URL must pass the SSRF policy and a live probe before it is accepted. |
 | `/radio edit <station> …` | Admin | Edits a custom station. A new URL is probed first, and the old one is kept if the probe fails. |
 | `/radio remove <station>` | Admin | Removes a custom station. Pack stations can't be removed. |

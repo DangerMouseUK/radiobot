@@ -168,6 +168,7 @@ There are no other services. State lives in one SQLite file. All network traffic
 - **`logger.ts`**: Pino, writing JSON lines to stdout.
 - **`metrics.ts`**: in-process counters and a ring buffer of 200 incidents. Repeats of the same code are coalesced within 5 minutes, and each incident is tagged with a fault domain: `upstream`, `discord`, `bot`, `operator` or `user`.
 - **`health.ts`**: the heartbeat file (`health.json` next to the database), read by `scripts/healthcheck.ts`, and the optional local diagnostics server.
+- **`event-loop.ts`** (`EventLoopMonitor`): Node's event-loop delay, sampled every 10 ms and summarised per minute (typical, 99th percentile, worst). Voice packets are sent every 20 ms from that loop, so `/radio stats` flags a delay of 20 ms or more, a minute with 50 ms or more is logged as a warning, and the diagnostics endpoint includes the figures.
 
 ## Data flow: `/radio play`
 

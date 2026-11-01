@@ -69,7 +69,7 @@ Each command and component needs one capability:
 | Play or switch, stop, leave, join, next and previous, favourite, skip, queue add, remove and clear | Depends on the listener control mode (below) | Yes | Yes |
 | Add, edit or remove a custom station | No | No | Yes |
 | Rescan or compare sources, sync station packs, pin, prefer or auto source | No | No | Yes |
-| Configure channels, DJ roles, idle mode, quality, autostart and notifications; post the panel | No | No | Yes |
+| Configure channels, DJ roles, idle mode, quality, autostart, notifications and the voice channel status; post the panel | No | No | Yes |
 | Import or export configuration; `/radio stats` (private live statistics) | No | No | Yes |
 | Record an identity verdict (`source verify`) for a **custom** station of this server | No | No | Yes |
 | Record an identity verdict for a source in a **station pack** | No | No | Operator only |

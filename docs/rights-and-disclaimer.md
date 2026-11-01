@@ -78,7 +78,7 @@ Radio Bot runs on your hardware, under your Discord application. **You, the oper
 | Server (guild) IDs | `guild_settings`, `guild_playback_state`, `guild_favourites`, `guild_source_preferences`, custom `stations` | Per-server configuration |
 | Channel IDs: allowed command and voice channels, preferred voice channel, notification channel, panel channel and message ID | `guild_settings` | Enforce settings, post notices, maintain the panel |
 | Role IDs: DJ roles | `guild_settings` | Authorisation |
-| Settings: idle mode, quality mode and manual bitrate, listener control mode, autostart, resume, lock, default station | `guild_settings` | Behaviour |
+| Settings: idle mode, quality mode and manual bitrate, listener control mode, autostart, resume, lock, default station, voice channel status on/off | `guild_settings` | Behaviour |
 | Favourite stations (per server, not per user) | `guild_favourites` | Favourites |
 | Station queue: station, time added, and **the user ID of whoever queued it** | `guild_queue` | `/radio queue`, `/radio skip` |
 | Desired playback state, desired station and channel, time of the last request, and **the user ID of the last person who started playback** | `guild_playback_state` | Restart behaviour and diagnostics |

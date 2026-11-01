@@ -284,7 +284,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 ### FR-012 — Favourites, defaults and idle modes (P1)
 
 - Server favourites (user-level favourites are a possible later addition).
-- Default station, preferred voice channel, optional lock, autostart on boot, resume after restart.
+- Default station, preferred voice channel, optional lock, autostart on boot, resume after restart, and whether the voice channel status shows what's playing (on by default).
 - Idle modes: `leave_when_empty` (default; leave after 60 s), `pause_when_empty` (stop the stream after 30 s, resume when someone joins), `24x7`. They are also checked as soon as the bot starts playing in, or joins, a channel that is already empty. Leaving an empty channel after `/radio stop` keeps the desired state *stopped*, so autostart doesn't fire on the next boot.
 - When playback resumes after idling, stale sources are re-probed.
 
@@ -502,7 +502,7 @@ SQLite (`node:sqlite`) with versioned SQL migrations in `migrations/`.
 - `stations` — pack and custom stations: provider (the pack ID, or `custom`), owning server (custom only), slug, official ID, name, aliases, tags, category, order, official page, catalogue status and dates.
 - `station_sources` — URL, label, priority, hints, measured transport/codec/profile/sample rate/channels, advertised/codec/measured bitrates and evidence strength, identity status, confidence, evidence and admin override, rights status, provenance, enabled flag, state, health score, failure counters, cooldown.
 - `source_probe_results` — per-probe evidence: timing, host, format, bitrate and evidence, headers and manifest summaries, identity evidence, outcome, probe version.
-- `guild_settings` — channel allowlists, DJ roles, listener control mode, default station, preferred channel and lock, quality mode and manual bitrate, idle mode, autostart, resume, notification channel, panel location.
+- `guild_settings` — channel allowlists, DJ roles, listener control mode, default station, preferred channel and lock, quality mode and manual bitrate, idle mode, autostart, resume, voice channel status, notification channel, panel location.
 - `guild_playback_state` — desired station, channel and state, last requester, last good source, last error.
 - `guild_source_preferences` — per-server `prefer`/`pin` choices.
 - `guild_favourites` — per-server favourites.
