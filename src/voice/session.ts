@@ -190,6 +190,8 @@ export interface SessionStatus {
   hls: SourceInput['info']['hls'];
   encoderPid: number | null;
   ffmpegWarnings: string[];
+  /** A source a listener chose for this station, which overrides the automatic choice. */
+  manualSourceId: string | null;
 }
 
 const NON_RETRYABLE: ReadonlySet<ReasonCode> = new Set([
@@ -226,6 +228,11 @@ export class GuildSession {
   #gen = 0;
   /** Counts commands (play, join, stop, leave, destroy); internal retries don't change it. */
   #commands = 0;
+  /**
+   * A source a listener chose for the station that is playing. It holds through reconnects and
+   * restarts of the same station, and is dropped when the station changes or the source fails.
+   */
+  #manualSourceId: string | null = null;
   #runId = 0;
   #runAbort: AbortController | null = null;
   #link: VoiceLink | null = null;
@@ -314,6 +321,7 @@ export class GuildSession {
     this.#clearTimer('empty');
     this.#stationId = stationId;
     this.#channelId = channelId;
+    this.#manualSourceId = null;
     this.#excluded.clear();
     this.#attempts = 0;
     this.#voiceReconnectAttempts = 0;
@@ -325,6 +333,26 @@ export class GuildSession {
       lastErrorCode: null,
     });
     return this.#start(this.#gen, {});
+  }
+
+  /**
+   * Plays the current station from another of its usable sources, chosen by a listener. It lasts
+   * until the station changes; if the source fails, the bot goes back to choosing automatically.
+   * The caller checks that the source belongs to the playing station and is usable.
+   */
+  async useSource(sourceId: string): Promise<StartResult> {
+    this.#commands++;
+    this.#gen++;
+    this.#clearTimer('retry');
+    this.#manualSourceId = sourceId;
+    this.#excluded.clear();
+    this.#attempts = 0;
+    return this.#start(this.#gen, { forceSourceId: sourceId, reason: 'manual' });
+  }
+
+  /** The source a listener chose for this station, if any. */
+  get manualSourceId(): string | null {
+    return this.#manualSourceId;
   }
 
   /** Joins without playing (used by /radio join without a default station). */
@@ -602,8 +630,9 @@ export class GuildSession {
         signal: abort.signal,
       });
       if (gen !== this.#gen) return this.#superseded();
-      if (opts.forceSourceId && selection.selected?.id !== opts.forceSourceId) {
-        const forced = selection.ordered.find((s) => s.id === opts.forceSourceId);
+      const force = opts.forceSourceId ?? this.#manualSourceId;
+      if (force && selection.selected?.id !== force) {
+        const forced = selection.ordered.find((s) => s.id === force);
         if (forced) selection = { ...selection, selected: forced };
       }
       this.#selection = selection;
@@ -846,6 +875,8 @@ export class GuildSession {
       return;
     }
     if (source) this.#excluded.add(source.id);
+    // A listener's chosen source has failed: the bot chooses automatically again.
+    if (source?.id === this.#manualSourceId) this.#manualSourceId = null;
     this.#attempts = 0;
     this.#failovers++;
     this.#d.metrics.inc('playback.failover');
@@ -1126,6 +1157,7 @@ export class GuildSession {
       hls: p?.input.info.hls ?? null,
       encoderPid: p?.stats.pid ?? null,
       ffmpegWarnings: p?.stderrTail ?? [],
+      manualSourceId: this.#manualSourceId,
     };
   }
 }

@@ -253,6 +253,7 @@ export function sourcesEmbed(
   sources: StationSource[],
   selection: SelectionResult,
   detailed: boolean,
+  live: { playingId: string | null; manualId: string | null } = { playingId: null, manualId: null },
 ): EmbedBuilder {
   const e = new EmbedBuilder()
     .setTitle(`${detailed ? 'Inspection' : 'Sources'}: ${st.displayName}`)
@@ -273,16 +274,27 @@ export function sourcesEmbed(
   // Discord rejects an embed whose title, description, fields and footer exceed 6000 characters
   // in total, so detailed views of stations with many sources stop adding fields before that.
   let budget = 5900 - (e.data.title?.length ?? 0) - (e.data.footer?.text.length ?? 0) - description.length;
-  const shown = sources.slice(0, 10);
-  let omitted = sources.length - shown.length;
+  // Usable sources first, in the order the bot ranks them; then the rest, which can't be used.
+  const rank = new Map(selection.ordered.map((s, i) => [s.id, i + 1]));
+  const ranked = [
+    ...selection.ordered.map((o) => sources.find((s) => s.id === o.id) ?? o),
+    ...sources.filter((s) => !rank.has(s.id)),
+  ];
+  const shown = ranked.slice(0, 10);
+  let omitted = ranked.length - shown.length;
   for (const [index, s] of shown.entries()) {
     const elig = checkEligibility(s, now);
-    const role =
+    const marks = [
+      live.playingId === s.id ? '▶ playing now' : null,
+      live.manualId === s.id ? 'chosen by a listener for this play' : null,
       selection.selected?.id === s.id
-        ? ' — **selected**'
+        ? '**best choice**'
         : selection.fallback?.id === s.id
-          ? ' — fallback'
-          : '';
+          ? 'fallback'
+          : null,
+    ].filter(Boolean);
+    const role = marks.length ? ` — ${marks.join(' · ')}` : '';
+    const place = rank.has(s.id) ? `#${rank.get(s.id)} ` : '';
     const lines = [
       `${transportLabel(s.transport === 'unknown' ? s.transportHint : s.transport)} · ${sourceFormat(s)}`,
       identityLine(s),
@@ -300,7 +312,7 @@ export function sourcesEmbed(
         `Where it came from: ${PROVENANCE_LABEL[s.provenance]}${s.rightsStatus !== 'unreviewed' ? ` · rights: ${s.rightsStatus}` : ''}`,
       );
     }
-    const name = truncate(`${s.label ?? 'Source'} \`${s.id}\`${role}`, 256);
+    const name = truncate(`${place}${s.label ?? 'Source'} \`${s.id}\`${role}`, 256);
     const value = truncate(lines.join('\n'), 1024);
     if (name.length + value.length > budget - 80) {
       omitted += shown.length - index;

@@ -513,8 +513,18 @@ describe('status embeds', () => {
     expect(embedSize(e)).toBeLessThanOrEqual(6000);
     const text = JSON.stringify(e.toJSON());
     expect(text).not.toContain('SECRET');
-    expect(text).toContain('— **selected**');
+    expect(text).toContain('#1 ');
+    expect(text).toContain('— **best choice**');
     expect(text).toContain('— fallback');
+    // Usable sources come first, in rank order; the best one heads the list.
+    const fields = e.toJSON().fields ?? [];
+    expect(fields[0]!.name).toMatch(/^#1 .*best choice/);
+    // What plays now, and a listener's choice, are marked.
+    const live = sourcesEmbed(station, sources, selection, false, {
+      playingId: selection.ordered[1]!.id,
+      manualId: selection.ordered[1]!.id,
+    }).toJSON();
+    expect(live.fields![1]!.name).toMatch(/▶ playing now · chosen by a listener for this play/);
     expect(sourcesEmbed(station, [], selectSource([], null), false).toJSON().description).toMatch(
       /No stream is known/,
     );

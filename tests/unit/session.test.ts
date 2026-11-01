@@ -741,6 +741,35 @@ describe('GuildSession', () => {
     expect((await first).code).toBe('CANCELLED');
   });
 
+  it("plays a listener's chosen source until the station changes", async () => {
+    const t = setup();
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    expect(t.session.status().source?.id).toBe('primary');
+    const r = await t.session.useSource('fallback');
+    expect(r.ok).toBe(true);
+    expect(t.session.status().source?.id).toBe('fallback');
+    expect(t.session.status().manualSourceId).toBe('fallback');
+    expect(active(t.pipelines)).toHaveLength(1);
+    // A brief failure is retried on the chosen source, not the automatic one.
+    t.pipelines.at(-1)!.fail('STREAM_EOF');
+    await until(() => t.session.state === 'PLAYING' && t.pipelines.length === 3);
+    expect(t.session.status().source?.id).toBe('fallback');
+    expect(t.session.status().manualSourceId).toBe('fallback');
+    // A new station goes back to the automatic choice.
+    await t.session.play('mypack:other', 'voice-1', null);
+    expect(t.session.status().manualSourceId).toBeNull();
+    expect(t.session.status().source?.id).toBe('primary');
+  });
+
+  it("goes back to the automatic choice when a listener's chosen source fails", async () => {
+    const t = setup({ timings: { backoff: [5] } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    await t.session.useSource('fallback');
+    t.pipelines.at(-1)!.fail('NOT_FOUND');
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'primary');
+    expect(t.session.status().manualSourceId).toBeNull();
+  });
+
   it('closes the opened input when the encoder cannot be created', async () => {
     const t = setup({ pipelineThrows: true, timings: { backoff: [60_000] } });
     await t.session.play('fg:fg-dj-radio', 'voice-1', null);

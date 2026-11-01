@@ -10,9 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Favourites are easy to get back to.** The station list from **Browse stations** has a **Favourites** button that shows only this server's favourites (and **All stations** to go back), and now-playing messages have the Browse stations button too, not just the control panel. Pressing **Favourite** now says where favourites show up, and `/radio help` explains favourites and the default station.
 - The default station can be cleared: choose **No default station** in `/radio config default_station`.
+- **Choosing another source.** `/radio sources` (and the Sources button) lists a station's sources best first, marks what is playing now, and shows why each can or can't be used. While the station plays, anyone who can control the radio can switch to another usable source from a menu; it lasts until the station changes, and if that source fails the bot goes back to the best one by itself. Admins get buttons to make the playing source this server's preference, or to go back to automatic choice.
 
 ### Changed
 
+- When two sources can't be told apart on measured quality (for example 128 kbps MP3 against 128 kbps AAC), the explanation now says the station pack's own order decided.
 - With nothing typed, `/radio play` suggests the default station first, then the favourites, each labelled, then everything else.
 - `/radio config` explains what the default station is for, and says when autostart is on but can't work because the default station or the preferred voice channel is missing.
 

@@ -158,7 +158,7 @@ Radio never ends, so the queue moves only when you skip.
 | Command | Level | What it does |
 |---|---|---|
 | `/radio quality` | Read | Input and output report: source codec, bitrate evidence, sample rate and channels; Opus target, the channel's bitrate setting (shown as "not a cap"), observed output, encryption and resampling. |
-| `/radio sources <station>` | Read | Candidate sources, the selected one and the fallback, with the reason each is or isn't eligible. Admins also get a re-probe button. |
+| `/radio sources <station>` | Read | The station's sources, best first, with what plays now, the fallback, and why each one can or can't be used. While it plays, anyone with Control can switch to another usable source until the station changes. Admins also get re-probe, *Prefer the playing source on this server* and *Back to automatic choice* buttons. |
 | `/radio inspect <station>` | Read | Everything in `sources`, plus the redacted endpoint, every bitrate figure, probe and failure times, health, start-up time and provenance. Admins also get a re-probe button. |
 | `/radio status` | Read | Connection state, the desired station and the last problem. |
 | `/radio stats` | Admin | A private live panel with **Refresh** and **Close** buttons, described below. |

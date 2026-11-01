@@ -216,7 +216,7 @@ Per station, in order (§7.4):
 5. **Latency:** startup time difference over 1.5 s.
 6. **Catalogue order** as the documented default.
 
-Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligible, otherwise mark Degraded and fall back). Every decision comes with an explanation and a conclusion: *higher quality verified*, *equivalent*, *not conclusively determined*, *higher-quality source ranked lower*, *single source* or *no eligible source*.
+Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligible, otherwise mark Degraded and fall back), with the commands or the buttons under `/radio sources`. While a station plays, anyone who can control the radio can play it from another usable source with the picker under `/radio sources` (or the Sources button). That choice lasts until the station changes; if the chosen source fails, the bot goes back to choosing automatically. Only usable sources are offered, and each choice is checked again when it is made. Every decision comes with an explanation and a conclusion: *higher quality verified*, *equivalent*, *not conclusively determined*, *higher-quality source ranked lower*, *single source* or *no eligible source*.
 
 **Acceptance:** an unverified "256 kbps" source is never chosen over a verified 128 kbps source, and an eligible direct stream is always chosen over HLS unless an admin pins or prefers the HLS source.
 

@@ -244,6 +244,9 @@ export function selectSource(
       explanation.push(
         `Selected ${describe(selected)}. Compared with ${relations.map((x) => `${describe(x.o)} (${x.r.reason})`).join(', ')}.`,
       );
+      explanation.push(
+        'With no measured quality difference, the order comes from stability, then start-up time, then the order the station pack lists its sources in.',
+      );
     }
   }
   if (selected.transport === 'hls' && ordered.some((s) => s.transport !== 'hls')) {

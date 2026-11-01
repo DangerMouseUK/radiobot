@@ -17,6 +17,7 @@ import {
   type MessageComponentInteraction,
   MessageFlags,
   PermissionFlagsBits,
+  StringSelectMenuBuilder,
 } from 'discord.js';
 import { resolveStation, searchStations } from '../catalogue/search.ts';
 import { AVAILABILITY_LABEL, type IdentityStatus, type Station } from '../catalogue/types.ts';
@@ -646,28 +647,122 @@ export class RadioController {
     const a = this.#auth(i, 'read');
     if (!a.ok) return this.#deny(i, a.reason);
     const st = this.#station(i.guildId, i.options.getString('station', true));
-    await i.reply({ ...this.#sourcesView(i.guildId, st, detailed, a.level === 'admin'), flags: EPHEMERAL });
+    await i.reply({ ...this.#sourcesView(i.guildId, st, detailed, this.#who(i)), flags: EPHEMERAL });
   }
 
-  #sourcesView(guildId: string, st: Station, detailed: boolean, admin: boolean): View {
-    const sources = this.#ctx.sources.sourcesFor(st.id);
-    const selection = this.#ctx.sources.select(guildId, st.id);
-    const embed = sourcesEmbed(st, sources, selection, detailed);
-    const pref = this.#ctx.guilds.getPreference(guildId, st.id);
+  /** What the person looking at a sources view may change: only offer controls they can use. */
+  #who(i: Cmd | Comp): { admin: boolean; control: boolean } {
+    const channel = this.#ctx.sessions.get(i.guildId)?.channelId ?? null;
+    return { admin: this.#auth(i, 'admin').ok, control: this.#auth(i, 'control', channel).ok };
+  }
+
+  #sourcesView(
+    guildId: string,
+    st: Station,
+    detailed: boolean,
+    who: { admin: boolean; control: boolean },
+  ): View {
+    const ctx = this.#ctx;
+    const sources = ctx.sources.sourcesFor(st.id);
+    const selection = ctx.sources.select(guildId, st.id);
+    const session = ctx.sessions.get(guildId);
+    const status = session?.connected && session.stationId === st.id ? session.status() : null;
+    const live = { playingId: status?.source?.id ?? null, manualId: status?.manualSourceId ?? null };
+    const embed = sourcesEmbed(st, sources, selection, detailed, live);
+    const pref = ctx.guilds.getPreference(guildId, st.id);
     if (pref)
       embed.addFields({ name: 'Server override', value: `${pref.mode} → \`${pref.sourceId ?? 'none'}\`` });
+    const row = (...c: MessageActionRowComponentBuilder[]) =>
+      new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...c);
     const components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
-    if (admin && sources.length > 0) {
+    // Anyone who may control the radio can play this station from another usable source while it
+    // plays. Only usable sources are offered, and the click is checked again on the server.
+    if (who.control && live.playingId && selection.ordered.length > 1) {
       components.push(
-        new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
-          new ButtonBuilder()
-            .setCustomId(this.#ctx.ids.make(guildId, 'rescan', st.id))
-            .setLabel('Check sources again')
-            .setStyle(ButtonStyle.Primary),
+        row(
+          new StringSelectMenuBuilder()
+            .setCustomId(ctx.ids.make(guildId, 'usesrc', st.id))
+            .setPlaceholder('Play from another source (until the station changes)')
+            .addOptions(
+              selection.ordered.slice(0, 25).map((src, n) => ({
+                label: truncate(`#${n + 1} ${src.label ?? 'Source'} · ${sourceFormat(src)}`, 100),
+                value: src.id,
+                description: truncate(
+                  src.id === selection.selected?.id
+                    ? 'The best choice'
+                    : `Ranked ${n + 1} of ${selection.ordered.length}`,
+                  100,
+                ),
+                default: src.id === live.playingId,
+              })),
+            ),
         ),
       );
     }
+    if (who.admin && sources.length > 0) {
+      const buttons = [
+        new ButtonBuilder()
+          .setCustomId(ctx.ids.make(guildId, 'rescan', st.id))
+          .setLabel('Check sources again')
+          .setStyle(ButtonStyle.Primary),
+      ];
+      if (live.playingId && (pref?.mode !== 'prefer' || pref.sourceId !== live.playingId)) {
+        buttons.push(
+          new ButtonBuilder()
+            .setCustomId(ctx.ids.make(guildId, 'srcpref', live.playingId))
+            .setLabel('Prefer the playing source on this server')
+            .setStyle(ButtonStyle.Secondary),
+        );
+      }
+      if (pref && pref.mode !== 'auto') {
+        buttons.push(
+          new ButtonBuilder()
+            .setCustomId(ctx.ids.make(guildId, 'srcauto', st.id))
+            .setLabel('Back to automatic choice')
+            .setStyle(ButtonStyle.Secondary),
+        );
+      }
+      components.push(row(...buttons));
+    }
     return { embeds: [embed], components };
+  }
+
+  /** A listener plays the current station from another of its usable sources (until the station changes). */
+  async #useSource(i: Comp, stationId: string): Promise<void> {
+    const ctx = this.#ctx;
+    if (!i.isStringSelectMenu()) return;
+    const st = visibleStation(ctx, i.guildId, stationId);
+    if (!st) return this.#deny(i, 'That station is no longer available.');
+    const session = ctx.sessions.get(i.guildId);
+    if (!session?.connected || session.stationId !== st.id)
+      return this.#deny(i, `${st.displayName} isn’t playing any more, so its source can’t be changed.`);
+    const a = this.#auth(i, 'control', session.channelId);
+    if (!a.ok) return this.#deny(i, a.reason);
+    // Checked again now, not trusted from the menu: it must be a usable source of this station.
+    const source = ctx.sources.select(i.guildId, st.id).ordered.find((s) => s.id === i.values[0]);
+    if (!source)
+      return this.#deny(
+        i,
+        'That source can’t be used right now: it must be verified as this station and working. The best usable source keeps playing.',
+      );
+    if (session.status()?.source?.id === source.id)
+      return this.#deny(i, `${st.displayName} is already playing from that source.`);
+    this.#rate(ctx.limits.playUser, i.user.id, 'station changes');
+    this.#rate(ctx.limits.playGuild, i.guildId, 'station changes');
+    await i.deferReply({ flags: EPHEMERAL });
+    const r = await session.useSource(source.id);
+    ctx.logger.info({ guildId: i.guildId, sourceId: source.id, by: i.user.id }, 'listener chose a source');
+    await i.editReply({
+      embeds: [
+        r.ok
+          ? infoEmbed(
+              'Source changed',
+              `${st.displayName} now plays from ${source.label ?? 'another source'} (${sourceFormat(source)}). This lasts until the station changes. If this source fails, the bot goes back to the best one by itself.`,
+              COLOR.ok,
+            )
+          : errorEmbed(r.message),
+      ],
+    });
   }
 
   async #cmdQuality(i: Cmd): Promise<void> {
@@ -1113,7 +1208,7 @@ export class RadioController {
         compareNote = `\nThe audio comparison did not run: ${isRadioError(err) ? err.userMessage : 'it failed.'}`;
       }
     }
-    const view = this.#sourcesView(i.guildId, st, true, false);
+    const view = this.#sourcesView(i.guildId, st, true, { admin: false, control: false });
     const summary = reports
       .map(
         (r) =>
@@ -1352,7 +1447,7 @@ export class RadioController {
       '',
       '**Sources**',
       'A station can have several sources (streams). The bot only plays one it has verified as the right station.',
-      '`/radio sources <station>`: which sources exist and which one plays',
+      '`/radio sources <station>`: its sources, best first. While it plays, you can switch to another usable source until the station changes.',
       '`/radio inspect <station>`: codec, bitrate and the evidence behind them',
       '',
       a.ok && a.level === 'admin'
@@ -1465,6 +1560,37 @@ export class RadioController {
     const { action, arg } = parsed;
     try {
       switch (action) {
+        case 'usesrc':
+          return await this.#useSource(i, arg);
+        case 'srcpref':
+        case 'srcauto': {
+          const a = this.#auth(i, 'admin');
+          if (!a.ok) return this.#deny(i, a.reason);
+          const source = action === 'srcpref' ? this.#ctx.stations.getSource(arg) : null;
+          const st = visibleStation(this.#ctx, i.guildId, source?.stationId ?? arg);
+          if (!st || (action === 'srcpref' && !source))
+            return this.#deny(i, 'That station or source is no longer available.');
+          this.#ctx.guilds.setPreference(
+            i.guildId,
+            st.id,
+            action === 'srcpref' ? 'prefer' : 'auto',
+            source?.id ?? null,
+            i.user.id,
+          );
+          await i.reply({
+            embeds: [
+              infoEmbed(
+                action === 'srcpref' ? 'Preferred source' : 'Automatic selection',
+                action === 'srcpref'
+                  ? `This server now prefers ${source!.label ?? 'that source'} (${sourceFormat(source!)}) for ${st.displayName}, whenever it is verified and working.`
+                  : `The bot chooses the source for ${st.displayName} again, based on its own checks.`,
+                COLOR.ok,
+              ),
+            ],
+            flags: EPHEMERAL,
+          });
+          return;
+        }
         case 'pick': {
           if (!i.isStringSelectMenu()) return;
           const st = visibleStation(this.#ctx, i.guildId, i.values[0] ?? '');
@@ -1584,7 +1710,7 @@ export class RadioController {
           const st = visibleStation(this.#ctx, i.guildId, arg);
           if (!st) return this.#deny(i, 'That station is no longer available.');
           await i.reply({
-            ...this.#sourcesView(i.guildId, st, action === 'insp', a.level === 'admin'),
+            ...this.#sourcesView(i.guildId, st, action === 'insp', this.#who(i)),
             flags: EPHEMERAL,
           });
           return;

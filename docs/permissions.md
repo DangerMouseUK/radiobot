@@ -58,8 +58,8 @@ Separately, the bot **operator** is either a Discord user listed in `OPERATOR_US
 Each command and component needs one capability:
 
 - **read**: browse, list (including `scope:favourites`), now, quality, sources, inspect, status, help, `queue list`, and the browse (including its Favourites filter), list, refresh, sources and inspect buttons.
-- **control**: play (including choosing a station in browse or from an ambiguity picker), stop, join, leave, skip, `queue add`, `queue remove` and `queue clear`, the next, previous and skip buttons, and the favourite button.
-- **admin**: stats (including its Refresh button; its Close button only deletes the clicker's own private reply), add, edit, remove, rescan (including the re-probe button), sync, config (including every settings control), export, import (including Apply and Cancel), panel, and `source pin`, `prefer`, `auto` and `verify`.
+- **control**: play (including choosing a station in browse or from an ambiguity picker), stop, join, leave, skip, `queue add`, `queue remove` and `queue clear`, the next, previous and skip buttons, the favourite button, and the source picker under `/radio sources` (which only switches the station that is playing, until the station changes).
+- **admin**: stats (including its Refresh button; its Close button only deletes the clicker's own private reply), add, edit, remove, rescan (including the re-probe button), the *Prefer the playing source* and *Back to automatic choice* buttons under `/radio sources`, sync, config (including every settings control), export, import (including Apply and Cancel), panel, and `source pin`, `prefer`, `auto` and `verify`.
 
 ### Capability matrix
 
