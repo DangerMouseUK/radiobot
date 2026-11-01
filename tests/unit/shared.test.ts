@@ -283,3 +283,40 @@ describe('project paths', () => {
     expect(rootPath('catalog', 'packs')).toBe(join(root, 'catalog', 'packs'));
   });
 });
+
+describe('edit distance with a limit', () => {
+  /** The textbook version, kept here as the reference. */
+  const reference = (a: string, b: string): number => {
+    const d = Array.from({ length: a.length + 1 }, (_, i) =>
+      Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+    );
+    for (let i = 1; i <= a.length; i++)
+      for (let j = 1; j <= b.length; j++)
+        d[i]![j] = Math.min(
+          d[i - 1]![j]! + 1,
+          d[i]![j - 1]! + 1,
+          d[i - 1]![j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+        );
+    return d[a.length]![b.length]!;
+  };
+
+  it('matches the reference exactly, and reports "over the limit" as limit + 1', () => {
+    let seed = 7;
+    const rand = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const word = () =>
+      Array.from({ length: Math.floor(rand() * 14) }, () => 'abcde fgh'[Math.floor(rand() * 9)]).join('');
+    for (let n = 0; n < 2000; n++) {
+      const a = word();
+      const b = word();
+      const d = reference(a, b);
+      expect(levenshtein(a, b)).toBe(d);
+      const max = Math.floor(rand() * 6);
+      expect(levenshtein(a, b, max)).toBe(Math.min(d, max + 1));
+    }
+    // Long names grow the reused buffers.
+    expect(levenshtein('x'.repeat(200), 'y'.repeat(150))).toBe(200);
+  });
+});

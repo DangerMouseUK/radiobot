@@ -250,6 +250,9 @@ describe('probe history retention', () => {
         probeVersion: 1,
       });
     }
+    // Later hourly runs only age results out; the per-source limit is applied as results arrive.
+    stations.pruneProbeResults(30, 30, false);
+    expect(stations.listProbeResults('s', 100)).toHaveLength(40);
     stations.pruneProbeResults(30, 30);
     expect(stations.listProbeResults('s', 100)).toHaveLength(30);
     const newest = stations.listProbeResults('s', 1)[0]!.startedAt;
@@ -389,6 +392,64 @@ describe('station and source cache', () => {
     provenance: 'curated' as const,
     provenanceDetail: 'x',
     rightsStatus: 'unreviewed' as const,
+  });
+
+  it('re-reads only the changed row after a source or status change, never the whole catalogue', () => {
+    const { db, stations } = memoryDb();
+    stations.upsertProviderStation(station('mypack:a'));
+    stations.upsertProviderStation(station('mypack:b'));
+    stations.upsertSeedSource(source('s1', 'mypack:a', 1));
+    stations.upsertSeedSource(source('s2', 'mypack:a', 2));
+    stations.listStations(null);
+    stations.listAllSources();
+    const all = vi.spyOn(db, 'all');
+    // The kinds of write that happen during playback and background checks.
+    stations.recordFailure('s1', 'TIMEOUT');
+    stations.recordSuccess('s2');
+    stations.applyProbePatch('s1', { codec: 'aac' });
+    stations.setCooldown('s2', '2030-01-01T00:00:00.000Z');
+    stations.setCatalogueStatus('mypack:b', 'missing_from_official');
+    expect(stations.getSource('s1')).toMatchObject({ codec: 'aac', consecutiveFailures: 1 });
+    expect(stations.listSources('mypack:a').map((x) => x.cooldownUntil)).toEqual([
+      null,
+      '2030-01-01T00:00:00.000Z',
+    ]);
+    expect(stations.getStation('mypack:b')?.catalogueStatus).toBe('missing_from_official');
+    expect(stations.listStations(null).map((x) => x.id)).toEqual(['mypack:a', 'mypack:b']);
+    expect(all).not.toHaveBeenCalled();
+    // A source that moves station, or a new priority, lands in the right place; a delete goes.
+    stations.upsertSeedSource({ ...source('s1', 'mypack:b', 1), url: 'https://moved.example.com/' });
+    stations.upsertSeedSource(source('s3', 'mypack:a', 0));
+    expect(stations.listSources('mypack:a').map((x) => x.id)).toEqual(['s3', 's2']);
+    expect(stations.listSources('mypack:b').map((x) => x.id)).toEqual(['s1']);
+    stations.deleteSource('s2');
+    expect(stations.listAllSources().map((x) => x.id)).toEqual(['s3', 's1']);
+    expect(all).not.toHaveBeenCalled();
+  });
+
+  it("lists each server's own custom stations without scanning every server's", () => {
+    const { stations } = memoryDb();
+    stations.upsertProviderStation(station('mypack:a'));
+    for (const g of ['111111111111111111', '222222222222222222']) {
+      stations.insertCustomStation({
+        id: `custom:${g.slice(0, 3)}`,
+        guildId: g,
+        slug: `mine-${g.slice(0, 3)}`,
+        displayName: `Mine ${g.slice(0, 3)}`,
+        description: null,
+        category: null,
+        websiteUrl: null,
+        language: null,
+        createdById: '333333333333333333',
+      });
+    }
+    expect(stations.listStations('111111111111111111').map((x) => x.id)).toEqual(['mypack:a', 'custom:111']);
+    expect(stations.listStations('222222222222222222').map((x) => x.id)).toEqual(['mypack:a', 'custom:222']);
+    expect(stations.listStations(null).map((x) => x.id)).toEqual(['mypack:a']);
+    expect(stations.listBuiltinStations().map((x) => x.id)).toEqual(['mypack:a']);
+    stations.setCatalogueStatus('mypack:a', 'retired');
+    expect(stations.listStations('111111111111111111').map((x) => x.id)).toEqual(['custom:111']);
+    expect(stations.listStations(null, { includeRetired: true }).map((x) => x.id)).toEqual(['mypack:a']);
   });
 
   it('reads once, and reads again after a station or source write (only)', () => {
@@ -629,5 +690,18 @@ describe('transactions', () => {
       db.transaction(() => db.run('INSERT INTO child (parent_id) VALUES (1)'));
     });
     expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM child')?.n).toBe(1);
+  });
+});
+
+describe('probe history index', () => {
+  it('lets the hourly clean-up find old results by start time without reading the whole table', () => {
+    const { db } = memoryDb();
+    const plan = db
+      .all<{ detail: string }>(
+        "EXPLAIN QUERY PLAN DELETE FROM source_probe_results WHERE started_at < '2026-01-01'",
+      )
+      .map((r) => r.detail)
+      .join(' ');
+    expect(plan).toMatch(/USING (COVERING )?INDEX ix_probe_results_started/);
   });
 });

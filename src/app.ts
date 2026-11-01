@@ -302,20 +302,35 @@ export function createApp(
         void voiceStatus.update();
       }, 20_000),
     );
+    // The first clean-up also applies PROBE_HISTORY_LIMIT to every source; later ones only age out old results.
+    let trimEverySource = true;
     timers.push(
       setInterval(() => {
         ctx.limits.sweep();
         try {
-          stations.pruneProbeResults(config.probeHistoryLimit, config.probeHistoryDays);
+          stations.pruneProbeResults(config.probeHistoryLimit, config.probeHistoryDays, trimEverySource);
+          trimEverySource = false;
         } catch (err) {
           logger.warn({ err: safeErr(err) }, 'probe history pruning failed');
         }
       }, 60 * 60_000),
     );
-    // Panels reflect live state without spamming edits.
+    // Panels reflect live state without spamming edits. One server at a time, giving the event
+    // loop back in between: building every panel in one go held up voice packets with many streams.
+    let refreshingPanels = false;
     timers.push(
-      setInterval(() => {
-        for (const s of sessions.all()) void controller.refreshPanel(s.guildId);
+      setInterval(async () => {
+        if (refreshingPanels) return;
+        refreshingPanels = true;
+        try {
+          for (const s of sessions.all()) {
+            if (stopping) break;
+            await controller.refreshPanel(s.guildId);
+            await new Promise<void>((resolve) => setImmediate(resolve));
+          }
+        } finally {
+          refreshingPanels = false;
+        }
       }, 5 * 60_000),
     );
     for (const t of timers) t.unref?.();

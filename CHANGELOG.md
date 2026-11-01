@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Scales to big catalogues without holding up the stream.** Measured with synthetic catalogues of up to 10,000 stations and 100 streams:
+  - A source check or a playback result now updates one cached row instead of making the next read re-read the whole catalogue: that took 12–20 ms on one core with the 63 bundled stations, and half a second with 2,000.
+  - Each server's custom stations are kept apart, so lists and suggestions don't scan every server's.
+  - Exact station names resolve without fuzzy-scoring every station, and fuzzy search stops early on names that can't match.
+  - Panels are refreshed one server at a time, sync no longer rewrites unchanged stations, and the identity check reuses normalised names.
+  - The hourly probe-history clean-up uses a new index (database migration 3, applied automatically after a backup at the next start) and no longer re-counts every source's history.
 - **Clearer cards.** The now-playing card (from `/radio play`, `/radio now` and the control panel) leads with the song, puts the channel, the station's stream and what goes to Discord side by side, and gives one line on why this source plays; the full reasoning moved to Sources. `/radio help`, `/radio status`, the queue and `/radio config` are laid out in short sections instead of one block of text, the sources view shows each source in three short lines (the evidence stays in Inspect), and refusals and errors have a headline.
 - When two sources can't be told apart on measured quality (for example 128 kbps MP3 against 128 kbps AAC), the explanation now says the station pack's own order decided.
 - With nothing typed, `/radio play` suggests the default station first, then the favourites, each labelled, then everything else.
