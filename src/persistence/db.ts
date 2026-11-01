@@ -61,6 +61,7 @@ export class Db {
   readonly path: string;
   #txDepth = 0;
   readonly #statements = new Map<string, StatementSync>();
+  #rollbacks = 0;
 
   constructor(path: string) {
     this.path = path;
@@ -105,6 +106,14 @@ export class Db {
     return { changes: Number(r.changes), lastInsertRowid: Number(r.lastInsertRowid) };
   }
 
+  /**
+   * Counts rollbacks. A repository that caches what it reads also counts its own writes; a
+   * rollback can undo those writes, so it reads again after one.
+   */
+  get rollbacks(): number {
+    return this.#rollbacks;
+  }
+
   /** Runs fn atomically; nested calls use savepoints. */
   transaction<T>(fn: () => T): T {
     const sp = `sp_${this.#txDepth}`;
@@ -118,6 +127,7 @@ export class Db {
     } catch (err) {
       this.#txDepth--;
       this.raw.exec(this.#txDepth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
+      this.#rollbacks++;
       throw err;
     }
   }

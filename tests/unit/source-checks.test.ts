@@ -156,6 +156,30 @@ describe('background checks stay out of the way', () => {
     expect(t.peak()).toBe(1);
   });
 
+  it('queues a source once however often it is asked for, and skips it if a check already ran', async () => {
+    const t = harness(['a', 'b'].map((id) => ({ id, host: `${id}.example.net` })));
+    // Two servers on the same station, a failover and a reconnect, all asking at once.
+    t.service.refreshInBackground(['a', 'b']);
+    t.service.refreshInBackground(['a', 'b']);
+    t.service.refreshInBackground(['b']);
+    await until(() => t.log.length === 2);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(t.log.map((x) => x.id)).toEqual(['a', 'b']);
+    // Checked a moment ago (and now backing off): asking again finds nothing due.
+    t.service.refreshInBackground(['a']);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(t.log).toHaveLength(2);
+  });
+
+  it('holds background checks while a stream is starting', async () => {
+    const t = harness([{ id: 'a', host: 'a.example.net' }]);
+    const held = Date.now();
+    t.service.holdBackground(150);
+    t.service.refreshInBackground(['a']);
+    await until(() => t.log.length === 1);
+    expect(t.log[0]!.start - held).toBeGreaterThanOrEqual(140);
+  });
+
   it('lets a play interrupt a background check on the same host, and records nothing for it', async () => {
     const t = harness(
       [

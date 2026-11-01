@@ -88,6 +88,7 @@ export function createApp(
     disabledSourceIds: config.disabledSourceIds,
     brandLabels: (provider) => packs.brandLabels(provider),
     disabledStationIds: config.disabledStationIds,
+    probeHistoryLimit: config.probeHistoryLimit,
   });
 
   // Least privilege: Guilds + GuildVoiceStates only. No message content, members or presence intents.
@@ -191,6 +192,9 @@ export function createApp(
   // The session keeps its voice connection open until the clear finishes (bounded).
   sessions.setLeaveHook((guildId, channelId) => voiceStatus.clear(guildId, channelId));
   const timers: NodeJS.Timeout[] = [];
+  /** The next scheduled sync of each pack; replaced on every run, so nothing piles up. */
+  const syncTimers = new Map<string, NodeJS.Timeout>();
+  let stopping = false;
   let diagnostics: Server | null = null;
   const hbPath = heartbeatPath(config.databasePath);
 
@@ -225,17 +229,19 @@ export function createApp(
       const last = catalogueSync.lastSync(packId).at;
       const due = last ? Math.max(0, Date.parse(last) + interval - Date.now()) : 10 * 60_000;
       const jitter = Math.round(Math.random() * 15 * 60_000);
-      const t = setTimeout(async function run() {
-        try {
-          await catalogueSync.sync(packId, 'scheduled');
-        } finally {
-          const next = setTimeout(run, interval + Math.round(Math.random() * 15 * 60_000));
-          next.unref?.();
-          timers.push(next);
-        }
-      }, Math.max(due, 60_000) + jitter);
-      t.unref?.();
-      timers.push(t);
+      const schedule = (ms: number) => {
+        if (stopping) return;
+        const t = setTimeout(async () => {
+          try {
+            await catalogueSync.sync(packId, 'scheduled');
+          } finally {
+            schedule(interval + Math.round(Math.random() * 15 * 60_000));
+          }
+        }, ms);
+        t.unref?.();
+        syncTimers.set(packId, t);
+      };
+      schedule(Math.max(due, 60_000) + jitter);
     }
   };
 
@@ -289,7 +295,12 @@ export function createApp(
         .restoreOnBoot()
         .catch((err: unknown) => logger.error({ err: safeErr(err) }, 'restore failed'));
       presence.update();
-      for (const g of c.guilds.cache.keys()) void controller.refreshPanel(g);
+      // Only servers that have a control panel, one after another: asking every server for its
+      // settings would also create a settings row for each one that never used the bot.
+      for (const g of guilds.guildsWithPanel()) {
+        if (stopping) break;
+        if (c.guilds.cache.has(g)) await controller.refreshPanel(g);
+      }
     });
 
     timers.push(setInterval(heartbeat, 30_000));
@@ -357,7 +368,9 @@ export function createApp(
 
   async function stop(reason: string): Promise<void> {
     logger.info({ reason }, 'shutting down');
+    stopping = true;
     for (const t of timers) clearTimeout(t);
+    for (const t of syncTimers.values()) clearTimeout(t);
     // Clear channel statuses while the bot is still connected (bounded, so shutdown never hangs).
     await Promise.race([voiceStatus.clearAll(), new Promise((r) => setTimeout(r, 2_000))]);
     ctx.eventLoop.stop();

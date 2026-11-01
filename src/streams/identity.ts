@@ -1,3 +1,4 @@
+import { setImmediate as setImmediatePromise } from 'node:timers/promises';
 import { runWithInput } from '../audio/ffmpeg.ts';
 import type {
   Confidence,
@@ -215,17 +216,55 @@ export interface CorrelationResult {
   overlapSeconds: number;
 }
 
+/** Lags worked out between yields: a few hundred microseconds of work on a slow core. */
+const LAGS_PER_SLICE = 64;
+
 /**
  * Normalised cross-correlation of two envelopes over ±maxLagSeconds. A high, prominent
  * peak means the two feeds carry the same programme offset by `lagSeconds` (CDN delay).
  */
 export function correlateEnvelopes(a: Float64Array, b: Float64Array, maxLagSeconds = 30): CorrelationResult {
+  const run = correlate(a, b, maxLagSeconds);
+  for (;;) {
+    const step = run.next();
+    if (step.done) return step.value;
+  }
+}
+
+/**
+ * The same, in slices that give the event loop back in between. A 40 s comparison is about
+ * 14 million multiply-adds, tens of milliseconds in one go on a small host, and voice
+ * packets for every server go out from the same thread every 20 ms.
+ */
+export async function correlateEnvelopesInSlices(
+  a: Float64Array,
+  b: Float64Array,
+  maxLagSeconds = 30,
+  signal?: AbortSignal,
+): Promise<CorrelationResult> {
+  const run = correlate(a, b, maxLagSeconds);
+  for (;;) {
+    const step = run.next();
+    if (step.done) return step.value;
+    await setImmediatePromise();
+    if (signal?.aborted) throw new RadioError('CANCELLED', 'The stream comparison was cancelled.');
+  }
+}
+
+function* correlate(
+  a: Float64Array,
+  b: Float64Array,
+  maxLagSeconds: number,
+): Generator<void, CorrelationResult> {
   const maxLag = Math.round(maxLagSeconds * ENVELOPE_RATE_HZ);
   const minOverlap = 15 * ENVELOPE_RATE_HZ;
   const scores: number[] = [];
   const byLag = new Map<number, number>();
   let best = { score: -1, lag: 0, overlap: 0 };
   for (let lag = -maxLag; lag <= maxLag; lag++) {
+    if ((lag + maxLag) % LAGS_PER_SLICE === LAGS_PER_SLICE - 1) yield;
+    // Lags whose overlap is too short are skipped anyway; don't add them up first.
+    if (Math.min(a.length, b.length - lag) - Math.max(0, -lag) < minOverlap) continue;
     let sum = 0;
     let sa = 0;
     let sb = 0;
@@ -302,6 +341,8 @@ async function decodeSample(
   });
   try {
     const { sample } = await collectSample(input, seconds * 1000, 4 * 1024 * 1024, signal);
+    // The sample is in memory; don't hold the station's connection open while FFmpeg decodes it.
+    input.close();
     const res = await runWithInput(
       deps.registry,
       deps.ffmpegPath,
@@ -347,13 +388,20 @@ export async function compareSources(
   const seconds = opts.seconds ?? 40;
   const signal = linkedSignal(90_000, opts.signal);
   const owner = opts.owner ?? 'identity';
+  // If one side fails, the other's 40 s capture and decode would be wasted: stop it too.
+  const pair = new AbortController();
+  const both = AbortSignal.any([signal, pair.signal]);
+  const stopOther = (err: unknown): never => {
+    pair.abort();
+    throw err;
+  };
   const [a, b] = await Promise.all([
-    decodeSample(deps, urlA, seconds, signal, owner),
-    decodeSample(deps, urlB, seconds, signal, owner),
+    decodeSample(deps, urlA, seconds, both, owner).catch(stopOther),
+    decodeSample(deps, urlB, seconds, both, owner).catch(stopOther),
   ]);
   if (a.length < PCM_RATE * 5 || b.length < PCM_RATE * 5) {
     throw new RadioError('PROBE_FAILED', 'Not enough audio was captured to compare the two streams.');
   }
   // ±30 s covers CDN delays between direct streams and HLS started one segment from live.
-  return correlateEnvelopes(onsetEnvelope(a), onsetEnvelope(b), 30);
+  return correlateEnvelopesInSlices(onsetEnvelope(a), onsetEnvelope(b), 30, signal);
 }

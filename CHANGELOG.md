@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **`radio-bot update` now removes old images.** Each update used to leave the previous Docker image behind, about 1 GB per release, which slowly filled small disks: the clean-up looked for a label the published images don't carry, and skipped tagged images anyway. Once the new version is healthy, the update now removes the other versions of the bot's image, including ones left by earlier updates. If the new version doesn't start, the old image is kept so you can go back. Published images are also labelled "Radio Bot" again.
+- If a start failed before a source was chosen (for example, an unexpected database error), the bot could try again immediately and indefinitely, which could freeze audio for every server. It now waits and retries, like any other start with no source.
+- Two error logs now go through the same redaction as the rest, so a stream address with a token in it can't reach the logs.
 
 ### Added
 
@@ -22,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `/radio stats`, `/radio browse` and station suggestions do less work: database statements are now compiled once and reused, which made the stats panel's station count about 3.5 times faster in a local test. These all run on the same thread that sends voice packets.
 - The systemd unit gives the bot a slightly higher CPU priority than ordinary jobs (`Nice=-5`). Docker installs can't do this without running the container as root, so they keep normal priority.
 - The docs say that a one-core host is enough, but that other scheduled jobs on the same machine can cause brief audio hiccups.
+- **Much less work on the thread that sends voice packets.** Stations and sources are read from the database once and reused until something changes, and search keeps each station's normalised names. In a local test, suggestions, availability badges and pack coverage became 7–60 times faster; for example, the availability of every bundled station takes 0.04 ms instead of 2.4 ms. The audio comparison behind `/radio rescan compare:true` now works in short slices instead of one long burst.
+- Background source checks no longer pile up: a source is queued once however many servers ask, it is skipped if it was checked in the meantime, and nothing starts while any stream is in its first 30 s. Each check's results are written in one go, and probe history is trimmed as it is written instead of by an hourly scan of the whole table.
+- The identity check closes the station's connection as soon as it has its sample, and stops the other stream's capture if one side fails.
+- At start-up, only servers with a control panel are refreshed, one at a time.
 
 ## [1.0.3] - 2026-11-01
 

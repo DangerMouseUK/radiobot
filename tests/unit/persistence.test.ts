@@ -252,6 +252,10 @@ describe('probe history retention', () => {
     }
     stations.pruneProbeResults(30, 30);
     expect(stations.listProbeResults('s', 100)).toHaveLength(30);
+    const newest = stations.listProbeResults('s', 1)[0]!.startedAt;
+    expect(stations.pruneSourceHistory('s', 5)).toBe(25);
+    expect(stations.listProbeResults('s', 100)).toHaveLength(5);
+    expect(stations.listProbeResults('s', 1)[0]!.startedAt).toBe(newest);
   });
 });
 
@@ -343,5 +347,99 @@ describe('statement cache', () => {
     expect(db.get('SELECT * FROM t')).toEqual({ a: 1 });
     db.raw.exec('ALTER TABLE t ADD COLUMN b TEXT');
     expect(db.get('SELECT * FROM t')).toEqual({ a: 1, b: null });
+  });
+});
+
+describe('station and source cache', () => {
+  const station = (id: string, displayName = id) => ({
+    id,
+    provider: 'mypack',
+    slug: id.split(':')[1]!,
+    externalId: null,
+    displayName,
+    aliases: [],
+    tags: [],
+    category: null,
+    sortOrder: 1,
+    officialPageUrl: null,
+    officialLastSeenAt: null,
+    catalogueStatus: 'active' as const,
+    description: null,
+  });
+  const source = (id: string, stationId: string, priority = 1) => ({
+    id,
+    stationId,
+    url: `https://${id}.example.com/`,
+    label: null,
+    priority,
+    transportHint: null,
+    codecHint: null,
+    provenance: 'curated' as const,
+    provenanceDetail: 'x',
+    rightsStatus: 'unreviewed' as const,
+  });
+
+  it('reads once, and reads again after a station or source write (only)', () => {
+    const { db, stations, guilds } = memoryDb();
+    stations.upsertProviderStation(station('mypack:a'));
+    stations.upsertSeedSource(source('s2', 'mypack:a', 2));
+    stations.upsertSeedSource(source('s1', 'mypack:a', 1));
+    const prepare = vi.spyOn(db.raw, 'prepare');
+    const all = vi.spyOn(db, 'all');
+    expect(stations.listSources('mypack:a').map((s) => s.id)).toEqual(['s1', 's2']);
+    stations.listStations(null);
+    stations.listSources('mypack:a');
+    stations.getSource('s1');
+    stations.getStation('mypack:a');
+    expect(all).toHaveBeenCalledTimes(2); // one read of each table
+    guilds.updateSettings('111111111111111111', { idleMode: '24x7' });
+    stations.listStations(null);
+    expect(all).toHaveBeenCalledTimes(2); // other tables' writes don't matter
+    stations.recordFailure('s1', 'TIMEOUT');
+    expect(stations.getSource('s1')?.consecutiveFailures).toBe(1);
+    expect(stations.listSources('mypack:a')[0]?.consecutiveFailures).toBe(1);
+    prepare.mockRestore();
+  });
+
+  it('forgets what it read inside a transaction that rolled back', () => {
+    const { stations } = memoryDb();
+    stations.upsertProviderStation(station('mypack:a', 'Before'));
+    expect(() =>
+      stations.transaction(() => {
+        stations.renameStation('mypack:a', 'During', false);
+        expect(stations.listStations(null)[0]?.displayName).toBe('During');
+        throw new Error('roll back');
+      }),
+    ).toThrow('roll back');
+    expect(stations.listStations(null)[0]?.displayName).toBe('Before');
+    expect(stations.getStation('mypack:a')?.displayName).toBe('Before');
+  });
+
+  it('shares rows read-only, so one caller cannot change what another sees', () => {
+    const { stations } = memoryDb();
+    stations.upsertProviderStation(station('mypack:a'));
+    stations.upsertSeedSource(source('s1', 'mypack:a'));
+    const src = stations.listSources('mypack:a')[0]!;
+    expect(() => {
+      (src as { enabled: boolean }).enabled = false;
+    }).toThrow();
+    stations.listSources('mypack:a').pop();
+    expect(stations.listSources('mypack:a')).toHaveLength(1);
+  });
+});
+
+describe('control panels at start-up', () => {
+  it('lists only servers with a panel, without creating settings for any other', () => {
+    const { db, guilds } = memoryDb();
+    guilds.updateSettings('111111111111111111', {
+      panelChannelId: '222222222222222222',
+      panelMessageId: '333333333333333333',
+    });
+    guilds.getSettings('444444444444444444');
+    expect(guilds.guildsWithPanel()).toEqual(['111111111111111111']);
+    const rows = () => db.get<{ n: number }>('SELECT COUNT(*) AS n FROM guild_settings')!.n;
+    const before = rows();
+    guilds.guildsWithPanel();
+    expect(rows()).toBe(before);
   });
 });

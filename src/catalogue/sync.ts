@@ -2,7 +2,7 @@ import type { Logger } from '../observability/logger.ts';
 import type { MetaRepository } from '../persistence/repositories/guilds.ts';
 import type { StationRepository } from '../persistence/repositories/stations.ts';
 import { errorMessage, RadioError } from '../shared/errors.ts';
-import { normalizeName, similarity, slugify } from '../shared/text.ts';
+import { normalizedSimilarity, normalizeName, slugify } from '../shared/text.ts';
 import type { SafeHttpClient } from '../streams/safe-fetch.ts';
 import type { PackRegistry, StationPack } from './packs.ts';
 import { type OfficialEntry, SYNC_ADAPTERS } from './sync-adapters.ts';
@@ -176,10 +176,14 @@ export class CatalogueSync {
       if (match.displayName === e.name) report.unchanged++;
     }
     const missingNow = existing.filter((s) => !seen.has(s.id) && s.catalogueStatus === 'active');
+    // Normalised once: comparing every new name with every missing one would otherwise
+    // normalise both names again for each pair, inside the write transaction.
+    const missingNames = new Map(missingNow.map((s) => [s, normalizeName(s.displayName)]));
     for (const e of unmatched) {
       // Name changed and no stable ID: accept a rename only for one clearly similar missing entry.
+      const name = normalizeName(e.name);
       const similar = missingNow
-        .map((s) => ({ s, sim: similarity(s.displayName, e.name) }))
+        .map((s) => ({ s, sim: normalizedSimilarity(missingNames.get(s)!, name) }))
         .filter((x) => x.sim >= 0.8)
         .sort((a, b) => b.sim - a.sim);
       if (similar.length === 1 || (similar.length > 1 && similar[0]!.sim - similar[1]!.sim > 0.1)) {

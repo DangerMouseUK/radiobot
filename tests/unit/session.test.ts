@@ -89,6 +89,7 @@ class FakePipeline extends EventEmitter {
       if (this.stopped) return;
       this.stats.firstOutputAt = Date.now();
       this.stats.lastOutputAt = Date.now();
+      this.emit('firstAudio');
       if (behaviour === 'ok') {
         this.#ticker = setInterval(() => {
           this.stats.lastOutputAt = Date.now();
@@ -146,6 +147,7 @@ function setup(
     onLeaving?: (channelId: string) => void;
     mayStream?: () => boolean;
     pipelineThrows?: boolean;
+    prepareThrows?: boolean;
   } = {},
 ) {
   const { guilds } = memoryDb();
@@ -160,6 +162,7 @@ function setup(
   let opened = 0;
   let closed = 0;
   let connects = 0;
+  let prepares = 0;
   const refreshed: Array<{ stationId: string; at: number }> = [];
   const session = new GuildSession({
     guildId: 'g1',
@@ -167,6 +170,8 @@ function setup(
       prepareForPlayback: async (_g, _s, o) => {
         // Like SourceService: probing under an aborted signal is cancelled.
         if (o.signal?.aborted) throw new RadioError('CANCELLED', 'Playback request superseded.');
+        prepares++;
+        if (opts.prepareThrows) throw new Error('database is locked');
         return selectSource(sources, null, { exclude: o.exclude });
       },
       recordPlaybackSuccess: () => {},
@@ -240,6 +245,7 @@ function setup(
     opened: () => opened,
     closed: () => closed,
     connects: () => connects,
+    prepares: () => prepares,
   };
 }
 
@@ -640,8 +646,8 @@ describe('GuildSession', () => {
     await until(() => t.session.state === 'PLAYING');
   });
 
-  it('still reports superseded when a newer command replaces a failing start', async () => {
-    const t = setup({ behaviour: (_u, n) => (n === 0 ? 'fail-early' : 'ok'), timings: { backoff: [200] } });
+  it('still reports superseded when a newer command replaces a start that is waiting for audio', async () => {
+    const t = setup({ behaviour: () => 'silent', timings: { backoff: [200] } });
     const first = t.session.play('fg:fg-dj-radio', 'voice-1', null);
     await wait(20);
     t.session.stop();
@@ -661,6 +667,17 @@ describe('GuildSession', () => {
     expect(t.pipelines).toHaveLength(1);
     expect(t.session.isStreaming).toBe(false);
     expect(t.notices.filter((n) => n.code === 'STREAM_LIMIT')).toHaveLength(1);
+  });
+
+  it('waits before trying again when a start fails before any source is chosen', async () => {
+    const t = setup({ prepareThrows: true });
+    const r = await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    expect(r.ok).toBe(false);
+    await wait(100);
+    // Once, not in a tight loop that would starve the thread sending voice packets.
+    expect(t.prepares()).toBe(1);
+    expect(t.session.state).toBe('ERROR');
+    expect(t.failures.size).toBe(0);
   });
 
   it('closes the opened input when the encoder cannot be created', async () => {

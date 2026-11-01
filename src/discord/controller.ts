@@ -27,6 +27,7 @@ import {
   parseImport,
   previewImport,
 } from '../import-export/config-io.ts';
+import { safeErr } from '../observability/logger.ts';
 import { type LatencySummary, regionHint, tcpPing } from '../observability/netstats.ts';
 import type { DesiredState, GuildSettings, SettingsPatch } from '../persistence/repositories/guilds.ts';
 import { errorCode, isRadioError, RadioError } from '../shared/errors.ts';
@@ -165,7 +166,7 @@ export class RadioController {
       ? err.userMessage
       : 'Something went wrong. The details were logged for the person who runs this bot.';
     if (!isRadioError(err) || err.code === 'INTERNAL') {
-      this.#ctx.logger.error({ err, guildId: i.guildId, type: i.type }, 'interaction failed');
+      this.#ctx.logger.error({ err: safeErr(err), guildId: i.guildId, type: i.type }, 'interaction failed');
       this.#ctx.metrics.incident(i.guildId, 'INTERNAL', 'bot', 'interaction failed');
     }
     if (!i.isRepliable()) return;
@@ -1584,14 +1585,11 @@ export class RadioController {
       ctx.sessions.get(i.guildId)?.stationId ?? ctx.guilds.getIntent(i.guildId)?.desiredStationId ?? null;
     const all = visibleStations(ctx, i.guildId);
     const fav = ctx.guilds.listFavourites(i.guildId);
+    const provider = current ? (ctx.stations.getStation(current)?.provider ?? null) : all[0]?.provider;
     const ring = (
       fav.length >= 2 && current && fav.includes(current)
         ? fav.map((id) => all.find((s) => s.id === id)).filter((s): s is Station => Boolean(s))
-        : all.filter(
-            (s) =>
-              s.provider ===
-              (current ? (this.#ctx.stations.getStation(current)?.provider ?? null) : all[0]?.provider),
-          )
+        : all.filter((s) => s.provider === provider)
     ).filter((s) => ['available', 'degraded', 'unverified'].includes(ctx.sources.availability(s)));
     if (ring.length === 0) return this.#deny(i, 'There is no other playable station to move to.');
     const idx = current ? ring.findIndex((s) => s.id === current) : -1;

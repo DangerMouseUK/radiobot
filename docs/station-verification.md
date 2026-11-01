@@ -90,7 +90,7 @@ Only the stream *name* (`icy-name`) is used for identity. `StreamTitle` (the cur
 - Both sources are sampled **at the same time** for about 40 s each, with a total budget of 90 s. HLS sources are opened 1 segment from the live edge for comparisons, instead of the usual 3, so the two feeds are close in time.
 - Each sample is decoded to 8 kHz mono PCM, in memory only. It is reduced to a log-energy envelope at 100 frames per second, and then to its signed frame-to-frame change (energy flux).
 - The first and last second of the envelope are trimmed, and outliers are clipped. This removes a decode-start artefact that otherwise lined unrelated stations up at lag 0.
-- The two envelopes are cross-correlated over **±30 s** of lag, to allow for CDN and HLS delay, with at least **15 s** of overlap.
+- The two envelopes are cross-correlated over **±30 s** of lag, to allow for CDN and HLS delay, with at least **15 s** of overlap. The comparison runs in slices of 64 lags that give the event loop back in between, so its millions of multiply-adds never hold up voice packets.
 - The result **supports** identity when **both** of these hold (constants in `identity.ts`):
   - the normalised peak score is **≥ 0.3** (`CORRELATION_THRESHOLD`);
   - the peak stands out from the other lags with a prominence of **≥ 5** (`PROMINENCE_THRESHOLD`).
