@@ -147,6 +147,7 @@ describe('control buttons', () => {
       'next',
       'stop',
       'leave',
+      'openbrowse',
       'now',
     ]);
   });
@@ -201,6 +202,42 @@ describe('browse and list views', () => {
     expect(last.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 3\/3/);
     const lastButtons = checkComponents(last).filter((c) => c.type === 2);
     expect(lastButtons[1]!.disabled).toBe(true);
+  });
+
+  it('has a Favourites button that filters the list, and back', () => {
+    const { ctx, ids, guilds } = context();
+    const view = (category: string | null) =>
+      checkComponents(browseView(ctx, GUILD, { pack: null, category, search: null }, 'tok123', 0)).find(
+        (c) =>
+          c.type === 2 &&
+          ids.parse(GUILD, String(c.custom_id))?.expired === false &&
+          (ids.parse(GUILD, String(c.custom_id)) as { action: string }).action === 'bfav',
+      )!;
+    expect(view(null)).toMatchObject({ label: 'Favourites (none yet)', disabled: true });
+    const [a, b] = ctx.stations.listStations(GUILD);
+    guilds.toggleFavourite(GUILD, a!.id);
+    guilds.toggleFavourite(GUILD, b!.id);
+    expect(view(null)).toMatchObject({ label: 'Favourites (2)', disabled: false });
+    expect(ids.parse(GUILD, String(view(null).custom_id))).toMatchObject({ action: 'bfav', arg: 'tok123' });
+    expect(view('favourites')).toMatchObject({ label: 'All stations', disabled: false });
+    const empty = browseView(ctx, GUILD, { pack: null, category: 'favourites', search: 'zzzz' }, 't', 0);
+    expect(empty.embeds[0]!.toJSON().description).toMatch(/No favourites yet|No stations match/);
+  });
+
+  it('explains the default station, and says when autostart is missing what it needs', () => {
+    const { ctx, guilds } = context();
+    const text = () =>
+      String(configView(ctx, GUILD, guilds.getSettings(GUILD), 'playback').embeds[0]!.toJSON().description);
+    expect(text()).toMatch(/default station is what `\/radio join` plays/);
+    expect(text()).not.toMatch(/Autostart needs/);
+    guilds.updateSettings(GUILD, { autostart: true });
+    expect(text()).toMatch(
+      /missing the default station and the preferred voice channel, so it does nothing yet/,
+    );
+    guilds.updateSettings(GUILD, { defaultStationId: ctx.stations.listStations(GUILD)[0]!.id });
+    expect(text()).toMatch(/missing the preferred voice channel, so/);
+    guilds.updateSettings(GUILD, { preferredVoiceChannelId: '700000000000000001' });
+    expect(text()).not.toMatch(/Autostart needs/);
   });
 
   it('filters by search, category and favourites and says when nothing matches', () => {

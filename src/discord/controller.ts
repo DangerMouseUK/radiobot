@@ -90,6 +90,9 @@ const DESIRED_LABEL: Record<DesiredState, string> = {
   kicked: 'stay out of voice (a moderator disconnected it)',
 };
 
+/** The `default_station` choice that clears the default (not a valid station ID). */
+const NO_DEFAULT_STATION = 'none';
+
 type Cmd = ChatInputCommandInteraction<'cached'>;
 type Comp = MessageComponentInteraction<'cached'>;
 const EPHEMERAL = MessageFlags.Ephemeral;
@@ -281,23 +284,39 @@ export class RadioController {
     const hits = q
       ? searchStations(stations, q, 25).map((h) => h.station)
       : this.#defaultSuggestions(i.guildId, stations);
-    await i.respond(
-      hits.slice(0, 25).map((s) => ({
+    const settings = this.#ctx.guilds.getSettings(i.guildId);
+    const fav = new Set(this.#ctx.guilds.listFavourites(i.guildId));
+    const choices = hits.map((s) => {
+      const marks = [
+        s.provider === 'custom' ? 'custom' : null,
+        s.id === settings.defaultStationId ? 'default' : null,
+        fav.has(s.id) ? 'favourite' : null,
+      ].filter(Boolean);
+      return {
         name: truncate(
-          `${s.displayName}${s.provider === 'custom' ? ' (custom)' : ''} — ${AVAILABILITY_LABEL[this.#ctx.sources.availability(s)].toLowerCase()}`,
+          `${s.displayName}${marks.length ? ` (${marks.join(', ')})` : ''} — ${AVAILABILITY_LABEL[this.#ctx.sources.availability(s)].toLowerCase()}`,
           100,
         ),
         value: s.id,
-      })),
-    );
+      };
+    });
+    // `/radio config default_station` can also clear the default.
+    if (focused.name === 'default_station' && (!q || 'no default station'.includes(q.toLowerCase())))
+      choices.unshift({ name: 'No default station (clear it)', value: NO_DEFAULT_STATION });
+    await i.respond(choices.slice(0, 25));
   }
 
+  /** With nothing typed yet: the default station, then the favourites, then everything else. */
   #defaultSuggestions(guildId: string, stations: Station[]): Station[] {
-    const fav = this.#ctx.guilds.listFavourites(guildId);
-    const favStations = fav
+    const first = [
+      this.#ctx.guilds.getSettings(guildId).defaultStationId,
+      ...this.#ctx.guilds.listFavourites(guildId),
+    ];
+    const top = [...new Set(first)]
       .map((id) => stations.find((s) => s.id === id))
       .filter((s): s is Station => Boolean(s));
-    return [...favStations, ...stations.filter((s) => !fav.includes(s.id))].slice(0, 25);
+    const shown = new Set(top.map((s) => s.id));
+    return [...top, ...stations.filter((s) => !shown.has(s.id))].slice(0, 25);
   }
 
   // ------------------------------------------------------------------ slash commands
@@ -1171,7 +1190,8 @@ export class RadioController {
     if (!a.ok) return this.#deny(i, a.reason);
     const patch: SettingsPatch = {};
     const def = i.options.getString('default_station');
-    if (def) patch.defaultStationId = this.#station(i.guildId, def).id;
+    if (def === NO_DEFAULT_STATION || def?.trim().toLowerCase() === 'none') patch.defaultStationId = null;
+    else if (def) patch.defaultStationId = this.#station(i.guildId, def).id;
     const manual = i.options.getInteger('manual_bitrate');
     if (manual !== null) patch.manualBitrateKbps = manual;
     const settings = this.#ctx.guilds.updateSettings(i.guildId, patch);
@@ -1321,6 +1341,10 @@ export class RadioController {
       '`/radio play <station>`: play a station in your voice channel',
       '`/radio now` shows what is playing. `/radio stop` stops it, and `/radio leave` takes the bot out of the channel.',
       'Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
+      '',
+      '**Favourites and the default station**',
+      'Press **Favourite** under a playing station to add it to this server’s favourites. They come first in the `/radio play` suggestions, have their own list in `/radio browse`, and Next and Previous step through them.',
+      'The default station (set by an admin) is what `/radio join` plays, and what autostart plays when the bot starts.',
       '',
       '**Queue**',
       '`/radio queue add <station>` lines up a station, and `/radio skip` plays the next one.',
@@ -1474,6 +1498,16 @@ export class RadioController {
           await i.update(browseView(this.#ctx, i.guildId, state, token!, Number((p ?? 'p0').slice(1)) || 0));
           return;
         }
+        case 'bfav': {
+          const a = this.#auth(i, 'read');
+          if (!a.ok) return this.#deny(i, a.reason);
+          const state = this.#browse.get(arg);
+          if (!state || state.expires < Date.now())
+            return this.#deny(i, 'This station list has expired. Run /radio browse again.');
+          state.category = state.category === 'favourites' ? null : 'favourites';
+          await i.update(browseView(this.#ctx, i.guildId, state, arg, 0));
+          return;
+        }
         case 'openbrowse': {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
@@ -1533,7 +1567,9 @@ export class RadioController {
             embeds: [
               infoEmbed(
                 'Favourites',
-                `${st.displayName} ${on ? 'added to' : 'removed from'} this server’s favourites.`,
+                on
+                  ? `${st.displayName} is now one of this server’s favourites. Favourites come first in the \`/radio play\` suggestions, have their own list in \`/radio browse\` (the Favourites button), and once you have two or more, Next and Previous step through them while one is playing.`
+                  : `${st.displayName} is no longer one of this server’s favourites.`,
                 COLOR.ok,
               ),
             ],

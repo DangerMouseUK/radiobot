@@ -283,8 +283,8 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 
 ### FR-012 — Favourites, defaults and idle modes (P1)
 
-- Server favourites (user-level favourites are a possible later addition).
-- Default station, preferred voice channel, optional lock, autostart on boot, resume after restart, and whether the voice channel status shows what's playing (on by default).
+- Server favourites (user-level favourites are a possible later addition): first in the `/radio play` suggestions, a Favourites filter in the browse list (and `/radio list scope:favourites`), and the Next/Previous order when two or more exist and one is playing.
+- Default station (cleared with *No default station*), played by `/radio join` and by autostart, and first in the `/radio play` suggestions; preferred voice channel, optional lock, autostart on boot (which needs both the default station and the preferred channel, and says so when either is missing), resume after restart, and whether the voice channel status shows what's playing (on by default).
 - Idle modes: `leave_when_empty` (default; leave after 60 s), `pause_when_empty` (stop the stream after 30 s, resume when someone joins), `24x7`. They are also checked as soon as the bot starts playing in, or joins, a channel that is already empty. Leaving an empty channel after `/radio stop` keeps the desired state *stopped*, so autostart doesn't fire on the next boot.
 - When playback resumes after idling, stale sources are re-probed.
 

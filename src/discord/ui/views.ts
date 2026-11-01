@@ -101,7 +101,16 @@ export function browseView(
   const embed = new EmbedBuilder()
     .setTitle('Browse stations')
     .setColor(COLOR.info)
-    .setDescription(truncate(lines.length > 0 ? lines.join('\n') : 'No stations match.', 4000))
+    .setDescription(
+      truncate(
+        lines.length > 0
+          ? lines.join('\n')
+          : state.category === 'favourites'
+            ? 'No favourites yet. Press Favourite under a playing station to add one.'
+            : 'No stations match.',
+        4000,
+      ),
+    )
     .setFooter({
       text: `Page ${p + 1}/${pages}${filter ? ` · ${filter}` : ''} · ${all.length} ${all.length === 1 ? 'station' : 'stations'}. ${DISCLAIMER}`,
     });
@@ -123,6 +132,8 @@ export function browseView(
       );
     components.push(row(select));
   }
+  const favourites = ctx.guilds.listFavourites(guildId).length;
+  const onlyFavourites = state.category === 'favourites';
   components.push(
     row(
       new ButtonBuilder()
@@ -135,6 +146,17 @@ export function browseView(
         .setLabel('Next page')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(p >= pages - 1),
+      new ButtonBuilder()
+        .setCustomId(ctx.ids.make(guildId, 'bfav', token))
+        .setLabel(
+          onlyFavourites
+            ? 'All stations'
+            : favourites
+              ? `Favourites (${favourites})`
+              : 'Favourites (none yet)',
+        )
+        .setStyle(onlyFavourites ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        .setDisabled(!onlyFavourites && favourites === 0),
     ),
   );
   return { embeds: [embed], components };
@@ -284,8 +306,10 @@ export function controlRows(
       b('skip', queued > 0 ? `Skip (${queued} queued)` : 'Skip (queue empty)', ButtonStyle.Primary),
     );
   }
-  const second: ButtonBuilder[] = [b('now', 'Refresh', ButtonStyle.Primary)];
-  if (persistent) second.unshift(b('openbrowse', 'Browse stations', ButtonStyle.Success));
+  const second: ButtonBuilder[] = [
+    b('openbrowse', 'Browse stations', ButtonStyle.Success),
+    b('now', 'Refresh', ButtonStyle.Primary),
+  ];
   if (stationId) {
     const fav = ctx.guilds.isFavourite(guildId, stationId);
     second.push(
@@ -330,9 +354,14 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
         `**Default station:** ${station?.displayName ?? 'none'} · **Preferred voice channel:** ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>` : 'none'}${s.voiceLock ? ' (locked)' : ''}`,
         `**When the channel is empty:** ${IDLE_LABEL[s.idleMode]} · **Quality:** ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
         `**Autostart when the bot starts:** ${s.autostart ? 'on' : 'off'} · **Resume after restart:** ${s.resumeOnRestart ? 'on' : 'off'}`,
+        ...(s.autostart && (!station || !s.preferredVoiceChannelId)
+          ? [
+              `Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
+            ]
+          : []),
         `**Notifications:** ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'} · **Voice channel status:** ${s.voiceChannelStatus ? 'on' : 'off'}`,
         '',
-        'Leave a channel or role menu empty for no restriction. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config`.',
+        'Leave a channel or role menu empty for no restriction. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config`; choose "No default station" to clear the default. The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
       ].join('\n'),
     )
     .setFooter({ text: `Page: ${PAGE_LABEL[page]}` });

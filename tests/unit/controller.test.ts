@@ -821,3 +821,73 @@ describe('Next and Previous station buttons', () => {
     expect(t.sessions.plays.at(-1)!.stationId).toBe(start.id);
   });
 });
+
+describe('favourites and the default station', () => {
+  /** A suggestion request, as Discord sends one while someone types in an option. */
+  const suggest = async (t: ReturnType<typeof setup>, sub: string, option: string, value = '') => {
+    let answer: Array<{ name: string; value: string }> = [];
+    const i = {
+      guildId: GUILD,
+      user: { id: OWNER, bot: false },
+      inCachedGuild: () => true,
+      isRepliable: () => false,
+      isAutocomplete: () => true,
+      isChatInputCommand: () => false,
+      isMessageComponent: () => false,
+      isButton: () => false,
+      commandName: 'radio',
+      options: {
+        getFocused: () => ({ name: option, value }),
+        getSubcommand: () => sub,
+        getSubcommandGroup: () => null,
+        getString: () => null,
+      },
+      respond: async (choices: typeof answer) => {
+        answer = choices;
+      },
+    };
+    await new RadioController(t.ctx).handle(i as unknown as Interaction);
+    return answer;
+  };
+
+  it('suggests the default station first, then the favourites, and labels them', async () => {
+    const t = setup();
+    const [a, b, c] = t.stations.listStations(GUILD).slice(-3);
+    t.guilds.updateSettings(GUILD, { defaultStationId: c!.id });
+    t.guilds.toggleFavourite(GUILD, a!.id);
+    t.guilds.toggleFavourite(GUILD, b!.id);
+    const choices = await suggest(t, 'play', 'station');
+    expect(choices.slice(0, 3).map((x) => x.value)).toEqual([c!.id, a!.id, b!.id]);
+    expect(choices[0]!.name).toMatch(/\(default\)/);
+    expect(choices[1]!.name).toMatch(/\(favourite\)/);
+    expect(choices.filter((x) => x.value === a!.id)).toHaveLength(1);
+  });
+
+  it('lets an admin clear the default station', async () => {
+    const t = setup();
+    const station = t.stations.listStations(GUILD)[0]!;
+    await t.command(t.people.owner, { sub: 'config', strings: { default_station: station.id } });
+    expect(t.guilds.getSettings(GUILD).defaultStationId).toBe(station.id);
+    expect((await suggest(t, 'config', 'default_station'))[0]).toEqual({
+      name: 'No default station (clear it)',
+      value: 'none',
+    });
+    await t.command(t.people.owner, { sub: 'config', strings: { default_station: 'none' } });
+    expect(t.guilds.getSettings(GUILD).defaultStationId).toBeNull();
+  });
+
+  it('says where favourites show up, and the browse list filters to them in one click', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const station = t.stations.listStations(GUILD)[0]!;
+    const fav = await t.click(t.people.admin, t.ids.make(GUILD, 'fav', station.id));
+    expect(fav.text).toMatch(/come first in the `\/radio play` suggestions/);
+    const browse = await t.command(t.people.member, { sub: 'browse' });
+    const toggle = browse.componentIds.find((id) => decode(t.ids, id)?.action === 'bfav')!;
+    const filtered = await t.click(t.people.member, toggle);
+    expect(filtered.violations).toEqual([]);
+    const embed = filtered.calls[0]!.payload.embeds![0]!.toJSON();
+    expect(embed.footer?.text).toMatch(/· 1 station\./);
+    expect(embed.description).toContain(station.displayName);
+  });
+});

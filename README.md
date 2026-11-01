@@ -189,7 +189,12 @@ Radio never ends, so the queue moves only when you skip.
 | `/radio source auto <station>` | Admin | Returns the station to evidence-based selection. |
 | `/radio source verify <station> <source> <verdict>` | Admin (+ Operator for pack sources) | Records an identity review (`verified`, `mismatch` or `clear`). Admins can review their own server's custom stations. A review of a pack source affects every server, so the admin must also be an operator: listed in `OPERATOR_USER_IDS`, or the application owner (or a member of its team). |
 
-**Buttons** on now-playing messages and the control panel: Previous station, Next station, Stop, Leave, Refresh, Favourite, Sources and Inspect. **Skip (n queued)** appears when the queue isn't empty, and is always on the panel. The panel also has Browse stations.
+**Buttons** on now-playing messages and the control panel: Previous station, Next station, Stop, Leave, Browse stations, Refresh, Favourite, Sources and Inspect. **Skip (n queued)** appears when the queue isn't empty, and is always on the panel. The station list from Browse has a **Favourites** button that shows only this server's favourites, and back.
+
+**Favourites and the default station** do different jobs:
+
+- **Favourites** are this server's shortlist. Anyone who can control the radio adds or removes one with the **Favourite** button under a playing station. They come first in the `/radio play` suggestions, have their own list (the Favourites button in Browse, or `/radio list scope:favourites`), and when there are two or more, Next and Previous step through them while one is playing.
+- **The default station** is the one station the bot starts by itself, set by an admin with `/radio config default_station` (choose **No default station** to clear it). `/radio join` plays it, and autostart plays it in the preferred voice channel when the bot starts. It also comes first in the `/radio play` suggestions.
 
 > `/radio` uses all 25 top-level options that Discord allows, which is why `queue` and `source` are subcommand groups.
 

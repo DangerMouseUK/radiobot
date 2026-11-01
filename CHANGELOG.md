@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Favourites are easy to get back to.** The station list from **Browse stations** has a **Favourites** button that shows only this server's favourites (and **All stations** to go back), and now-playing messages have the Browse stations button too, not just the control panel. Pressing **Favourite** now says where favourites show up, and `/radio help` explains favourites and the default station.
+- The default station can be cleared: choose **No default station** in `/radio config default_station`.
+
+### Changed
+
+- With nothing typed, `/radio play` suggests the default station first, then the favourites, each labelled, then everything else.
+- `/radio config` explains what the default station is for, and says when autostart is on but can't work because the default station or the preferred voice channel is missing.
+
 ## [1.0.4] - 2026-11-01
 
 ### Added
