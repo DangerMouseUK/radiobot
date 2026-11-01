@@ -222,7 +222,7 @@ export interface ProbeDeps {
   ffprobePath: string;
 }
 
-function emptyOutcome(startedAt: number): ProbeOutcome {
+export function emptyOutcome(startedAt: number): ProbeOutcome {
   return {
     success: false,
     failureCode: null,

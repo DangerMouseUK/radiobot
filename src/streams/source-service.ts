@@ -56,6 +56,33 @@ export function nextAutomaticCheck(
   if (s.lastFailureCode === 'NOT_FOUND') step = Math.max(step, GONE_STEP);
   return Date.parse(s.lastProbeAt) + FAILED_RETRY_STEPS_MS[step]!;
 }
+
+/** A failing source with no successful check for this long is paused (see `isPaused()`). */
+export const PAUSE_AFTER_MS = 7 * 24 * 3_600_000;
+/** …and at least this many failed checks in a row, so a source is never paused on thin evidence. */
+export const PAUSE_MIN_FAILURES = 5;
+/**
+ * When someone wants a station and none of its sources works, its failing sources are re-checked
+ * despite the back-off (they are the only hope), but no more often than this: every 10 min within
+ * a day of the source last working (or being added), then hourly.
+ */
+export const FOREGROUND_FLOOR_MS = [10 * 60_000, 60 * 60_000] as const;
+const DAY_MS = 24 * 3_600_000;
+
+/**
+ * True when a failing source is paused: no successful check for 7 days and 5+ failures in a row.
+ * A paused source is never checked automatically, in the background or for a play; only an
+ * admin's "Check sources again" (or a new address from a pack update) brings it back. Measuring
+ * time, not just failures, means a temporary outage of hours or days never pauses a source,
+ * however many checks fail during it.
+ */
+export function isPaused(
+  s: Pick<StationSource, 'verificationState' | 'consecutiveFailures' | 'lastSuccessAt' | 'createdAt'>,
+  now = Date.now(),
+): boolean {
+  if (s.verificationState !== 'offline' || s.consecutiveFailures < PAUSE_MIN_FAILURES) return false;
+  return now - Date.parse(s.lastSuccessAt ?? s.createdAt) >= PAUSE_AFTER_MS;
+}
 /**
  * Consecutive playback failures before a source is circuit-broken: the first failure plus one per
  * same-source retry step (the session's backoff of about 1, 3 and 8 s), so every retry runs first.
@@ -78,6 +105,8 @@ export interface SourceServiceDeps {
   /** Pack brand labels for identity checks. */
   brandLabels?: (provider: string) => ReadonlySet<string>;
   probeBudget?: ProbeBudget;
+  /** The network check itself; tests replace it to observe scheduling. Defaults to `probeSource`. */
+  probeImpl?: typeof probeSource;
 }
 
 export interface ProbeReport {
@@ -103,6 +132,8 @@ export class SourceService {
   readonly #perHost = new KeyedSemaphore(1);
   /** Background checks run one at a time, at the lowest priority, so they never crowd out a stream. */
   readonly #background = new Semaphore(1);
+  /** The background check running on each host, which a play's check may interrupt. */
+  readonly #backgroundByHost = new Map<string, { sourceId: string; abort: AbortController }>();
   readonly #inflight = new Map<string, Promise<ProbeReport>>();
   readonly #log: Logger;
 
@@ -140,6 +171,9 @@ export class SourceService {
   probe(sourceId: string, opts: { signal?: AbortSignal; budget?: ProbeBudget } = {}): Promise<ProbeReport> {
     if (opts.signal?.aborted)
       return Promise.reject(new RadioError('CANCELLED', 'The stream check was cancelled.'));
+    // Playback comes first: a check someone is waiting for interrupts any background check of
+    // another source on the same host, instead of queuing behind it.
+    this.#claimHost(sourceId);
     let shared = this.#inflight.get(sourceId);
     if (!shared) {
       // The probe itself is bounded by its own budget and is not tied to any caller's signal,
@@ -150,6 +184,41 @@ export class SourceService {
       this.#inflight.set(sourceId, shared);
     }
     return opts.signal ? raceSignal(shared, opts.signal) : shared;
+  }
+
+  /**
+   * A foreground check of `sourceId` is starting. A background check of the same source is joined
+   * and can no longer be interrupted (someone now waits for it); one of another source on the same
+   * host is interrupted, unrecorded, and simply runs again later.
+   */
+  #claimHost(sourceId: string): void {
+    const source = this.#d.stations.getSource(sourceId);
+    if (!source) return;
+    const host = urlHost(source.url) || 'invalid';
+    const running = this.#backgroundByHost.get(host);
+    if (!running) return;
+    this.#backgroundByHost.delete(host);
+    if (running.sourceId !== sourceId) {
+      running.abort.abort();
+      this.#log.debug({ host, interrupted: running.sourceId, for: sourceId }, 'background check gave way');
+    }
+  }
+
+  /** A background check: shares an in-flight check, otherwise runs one that a play may interrupt. */
+  #probeInBackground(sourceId: string): Promise<ProbeReport> {
+    const existing = this.#inflight.get(sourceId);
+    if (existing) return existing;
+    const source = this.#d.stations.getSource(sourceId);
+    if (!source) return Promise.reject(new RadioError('INTERNAL', 'Unknown source.'));
+    const host = urlHost(source.url) || 'invalid';
+    const abort = new AbortController();
+    this.#backgroundByHost.set(host, { sourceId, abort });
+    const shared = this.#probeNow(sourceId, { signal: abort.signal }).finally(() => {
+      this.#inflight.delete(sourceId);
+      if (this.#backgroundByHost.get(host)?.abort === abort) this.#backgroundByHost.delete(host);
+    });
+    this.#inflight.set(sourceId, shared);
+    return shared;
   }
 
   async #probeNow(
@@ -166,7 +235,7 @@ export class SourceService {
         this.#perHost.run(
           host,
           () =>
-            probeSource(
+            (this.#d.probeImpl ?? probeSource)(
               {
                 client: this.#d.client,
                 registry: this.#d.registry,
@@ -182,6 +251,8 @@ export class SourceService {
         ),
       opts.signal,
     );
+    // Interrupted to make way for playback: not a result, so nothing is recorded.
+    if (opts.signal?.aborted) throw new RadioError('CANCELLED', 'The background check gave way to playback.');
     this.#d.metrics.inc(outcome.success ? 'probe.success' : 'probe.failure');
     const identity = this.#applyProbe(station, source, outcome);
     const updated = this.#d.stations.getSource(sourceId)!;
@@ -352,11 +423,21 @@ export class SourceService {
   }
 
   /** True when the source should be (re)probed before relying on it. */
-  needsProbe(s: StationSource, now = Date.now()): boolean {
+  /**
+   * True when the source should be (re)checked. `background` follows the back-off; `foreground` is
+   * for a play with no working source, where failing sources are the only hope and are retried
+   * every 10 min (hourly after a day). A paused source is never due either way.
+   */
+  needsProbe(s: StationSource, now = Date.now(), mode: 'background' | 'foreground' = 'background'): boolean {
     if (!s.enabled || s.rightsStatus === 'blocked') return false;
     if (s.lastProbeAt === null) return true;
     const age = now - Date.parse(s.lastProbeAt);
-    if (s.verificationState === 'offline') return now >= (nextAutomaticCheck(s) ?? 0);
+    if (s.verificationState === 'offline') {
+      if (isPaused(s, now)) return false;
+      if (mode === 'background') return now >= (nextAutomaticCheck(s) ?? 0);
+      const failingFor = now - Date.parse(s.lastSuccessAt ?? s.createdAt);
+      return age >= FOREGROUND_FLOOR_MS[failingFor < DAY_MS ? 0 : 1];
+    }
     return age > PROBE_STALE_MS;
   }
 
@@ -382,7 +463,7 @@ export class SourceService {
     }
     let selection = this.select(guildId, stationId, opts.exclude);
     const sources = this.sourcesFor(stationId).filter((s) => !opts.exclude?.has(s.id));
-    const stale = sources.filter((s) => this.needsProbe(s));
+    const stale = sources.filter((s) => this.needsProbe(s, Date.now(), 'foreground'));
     if (selection.selected) return selection;
     const pref = this.#d.guilds.getPreference(guildId, stationId);
     const order = [...stale].sort((a, b) => {
@@ -416,7 +497,7 @@ export class SourceService {
   refreshInBackground(sourceIds: string[]): void {
     for (const id of sourceIds) {
       this.#background
-        .run(() => this.probe(id))
+        .run(() => this.#probeInBackground(id))
         .catch((err: unknown) =>
           this.#log.debug({ sourceId: id, code: errorCode(err) }, 'background probe failed'),
         );

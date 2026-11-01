@@ -27,7 +27,7 @@ Each source has a `verification_state`. The PRD (§7.2) describes a longer chain
 | `eligible` | The last probe succeeded, the audio decoded, and the identity decision is `verified`. | Yes, unless something else in the gate fails (see below) |
 | `degraded` | As `eligible`, but the decode check logged more than 3 errors. | Yes. The station shows as Degraded if this is its only kind of source. |
 | `unverified` | The probe succeeded but identity is not verified. | No: "station identity not verified" |
-| `offline` | The last probe failed: access denied (401/403/451), another HTTP status, a timeout, a decode failure, no audio and so on. Its next automatic check backs off (about 10 min, 1 h, 6 h, 12 h, then once a day; from 12 h when the address is gone, HTTP 404/410), unless an admin rescans. `/radio sources` and `/radio inspect` show how many checks failed in a row and when the next one is. | No: "last probe failed (code)" |
+| `offline` | The last probe failed: access denied (401/403/451), another HTTP status, a timeout, a decode failure, no audio and so on. Its next automatic check backs off (about 10 min, 1 h, 6 h, 12 h, then once a day; from 12 h when the address is gone, HTTP 404/410), unless an admin rescans. `/radio sources` and `/radio inspect` show how many checks failed in a row and when the next one is. A source with no successful check for 7 days (and at least 5 failed checks in a row) is **paused**: it is no longer checked automatically at all, in the background or for a play, until an admin runs `/radio rescan` (or a pack update gives it a new address). A temporary outage of hours or days never pauses a source. | No: "last probe failed (code)" |
 | `blocked_by_policy` | The probe failed on a policy rule: `ADDRESS_BLOCKED`, a disallowed URL host, port, scheme or credentials, or `HLS_ENCRYPTED`. | No |
 | `cooldown` | Circuit-broken after 4 consecutive playback failures (the first plus three retries). | No, until `cooldown_until` passes |
 
@@ -137,8 +137,8 @@ It also includes a short explanation, for example "All eligible sources carry eq
 
 Probing order (`prepareForPlayback`):
 
-- When an eligible source exists, it is used immediately. The station's other due sources (last checked more than 24 h ago, or failing and past their back-off) are re-checked in the background only once the stream has played steadily for 30 s, one at a time and at the lowest CPU priority, so a live stream is never disturbed.
-- When none is eligible, unprobed or stale sources are probed in the foreground, one after another: the admin's preferred source first, then direct before HLS, then by priority. This stops as soon as one becomes eligible, and the rest are refreshed in the background.
+- When an eligible source exists, it is used immediately. The station's other due sources (last checked more than 24 h ago, or failing and past their back-off) are re-checked in the background only once the stream has played steadily for 30 s, one at a time and at the lowest CPU priority, so a live stream is never disturbed. A check someone is waiting for interrupts a background check on the same host; the interrupted check records nothing and runs again later.
+- When none is eligible, unprobed or stale sources are probed in the foreground, one after another (when someone wants a station and none of its sources works, its failing sources are re-checked despite the back-off, at most every 10 min within a day of last working, then hourly. Paused sources are skipped): the admin's preferred source first, then direct before HLS, then by priority. This stops as soon as one becomes eligible, and the rest are refreshed in the background.
 
 ## Pin, prefer and auto
 

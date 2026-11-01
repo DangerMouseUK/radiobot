@@ -3,14 +3,18 @@ import { constants, getPriority } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { lowerPriority, ProcessRegistry } from '../../src/audio/ffmpeg.ts';
 import type { StationSource } from '../../src/catalogue/types.ts';
-import { failingLine } from '../../src/discord/ui/format.ts';
+import { failingLine, pausedLine } from '../../src/discord/ui/format.ts';
 import { Metrics } from '../../src/observability/metrics.ts';
+import type { SourceProbePatch } from '../../src/persistence/repositories/stations.ts';
+import { emptyOutcome, type probeSource } from '../../src/streams/probe.ts';
 import { SafeHttpClient, statusError } from '../../src/streams/safe-fetch.ts';
 import {
   FAILED_RETRY_STEPS_MS,
+  isPaused,
   nextAutomaticCheck,
   type ProbeReport,
   SourceService,
+  type SourceServiceDeps,
 } from '../../src/streams/source-service.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
 import { makeSource, memoryDb, silentLogger } from '../helpers.ts';
@@ -62,54 +66,140 @@ describe('failed sources back off', () => {
   });
 });
 
-/** A SourceService whose network check is replaced, so scheduling can be observed offline. */
-function harness() {
+const svcDeps = (repos: ReturnType<typeof memoryDb>, extra: Partial<SourceServiceDeps> = {}) => ({
+  stations: repos.stations,
+  guilds: repos.guilds,
+  client: new SafeHttpClient(new UrlPolicy({ allowInsecureHttp: true })),
+  registry: new ProcessRegistry(),
+  ffmpegPath: 'ffmpeg',
+  ffprobePath: 'ffprobe',
+  maxConcurrentProbes: 4,
+  logger: silentLogger(),
+  metrics: new Metrics(),
+  ...extra,
+});
+
+/**
+ * A real SourceService over a seeded database, with the network check replaced: each check takes
+ * `slowMs` (unless interrupted), fails with a timeout, and is logged with its timing.
+ */
+function harness(sources: Array<{ id: string; host: string; patch?: SourceProbePatch }>, slowMs = 60) {
   const repos = memoryDb();
+  repos.stations.upsertProviderStation({
+    id: 'mypack:my-station',
+    provider: 'mypack',
+    slug: 'my-station',
+    externalId: null,
+    displayName: 'My Station',
+    aliases: [],
+    tags: [],
+    category: null,
+    sortOrder: 1,
+    officialPageUrl: null,
+    officialLastSeenAt: null,
+    catalogueStatus: 'active',
+    description: null,
+  });
+  for (const s of sources) {
+    repos.stations.upsertSeedSource({
+      id: s.id,
+      stationId: 'mypack:my-station',
+      url: `https://${s.host}/${s.id}`,
+      label: null,
+      priority: 10,
+      transportHint: 'http-continuous',
+      codecHint: null,
+      provenance: 'official-player',
+      provenanceDetail: 'test',
+      rightsStatus: 'unreviewed',
+    });
+    if (s.patch) repos.stations.applyProbePatch(s.id, s.patch);
+  }
+  const log: Array<{ id: string; start: number; end: number; interrupted: boolean }> = [];
   let active = 0;
   let peak = 0;
-  const probed: string[] = [];
-  class Observed extends SourceService {
-    override async probe(sourceId: string): Promise<ProbeReport> {
-      active++;
-      peak = Math.max(peak, active);
-      probed.push(sourceId);
-      await new Promise((r) => setTimeout(r, 15));
-      active--;
-      return {} as ProbeReport;
-    }
-  }
-  const service = new Observed({
-    stations: repos.stations,
-    guilds: repos.guilds,
-    client: new SafeHttpClient(new UrlPolicy({ allowInsecureHttp: true })),
-    registry: new ProcessRegistry(),
-    ffmpegPath: 'ffmpeg',
-    ffprobePath: 'ffprobe',
-    maxConcurrentProbes: 4,
-    logger: silentLogger(),
-    metrics: new Metrics(),
-  });
-  return { service, probed, peak: () => peak };
+  const probeImpl: typeof probeSource = async (_deps, url, _budget, signal) => {
+    const id = url.split('/').pop()!;
+    const start = Date.now();
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, slowMs);
+      signal?.addEventListener('abort', () => {
+        clearTimeout(t);
+        resolve();
+      });
+    });
+    active--;
+    const interrupted = Boolean(signal?.aborted);
+    log.push({ id, start, end: Date.now(), interrupted });
+    return { ...emptyOutcome(start), failureCode: interrupted ? 'CANCELLED' : 'HTTP_TIMEOUT' };
+  };
+  const service = new SourceService(svcDeps(repos, { probeImpl }));
+  return { repos, service, log, peak: () => peak, source: (id: string) => repos.stations.getSource(id)! };
 }
+
+const until = async (cond: () => boolean, ms = 2_000) => {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error('condition not met in time');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
 
 describe('background checks stay out of the way', () => {
   it('runs background checks one at a time, even when more are allowed', async () => {
-    const t = harness();
+    const t = harness(['a', 'b', 'c', 'd'].map((id) => ({ id, host: `${id}.example.net` })));
     t.service.refreshInBackground(['a', 'b', 'c', 'd']);
-    await new Promise((r) => setTimeout(r, 120));
-    expect(t.probed).toEqual(['a', 'b', 'c', 'd']);
+    await until(() => t.log.length === 4);
+    expect(t.log.map((x) => x.id)).toEqual(['a', 'b', 'c', 'd']);
     expect(t.peak()).toBe(1);
   });
 
-  it('respects the back-off when deciding what is due', () => {
-    const t = harness();
-    const realNow = Date.now();
-    const due = (s: StationSource, at: number) => t.service.needsProbe(s, at);
-    expect(due(failing(1), T0 + 9 * MIN)).toBe(false);
-    expect(due(failing(1), T0 + 11 * MIN)).toBe(true);
-    expect(due(failing(5), T0 + 23 * HOUR)).toBe(false);
-    expect(due(failing(5), T0 + 25 * HOUR)).toBe(true);
-    expect(due(makeSource({ lastProbeAt: null }), realNow)).toBe(true);
+  it('lets a play interrupt a background check on the same host, and records nothing for it', async () => {
+    const t = harness(
+      [
+        { id: 'bg', host: 'shared.example.net' },
+        { id: 'wanted', host: 'shared.example.net' },
+      ],
+      300,
+    );
+    t.service.refreshInBackground(['bg']);
+    await until(() => t.source('bg') !== null && t.peak() === 1);
+    const asked = Date.now();
+    await t.service.probe('wanted');
+    // The play's check started at once instead of queuing ~300 ms behind the background one.
+    expect(t.log.find((x) => x.id === 'wanted')!.start - asked).toBeLessThan(100);
+    expect(t.log.find((x) => x.id === 'bg')?.interrupted).toBe(true);
+    // The interrupted check is not a failure: the source is exactly as it was.
+    expect(t.source('bg').lastProbeAt).toBeNull();
+    expect(t.source('bg').consecutiveFailures).toBe(0);
+    expect(t.source('wanted').lastFailureCode).toBe('HTTP_TIMEOUT');
+  });
+
+  it('never interrupts a background check that a play has joined', async () => {
+    const t = harness(
+      [
+        { id: 'joined', host: 'shared.example.net' },
+        { id: 'other', host: 'shared.example.net' },
+      ],
+      120,
+    );
+    t.service.refreshInBackground(['joined']);
+    await until(() => t.peak() === 1);
+    const first = t.service.probe('joined'); // a play now waits for this very check
+    const second = t.service.probe('other');
+    await Promise.all([first, second]);
+    expect(t.log.find((x) => x.id === 'joined')?.interrupted).toBe(false);
+    expect(t.source('joined').lastFailureCode).toBe('HTTP_TIMEOUT');
+  });
+
+  it('respects the back-off when deciding what is due in the background', () => {
+    const t = harness([]);
+    expect(t.service.needsProbe(failing(1), T0 + 9 * MIN)).toBe(false);
+    expect(t.service.needsProbe(failing(1), T0 + 11 * MIN)).toBe(true);
+    expect(t.service.needsProbe(failing(5), T0 + 23 * HOUR)).toBe(false);
+    expect(t.service.needsProbe(makeSource({ lastProbeAt: null }), T0)).toBe(true);
   });
 
   it('reports progress while an admin re-checks a station', async () => {
@@ -123,17 +213,7 @@ describe('background checks stay out of the way', () => {
         return [makeSource({ id: 'x1' }), makeSource({ id: 'x2' }), makeSource({ id: 'x3', enabled: false })];
       }
     }
-    const service = new Instant({
-      stations: repos.stations,
-      guilds: repos.guilds,
-      client: new SafeHttpClient(new UrlPolicy({ allowInsecureHttp: true })),
-      registry: new ProcessRegistry(),
-      ffmpegPath: 'ffmpeg',
-      ffprobePath: 'ffprobe',
-      maxConcurrentProbes: 2,
-      logger: silentLogger(),
-      metrics: new Metrics(),
-    });
+    const service = new Instant(svcDeps(repos));
     const reports = await service.rescanStation('mypack:my-station', undefined, (d, n) =>
       progress.push([d, n]),
     );
@@ -142,6 +222,81 @@ describe('background checks stay out of the way', () => {
       [1, 2],
       [2, 2],
     ]);
+  });
+});
+
+describe('dead sources stop being checked', () => {
+  const DAY = 24 * HOUR;
+  const src = (o: { failures: number; lastSuccessDaysAgo?: number; addedDaysAgo: number; code?: string }) =>
+    makeSource({
+      verificationState: 'offline',
+      consecutiveFailures: o.failures,
+      lastFailureCode: o.code ?? 'HTTP_TIMEOUT',
+      lastProbeAt: new Date(T0 - 30 * MIN).toISOString(),
+      lastSuccessAt:
+        o.lastSuccessDaysAgo === undefined ? null : new Date(T0 - o.lastSuccessDaysAgo * DAY).toISOString(),
+      createdAt: new Date(T0 - o.addedDaysAgo * DAY).toISOString(),
+    });
+
+  it('pauses a source only after a week with no success and at least 5 failures in a row', () => {
+    expect(isPaused(src({ failures: 6, lastSuccessDaysAgo: 8, addedDaysAgo: 30 }), T0)).toBe(true);
+    expect(isPaused(src({ failures: 9, addedDaysAgo: 8 }), T0)).toBe(true); // never worked since added
+    // A temporary outage never pauses, however many checks failed during it.
+    expect(isPaused(src({ failures: 200, lastSuccessDaysAgo: 2, addedDaysAgo: 30 }), T0)).toBe(false);
+    // Thin evidence never pauses, however long ago it last worked.
+    expect(isPaused(src({ failures: 3, lastSuccessDaysAgo: 20, addedDaysAgo: 30 }), T0)).toBe(false);
+    expect(isPaused(makeSource({ verificationState: 'eligible', consecutiveFailures: 9 }), T0)).toBe(false);
+  });
+
+  it('never checks a paused source automatically, in the background or for a play', () => {
+    const t = harness([]);
+    const paused = src({ failures: 9, lastSuccessDaysAgo: 10, addedDaysAgo: 30 });
+    for (const later of [HOUR, DAY, 30 * DAY]) {
+      expect(t.service.needsProbe(paused, T0 + later, 'background')).toBe(false);
+      expect(t.service.needsProbe(paused, T0 + later, 'foreground')).toBe(false);
+    }
+  });
+
+  it('retries failing sources for a play every 10 min, hourly after a day, despite the back-off', () => {
+    const t = harness([]);
+    const fresh = src({ failures: 2, lastSuccessDaysAgo: 0.1, addedDaysAgo: 30, code: 'NOT_FOUND' });
+    // The background back-off would wait 12 h after a 404, but a play with nothing else retries sooner.
+    expect(t.service.needsProbe(fresh, T0, 'background')).toBe(false);
+    expect(t.service.needsProbe(fresh, T0, 'foreground')).toBe(true); // checked 30 min ago
+    expect(t.service.needsProbe(fresh, T0 - 25 * MIN, 'foreground')).toBe(false); // only 5 min ago
+    const older = src({ failures: 4, lastSuccessDaysAgo: 2, addedDaysAgo: 30 });
+    expect(t.service.needsProbe(older, T0, 'foreground')).toBe(false); // 30 min < 1 h
+    expect(t.service.needsProbe(older, T0 + 31 * MIN, 'foreground')).toBe(true);
+  });
+
+  it('a play skips paused sources and checks the failing ones that are due', async () => {
+    const day = (n: number) => new Date(Date.now() - n * 24 * HOUR).toISOString();
+    const offline = (o: SourceProbePatch): SourceProbePatch => ({
+      verificationState: 'offline',
+      lastProbeAt: new Date(Date.now() - 30 * MIN).toISOString(),
+      ...o,
+    });
+    const t = harness([
+      { id: 'dead', host: 'a.example.net' },
+      { id: 'blip', host: 'b.example.net' },
+    ]);
+    // 'dead' last worked 9 days ago and has failed 6 times since; 'blip' worked about an hour ago.
+    t.repos.stations.recordSuccess('dead', day(9));
+    t.repos.stations.recordSuccess('blip', day(0.05));
+    for (let i = 0; i < 6; i++) t.repos.stations.recordFailure('dead', 'NOT_FOUND');
+    t.repos.stations.recordFailure('blip', 'NOT_FOUND');
+    for (const id of ['dead', 'blip']) t.repos.stations.applyProbePatch(id, offline({}));
+    await t.service.prepareForPlayback('123456789012345678', 'mypack:my-station');
+    expect(t.log.map((x) => x.id)).toEqual(['blip']);
+  });
+
+  it('says plainly when a source is paused', () => {
+    const line = pausedLine(
+      src({ failures: 9, lastSuccessDaysAgo: 10, addedDaysAgo: 30, code: 'NOT_FOUND' }),
+    );
+    expect(line).toBe(
+      'Paused: no successful check for over a week (9 failed in a row, last NOT_FOUND). It is no longer checked automatically; use Check sources again to test it.',
+    );
   });
 });
 
