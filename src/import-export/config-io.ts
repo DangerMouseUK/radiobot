@@ -27,6 +27,8 @@ export const guildExportSchema = z.object({
     idleMode: z.enum(IDLE_MODES),
     autostart: z.boolean(),
     resumeOnRestart: z.boolean(),
+    // Added after the first exports; older files keep the default.
+    voiceChannelStatus: z.boolean().default(true),
     notificationChannelId: snowflake.nullable(),
   }),
   favourites: z
@@ -91,6 +93,7 @@ export function exportGuild(
       idleMode: s.idleMode,
       autostart: s.autostart,
       resumeOnRestart: s.resumeOnRestart,
+      voiceChannelStatus: s.voiceChannelStatus,
       notificationChannelId: s.notificationChannelId,
     },
     favourites: guilds.listFavourites(guildId).filter((id) => !id.startsWith('custom:')),
@@ -179,6 +182,7 @@ export function previewImport(
   diff('When the channel is empty', cur.idleMode, s.idleMode);
   diff('Autostart', cur.autostart, s.autostart);
   diff('Resume after restart', cur.resumeOnRestart, s.resumeOnRestart);
+  diff('Voice channel status', cur.voiceChannelStatus, s.voiceChannelStatus);
   diff('Lock to preferred channel', cur.voiceLock, s.voiceLock);
   const unknownChannels = [
     ...s.allowedTextChannelIds,
@@ -240,6 +244,7 @@ export function applyImport(
     idleMode: s.idleMode,
     autostart: s.autostart,
     resumeOnRestart: s.resumeOnRestart,
+    voiceChannelStatus: s.voiceChannelStatus,
     notificationChannelId:
       s.notificationChannelId && existingChannelIds.has(s.notificationChannelId)
         ? s.notificationChannelId

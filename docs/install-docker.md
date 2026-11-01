@@ -9,7 +9,7 @@ You will run your own Discord application, with your own token. Radio Bot is uno
 ## Requirements
 
 - Docker Engine 24 or newer, with Docker Compose **2.24 or newer** (`docker compose version`). `compose.yaml` uses an optional `env_file`, which older Compose releases reject; the `radio-bot` manager checks this.
-- Disk space for the image (a Node.js runtime plus FFmpeg) and a few MB for the database and its backups. CPU and memory use haven't been benchmarked yet; see [Resource notes](#resource-notes).
+- Disk space for the image (a Node.js runtime plus FFmpeg) and a few MB for the database and its backups. For CPU and memory, see the [README's requirements](../README.md#requirements) and [Resource notes](#resource-notes).
 - A Discord account that can create applications, and a server where you have **Manage Server**, which Discord requires to invite a bot. To configure Radio Bot afterwards, you must be the server owner or have the **Administrator** permission.
 
 ## 1. Create the Discord application
@@ -18,7 +18,7 @@ Follow [install.md → Create your Discord bot](install.md#1-create-your-discord
 
 ### Invite URL
 
-The bot needs exactly these permissions:
+The bot asks for exactly these permissions:
 
 | Permission | Value |
 |---|---:|
@@ -28,12 +28,13 @@ The bot needs exactly these permissions:
 | Attach Files (`/radio export`) | 32768 |
 | Connect | 1048576 |
 | Speak | 2097152 |
-| **Total** | **3197952** |
+| Set Voice Channel Status (optional: the station and song as the channel's status) | 281474976710656 |
+| **Total** | **281474979908608** |
 
 Replace `APPLICATION_ID` in this URL with your own:
 
 ```text
-https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=3197952
+https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=281474979908608
 ```
 
 Open it, choose your server and authorise. You can do this before or after starting the container. The scopes are `bot` and `applications.commands`. Do **not** grant Administrator. If your voice channels have permission overwrites, make sure the bot's role can View Channel, Connect and Speak in the channel you want it to play in.
@@ -269,7 +270,7 @@ docker compose exec radio-bot node dist/scripts/register-commands.js 12345678901
   - outbound, the default `maximum` mode matches the station's bitrate: about 57.6 MB/hour for a 128 kbps station, 144 MB/hour at 320 kbps, and at most 230 MB/hour at the 510 kbps limit. Lower `MAX_OPUS_BITRATE_KBPS` on a metered or slow uplink.
 
   Both figures are before protocol overhead. Discord fans the audio out to listeners, so the bot's bandwidth does not grow with the number of listeners.
-- **CPU and memory:** not yet benchmarked. They depend on the FFmpeg/libopus build, the target bitrate and the number of concurrent servers. Measure on your own hardware: `docker stats`, and the RSS and heap figures in `/radio stats`.
+- **CPU and memory:** one stream at 128 kbps used about 8% of one CPU core and about 200 MB of memory in total (the bot plus its FFmpeg process); each extra stream adds roughly the same CPU and about 60 MB. The Opus encode itself costs little even at the 510 kbps maximum (under 3% of a core in that test). Figures depend on your hardware and FFmpeg build, so check your own with `docker stats` and the memory and event-loop figures in `/radio stats`.
 
 ## Uninstalling
 

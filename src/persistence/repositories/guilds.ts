@@ -19,6 +19,8 @@ export interface GuildSettings {
   idleMode: IdleMode;
   autostart: boolean;
   resumeOnRestart: boolean;
+  /** Show what is playing as the voice channel's status (needs Set Voice Channel Status). */
+  voiceChannelStatus: boolean;
   notificationChannelId: string | null;
   panelChannelId: string | null;
   panelMessageId: string | null;
@@ -77,6 +79,7 @@ function mapSettings(r: Row): GuildSettings {
     idleMode: r.idle_mode as IdleMode,
     autostart: Number(r.autostart) === 1,
     resumeOnRestart: Number(r.resume_on_restart) === 1,
+    voiceChannelStatus: Number(r.voice_channel_status ?? 1) === 1,
     notificationChannelId: s(r.notification_channel_id),
     panelChannelId: s(r.panel_channel_id),
     panelMessageId: s(r.panel_message_id),
@@ -113,6 +116,7 @@ const SETTINGS_COLUMNS: Record<keyof SettingsPatch, [string, 'json' | 'bool' | '
   idleMode: ['idle_mode', 'raw'],
   autostart: ['autostart', 'bool'],
   resumeOnRestart: ['resume_on_restart', 'bool'],
+  voiceChannelStatus: ['voice_channel_status', 'bool'],
   notificationChannelId: ['notification_channel_id', 'raw'],
   panelChannelId: ['panel_channel_id', 'raw'],
   panelMessageId: ['panel_message_id', 'raw'],

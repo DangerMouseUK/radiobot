@@ -112,6 +112,15 @@ describe('guild settings export', () => {
     const data = exportGuild(SRC, t.guilds, t.stations);
     expect(parseImport(JSON.stringify(data, null, 2))).toEqual(data);
   });
+
+  it('carries the voice channel status setting, and reads older files without it as on', () => {
+    const t = configured();
+    t.guilds.updateSettings(SRC, { voiceChannelStatus: false });
+    const data = exportGuild(SRC, t.guilds, t.stations);
+    expect(data.settings.voiceChannelStatus).toBe(false);
+    const { voiceChannelStatus: _dropped, ...older } = data.settings;
+    expect(parseImport(JSON.stringify({ ...data, settings: older })).settings.voiceChannelStatus).toBe(true);
+  });
 });
 
 describe('guild settings import', () => {

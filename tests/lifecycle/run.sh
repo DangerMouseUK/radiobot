@@ -43,7 +43,7 @@ check "reaches online" has "$out" "Radio Bot is online."
 check "rejects a bad application id" has "$out" "doesn't look like an Application ID"
 check "rejects a bad token" has "$out" "doesn't look like a bot token"
 check "falls back to building" has "$out" "building it on this machine"
-check "prints the invite link" has "$out" "client_id=$APP&scope=bot%20applications.commands&permissions=3197952"
+check "prints the invite link" has "$out" "client_id=$APP&scope=bot%20applications.commands&permissions=281474979908608"
 check "checks out the release" test "$(git -C "$RADIO_BOT_DIR" describe --tags --exact-match)" = v1.0.0
 check "writes the application id" grep -qx "DISCORD_APPLICATION_ID=$APP" "$RADIO_BOT_DIR/.env"
 check "writes the token" grep -qxF "DISCORD_TOKEN=$TOKEN" "$RADIO_BOT_DIR/.env"
@@ -55,7 +55,7 @@ out=$(radio-bot status 2>&1 | strip)
 # shellcheck disable=SC2016 # $1 expands inside the child shell
 check "status shows version and health" bash -c 'grep -q "Version:  v1.0.0" <<<"$1" && grep -q "healthy: ok" <<<"$1"' _ "$out"
 check "invite prints the link" test "$(radio-bot invite)" = \
-  "https://discord.com/oauth2/authorize?client_id=$APP&scope=bot%20applications.commands&permissions=3197952"
+  "https://discord.com/oauth2/authorize?client_id=$APP&scope=bot%20applications.commands&permissions=281474979908608"
 
 echo "update"
 out=$(radio-bot update 2>&1 | strip)

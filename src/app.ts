@@ -1,7 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { generateDependencyReport } from '@discordjs/voice';
-import { ActivityType, Client, Events, GatewayIntentBits, Options, Partials } from 'discord.js';
+import {
+  ActivityType,
+  Client,
+  Events,
+  GatewayIntentBits,
+  Options,
+  Partials,
+  PermissionFlagsBits,
+} from 'discord.js';
 import { checkFfmpeg, ProcessRegistry } from './audio/ffmpeg.ts';
 import { CustomStationService } from './catalogue/custom-provider.ts';
 import { PackRegistry, seedPacks } from './catalogue/packs.ts';
@@ -13,6 +21,7 @@ import { RadioController } from './discord/controller.ts';
 import { Notifier } from './discord/notifier.ts';
 import { PresenceUpdater, presenceEntries } from './discord/presence.ts';
 import { registerGuildCommands } from './discord/register.ts';
+import { VoiceStatusUpdater } from './discord/voice-status.ts';
 import { EventLoopMonitor } from './observability/event-loop.ts';
 import { heartbeatPath, startDiagnosticsServer, writeHeartbeat } from './observability/health.ts';
 import { createLogger, type Logger, safeErr } from './observability/logger.ts';
@@ -162,6 +171,25 @@ export function createApp(
     },
     logger,
   });
+  // Each server's voice channel status shows its own station and title (optional permission).
+  const voiceStatus = new VoiceStatusUpdater({
+    sessions: () => sessions.all().map((s) => s.status()),
+    station: (id) => stations.getStation(id),
+    enabled: (guildId) => guilds.getSettings(guildId).voiceChannelStatus,
+    allowed: (guildId, channelId) => {
+      const guild = client.guilds.cache.get(guildId);
+      const channel = guild?.channels.cache.get(channelId);
+      const me = guild?.members.me;
+      return Boolean(me && channel?.permissionsFor(me)?.has(PermissionFlagsBits.SetVoiceChannelStatus));
+    },
+    // Discord documents the permission but discord.js has no helper for this route.
+    send: async (channelId, status) => {
+      await client.rest.put(`/channels/${channelId}/voice-status`, { body: { status } });
+    },
+    logger,
+  });
+  // The session keeps its voice connection open until the clear finishes (bounded).
+  sessions.setLeaveHook((guildId, channelId) => voiceStatus.clear(guildId, channelId));
   const timers: NodeJS.Timeout[] = [];
   let diagnostics: Server | null = null;
   const hbPath = heartbeatPath(config.databasePath);
@@ -272,7 +300,12 @@ export function createApp(
       else logger.debug({ eventLoopDelay: s }, 'event loop delay');
     });
     // Every 20 s, and only on a change: well within Discord's limit on status updates.
-    timers.push(setInterval(() => presence.update(), 20_000));
+    timers.push(
+      setInterval(() => {
+        presence.update();
+        void voiceStatus.update();
+      }, 20_000),
+    );
     timers.push(
       setInterval(() => {
         ctx.limits.sweep();
@@ -325,6 +358,8 @@ export function createApp(
   async function stop(reason: string): Promise<void> {
     logger.info({ reason }, 'shutting down');
     for (const t of timers) clearTimeout(t);
+    // Clear channel statuses while the bot is still connected (bounded, so shutdown never hangs).
+    await Promise.race([voiceStatus.clearAll(), new Promise((r) => setTimeout(r, 2_000))]);
     ctx.eventLoop.stop();
     diagnostics?.close();
     sessions.shutdown();

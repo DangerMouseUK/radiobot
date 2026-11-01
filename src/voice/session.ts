@@ -92,6 +92,12 @@ export interface SessionDeps {
   channelBitrate: (channelId: string) => number | null;
   /** Non-bot members in a voice channel, or null when unknown; used to apply idle modes on join. */
   countListeners?: (channelId: string) => number | null;
+  /**
+   * Called just before the session leaves its voice channel. A returned promise keeps the voice
+   * connection open until it settles (at most LEAVE_GRACE_MS), so work that needs the bot to
+   * still be in the channel, such as clearing its status, can finish first.
+   */
+  onLeaving?: (channelId: string) => Promise<void> | void;
   /** Whether another stream fits MAX_ACTIVE_GUILD_STREAMS (asked before a non-streaming session starts). */
   mayStream?: () => boolean;
   /** Opus ceiling: `maximum` follows the source's bitrate up to it (MAX_OPUS_BITRATE_KBPS). */
@@ -357,12 +363,24 @@ export class GuildSession {
   leave(desired: DesiredState = 'left'): void {
     this.#commands++;
     this.#gen++;
+    const gen = this.#gen;
     this.#persist(desired);
     this.#clearAllTimers();
     if (this.#state !== 'IDLE') this.#setState('LEAVING');
     this.#teardownAudio();
-    this.#teardownLink();
+    const link = this.#link;
+    const pending = link ? this.#d.onLeaving?.(link.channelId) : undefined;
     this.#setState('IDLE');
+    if (!(pending instanceof Promise)) {
+      this.#teardownLink();
+      return;
+    }
+    // Discord refuses to change a channel's status once the bot has left it, so the hook's work
+    // finishes first. A command in the meantime (a new play) takes over the still-open link.
+    const disconnect = () => {
+      if (gen === this.#gen && this.#link === link) this.#teardownLink();
+    };
+    void Promise.race([pending.catch(() => {}), sleep(LEAVE_GRACE_MS)]).then(disconnect);
   }
 
   /** Shutdown/guild removal: release resources without touching the persisted desired state. */
@@ -1077,6 +1095,9 @@ export class GuildSession {
     };
   }
 }
+
+/** Longest a leave waits for its onLeaving hook before disconnecting. */
+const LEAVE_GRACE_MS = 1_500;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

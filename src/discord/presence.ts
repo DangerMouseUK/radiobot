@@ -34,7 +34,7 @@ export function presenceEntries(
 }
 
 /** Stream metadata is shown as one plain line: no control characters or runs of whitespace. */
-function clean(text: string | null): string | null {
+export function clean(text: string | null): string | null {
   if (text === null) return null;
   const t = text
     .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')

@@ -17,7 +17,7 @@ There are **no privileged intents**: no Message Content, no Server Members, no P
 
 `bot` and `applications.commands`.
 
-### Bot permissions (integer `3197952`)
+### Bot permissions (integer `281474979908608`)
 
 | Permission | Bit value | Why it is needed |
 |---|---:|---|
@@ -27,8 +27,11 @@ There are **no privileged intents**: no Message Content, no Server Members, no P
 | Attach Files | 32768 | `/radio export` returns a JSON file |
 | Connect | 1048576 | Join the voice channel |
 | Speak | 2097152 | Transmit audio |
+| Set Voice Channel Status | 281474976710656 | **Optional.** Shows the station and the song or show title as the status of the bot's voice channel, cleared when playback stops or the bot leaves. Admins can switch it off in `/radio config` → Notifications. Without the permission the bot simply doesn't set a status |
 
-1024 + 2048 + 16384 + 32768 + 1048576 + 2097152 = **3197952**.
+1024 + 2048 + 16384 + 32768 + 1048576 + 2097152 + 281474976710656 = **281474979908608**.
+
+Servers that invited the bot with the earlier integer `3197952` keep working; to get the channel status there, re-invite the bot with the current link or give its role **Set Voice Channel Status** in the voice channel.
 
 Not required: Administrator, Manage Server, Manage Channels, Manage Roles, Manage Messages, Read Message History, Mention Everyone, Use Voice Activity, Priority Speaker, Move Members.
 

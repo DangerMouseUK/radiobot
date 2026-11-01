@@ -142,6 +142,7 @@ function setup(
     connectFails?: boolean;
     timings?: Partial<SessionTimings>;
     listeners?: () => number | null;
+    onLeaving?: (channelId: string) => void;
     mayStream?: () => boolean;
     pipelineThrows?: boolean;
   } = {},
@@ -216,6 +217,7 @@ function setup(
     channelBitrate: () => opts.bitrate?.() ?? 256_000,
     ...(opts.listeners ? { countListeners: opts.listeners } : {}),
     ...(opts.mayStream ? { mayStream: opts.mayStream } : {}),
+    ...(opts.onLeaving ? { onLeaving: opts.onLeaving } : {}),
     notify: (n) => notices.push(n),
     logger: silentLogger(),
     metrics: new Metrics(),
@@ -299,6 +301,57 @@ describe('GuildSession', () => {
     expect(active(t.pipelines)).toHaveLength(0);
     expect(t.session.state).toBe('CONNECTED');
     expect(t.guilds.getIntent('g1')?.desiredState).toBe('stopped');
+  });
+
+  it('announces a leave while still connected, and disconnects at once when the hook returns nothing', async () => {
+    const seen: Array<{ channelId: string; destroyed: boolean }> = [];
+    const t = setup({
+      onLeaving: (channelId) => {
+        seen.push({ channelId, destroyed: t.links[0]!.destroyed });
+      },
+    });
+    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    t.session.leave();
+    expect(seen).toEqual([{ channelId: 'voice-1', destroyed: false }]);
+    expect(t.links[0]!.destroyed).toBe(true);
+    t.session.leave();
+    expect(seen).toHaveLength(1); // nothing to announce once it has left
+  });
+
+  it('keeps the voice connection until the leave hook finishes, so the channel status clears first', async () => {
+    let finish!: () => void;
+    const t = setup({ onLeaving: () => new Promise<void>((r) => (finish = r)) });
+    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    t.session.leave();
+    // Audio stops and the session has left at once; only the disconnect waits.
+    expect(t.session.state).toBe('IDLE');
+    expect(active(t.pipelines)).toHaveLength(0);
+    expect(t.guilds.getIntent('g1')?.desiredState).toBe('left');
+    expect(t.links[0]!.destroyed).toBe(false);
+    finish();
+    await until(() => t.links[0]!.destroyed);
+  });
+
+  it('lets a play during the leave grace period take over the open connection', async () => {
+    let finish!: () => void;
+    const t = setup({ onLeaving: () => new Promise<void>((r) => (finish = r)) });
+    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    t.session.leave();
+    const r = await t.session.play('fg:fg-chic', 'voice-1', null);
+    expect(r.ok).toBe(true);
+    finish();
+    await wait(20);
+    expect(t.links[0]!.destroyed).toBe(false);
+    expect(t.connects()).toBe(1);
+    expect(t.session.state).toBe('PLAYING');
+  });
+
+  it('disconnects anyway when the leave hook never finishes', async () => {
+    const t = setup({ onLeaving: () => new Promise<void>(() => {}) });
+    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    t.session.leave();
+    expect(t.links[0]!.destroyed).toBe(false);
+    await until(() => t.links[0]!.destroyed, 3_000);
   });
 
   it('leave disconnects and records left', async () => {

@@ -294,6 +294,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - Missing track data never blocks playback; the line then says there is no song or show title from the stream right now.
 - No album art.
 - The bot's own Discord status shows "Listening to" the station and track (`PRESENCE_MODE`: `track`, `station` or `off`; default `track`). It is one status for the whole installation, so it names a station only when every playing server plays that station, and otherwise says "radio in N servers". A server's custom station is never named. Updates are checked every 20 s and sent only when the text changes. No intent or permission is needed.
+- The bot's voice channel shows the same as its status ("📻 Station · title"), per server, so a custom station may be named. It needs the optional Set Voice Channel Status permission, can be switched off per server (`/radio config` → Notifications, on by default), and is cleared when playback stops or the bot leaves. Without the permission nothing is set and nothing else changes.
 
 ### FR-014 — Observability (P0/P1)
 
@@ -472,7 +473,7 @@ On start-up, for each server: if playback was wanted and **resume after restart*
 | Configure, import, export, panel, stats | No | No | Yes |
 | Identity review of station-pack sources | No | No | Admins who are also Operators |
 
-Admin = the server owner, or a member with Discord's **Administrator** permission. Manage Server does not count, and there is no admin-role setting. Operator = the Discord application's owner (or a member of the team that owns it) or a user listed in `OPERATOR_USER_IDS`; recording a review also needs admin rights in the server where the command is used. Admins may use commands outside the approved command channels. Required bot permissions: View Channels, Send Messages, Embed Links, Attach Files, Connect, Speak (permission integer 3197952). Intents: Guilds and Guild Voice States only.
+Admin = the server owner, or a member with Discord's **Administrator** permission. Manage Server does not count, and there is no admin-role setting. Operator = the Discord application's owner (or a member of the team that owns it) or a user listed in `OPERATOR_USER_IDS`; recording a review also needs admin rights in the server where the command is used. Admins may use commands outside the approved command channels. Bot permissions: View Channels, Send Messages, Embed Links, Attach Files, Connect, Speak, and the optional Set Voice Channel Status (permission integer 281474979908608; without the optional one the integer is 3197952 and everything but the channel status works). Intents: Guilds and Guild Voice States only.
 
 ### 10.2 URL and host security
 
@@ -596,7 +597,7 @@ Environment variables (all listed in `.env.example`): `DISCORD_TOKEN`, `DISCORD_
 
 ### 13.1 Resources
 
-A small Linux machine or container should handle a few concurrent streams. CPU use depends mainly on the number of concurrent FFmpeg encodes and their bitrate; a high-bitrate station (up to the 510 kbps limit) is the most demanding case. No definitive CPU or memory figure is published until it has been benchmarked.
+A small Linux machine or container should handle a few concurrent streams. CPU use depends mainly on the number of concurrent FFmpeg encodes and their bitrate; a high-bitrate station (up to the 510 kbps limit) is the most demanding case. Measured on a small cloud server (1 November 2026): one 128 kbps stream used about 8% of one CPU core and about 200 MB of memory in total (the bot about 5% and 126 MB, its FFmpeg process about 3% and 56 MB). The Opus encode alone took 2.1%, 2.4% and 2.7% of a core at 128, 320 and 510 kbps. Several concurrent streams, long runs and ARM boards have not been measured. The README's Requirements section gives the resulting minimum and recommended specification.
 
 ### 13.2 Bandwidth
 
@@ -698,7 +699,7 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 - **Starter pack: 3 of 63 stations confirmed playable by live probe.** FG DJ RADIO, FG CHIC and FG DANCE were confirmed (`catalog/packs/fg/evidence/probe-2026-10-31.json`). Audio correlation also supports identity for FG DJ RADIO and FG DANCE, while FG CHIC was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed. An end-to-end pipeline check of FG DJ RADIO (safe client → one libopus encode → `@discordjs/voice`, which only demuxed) produced about 486 kbps of Opus against the 510 kbps target, with no leftover process. It was not a Discord call.
 - One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
 - The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
-- No resource benchmarks.
+- Resource use measured for a single stream only; no multi-stream, long-run or ARM measurements.
 - Encoding above the voice channel's bitrate setting (up to 510 kbps) rests on the project owner's statement that the setting doesn't cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate a listener receives has **not been measured**.
 - Rights clearance (§14) and the licence review of the bundled FFmpeg build not done.
 

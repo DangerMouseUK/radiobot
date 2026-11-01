@@ -18,7 +18,7 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 - **Evidence before bitrate.** Every candidate stream is probed with `ffprobe` and a decode check, and its identity is checked against its provenance, its stream metadata and, optionally, an audio comparison. The bot plays the *correct* station first and the best-sounding source second, and `/radio sources` tells you why it chose what it did.
 - **One encode, at the station's own quality.** FFmpeg decodes once and encodes once with `libopus` at the source's bitrate, up to 510 kbps (48 kHz stereo, music mode). A 320 kbps station goes out at 320 kbps, and a 128 kbps one isn't padded out to waste bandwidth. `@discordjs/voice` only demuxes the result. There is no normalisation, EQ or limiting, and the voice channel's bitrate setting is not used as a cap.
 - **Automatic recovery.** A watchdog spots stalls and retries with backoff. If that fails, the bot switches to another verified source and puts sources that keep failing into a cooldown. It also rebuilds lost voice connections and catches up with the live stream when it falls behind.
-- **Now playing.** The current song or show title, when the stream sends one, appears in `/radio now` and on the control panel. The bot's own Discord status shows it too: "Listening to Station Name · Artist - Title".
+- **Now playing.** The current song or show title, when the stream sends one, appears in `/radio now` and on the control panel. The bot's own Discord status shows it too ("Listening to Station Name · Artist - Title"), and so does the status of the voice channel it's playing in ("📻 Station Name · Artist - Title").
 - **Queue and skip.** Line up stations with `/radio queue` and move on with `/radio skip` or the **Skip** button.
 - **Private live stats.** `/radio stats` shows administrators the input and output bitrate, the redirect host and region, and ping and jitter to both the stream server and Discord's voice server. Only they can see the message, and they can dismiss it.
 - **Secure by default.** The bot asks for the minimum Discord permissions and no privileged intents. All stream traffic goes through an SSRF-safe HTTP client, and FFmpeg reads only from stdin. Every button and command is authorised on the server side each time it is used. There is no telemetry.
@@ -26,6 +26,7 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 
 ## Contents
 
+- [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [Other ways to deploy](#other-ways-to-deploy)
 - [Discord application setup](#discord-application-setup)
@@ -38,6 +39,18 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 - [Development](#development)
 - [Documentation](#documentation)
 - [Licence](#licence)
+
+## Requirements
+
+| | Minimum | Recommended |
+|---|---|---|
+| CPU | 1 core, 64-bit (x86-64 or ARM64, such as a Raspberry Pi 4 or 5) | 1–2 cores |
+| Memory | 512 MB | 1 GB |
+| Disk | 2 GB free (the Docker image, the database and backups) | 5 GB |
+| Network | Outbound only, including UDP for Discord voice; no open ports | |
+| Bandwidth | Each playing server uses the station's bitrate in and about the same out: roughly 60–70 MB per hour each way at 128 kbps, and up to about 230 MB per hour out at the 510 kbps maximum | |
+
+Measured on a small cloud server, one stream at 128 kbps used about 8% of one CPU core and about 200 MB of memory in total (the bot plus its FFmpeg process). Each extra stream adds roughly the same CPU and about 60 MB, so the default limit of 3 streams (`MAX_ACTIVE_GUILD_STREAMS`) fits comfortably within the minimum. These figures haven't been measured on a Raspberry Pi or over long periods yet.
 
 ## Quick start
 
@@ -84,7 +97,7 @@ Step-by-step instructions are in [docs/install.md](docs/install.md#1-create-your
 - **Developer Portal:** create an application. Under **Bot**, reset and copy the token, which goes in `DISCORD_TOKEN`. Under **General Information**, copy the Application ID, which goes in `DISCORD_APPLICATION_ID`.
 - **Gateway intents:** the bot uses only `Guilds` and `GuildVoiceStates`. Leave every privileged intent switched off: Presence, Server Members and Message Content.
 - **Scopes:** `bot` and `applications.commands`.
-- **Bot permissions** (the minimal set, integer `3197952`):
+- **Bot permissions** (the minimal set, integer `281474979908608`):
 
   | Permission | Why |
   |---|---|
@@ -94,13 +107,14 @@ Step-by-step instructions are in [docs/install.md](docs/install.md#1-create-your
   | Attach Files | `/radio export` returns a JSON file |
   | Connect | Join the voice channel |
   | Speak | Play audio |
+  | Set Voice Channel Status | Optional: show the station and song as the voice channel's status (`/radio config` → Notifications). Without it, everything else works |
 
   Administrator, Manage Channels, Manage Roles, Manage Messages, Read Message History and Message Content are not needed.
 
 - **Invite URL:** replace `APPLICATION_ID` with your own:
 
   ```text
-  https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=3197952
+  https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=281474979908608
   ```
 
 `/radio` is registered as a **guild** command in each server the bot is in, so it appears immediately. Registration happens at start-up and whenever the bot joins a new server, and it is skipped when nothing has changed. The command works only in servers, not in DMs.
@@ -275,7 +289,7 @@ Version **1.0.0** is the first public release. Lint, the strict typecheck and th
 - **End-to-end pipeline, without Discord:** a bundled station ran through the safe client, one libopus encode and `@discordjs/voice` at about 486 kbps Opus against the 510 kbps target, with one encoder process and nothing left running afterwards. The stream-side stats were checked live: the redirect to a regional server, 128 kbps in, and the TCP round trip and jitter were all reported.
 - **"Identity verified" mostly rests on provenance** (the official player maps the stream to the station) plus a successful probe. Audio comparison has confirmed two stations; the others haven't been compared or checked by listening. `/radio rescan compare:true` and `/radio source verify` exist to strengthen this.
 - **Encoding above the channel's bitrate setting:** in the live test the bot sent 128 kbps into a channel set to 96 kbps and it sounded right, but the bitrate a listener's client actually receives hasn't been measured.
-- **Not measured yet:** CPU, memory and bandwidth on real hosting. Upload follows the station's bitrate, up to 510 kbps (about four times a 128 kbps station).
+- **Resource use is measured for one stream only** (see [Requirements](#requirements)): about 8% of one CPU core and about 200 MB of memory at 128 kbps. Several streams at once, long runs, and a Raspberry Pi haven't been measured yet.
 - **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
 - **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker, and were exercised on Ubuntu 24.04 (WSL). They haven't yet been run against real Docker on a fresh Linux server, a Raspberry Pi, macOS or Windows.
 - **Rights:** no permission has been requested from or granted by any broadcaster. If you operate an instance, that is your responsibility; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
