@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-01
+
 ### Fixed
 
 - Official-list sync decodes each HTML entity in a station name exactly once, so `&amp;quot;` becomes `&quot;` rather than `"` (reported by CodeQL as double unescaping). A numeric entity outside the Unicode range is now left as it is instead of stopping the sync with an error, and hexadecimal entities such as `&#x26;` are decoded.
@@ -124,5 +126,6 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps) relies on the project owner's statement that the setting does not cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/DangerMouseUK/radiobot/releases/tag/v1.0.0

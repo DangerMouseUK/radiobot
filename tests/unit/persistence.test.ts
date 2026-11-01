@@ -46,7 +46,7 @@ describe('migrations', () => {
   it('backs up an existing database before applying a new migration, keeping every setting', () => {
     const path = tempDb();
     const db = new Db(path);
-    // A 1.0.0-era database: only the first migration applied.
+    // A database from before migration 0002: only the first migration applied.
     db.migrate(loadMigrations().slice(0, 1));
     const guilds = new GuildRepository(db, {
       qualityMode: 'maximum',

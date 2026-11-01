@@ -88,7 +88,7 @@ docker compose up -d
 docker compose logs -f radio-bot
 ```
 
-The image is published as `ghcr.io/dangermouseuk/radio-bot`, with version tags; `compose.yaml` defaults to `ghcr.io/dangermouseuk/radio-bot:1.0.0`. To use another image or tag, set `RADIO_BOT_IMAGE` in your shell or in the `.env` file next to `compose.yaml`, for example `RADIO_BOT_IMAGE=ghcr.io/dangermouseuk/radio-bot:1.0` (the release workflow also publishes `<major>.<minor>` tags). If the image hasn't been published yet, or you want to build from source, build it locally from the `Dockerfile`:
+The image is published as `ghcr.io/dangermouseuk/radio-bot`, with version tags; `compose.yaml` defaults to `ghcr.io/dangermouseuk/radio-bot:1.0.1`. To use another image or tag, set `RADIO_BOT_IMAGE` in your shell or in the `.env` file next to `compose.yaml`, for example `RADIO_BOT_IMAGE=ghcr.io/dangermouseuk/radio-bot:1.0` (the release workflow also publishes `<major>.<minor>` tags). If the image hasn't been published yet, or you want to build from source, build it locally from the `Dockerfile`:
 
 ```sh
 docker compose build
