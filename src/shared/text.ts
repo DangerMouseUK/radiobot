@@ -10,7 +10,7 @@ export function normalizeName(input: string): string {
     .trim();
 }
 
-/** URL-safe slug, e.g. "FG USHUAÏA IBIZA" -> "fg-ushuaia-ibiza". */
+/** URL-safe slug, e.g. "Radio Ibiza Ünïque" -> "radio-ibiza-unique". */
 /** Longest station slug; keeps station ids short enough for signed component ids. */
 export const MAX_SLUG_LENGTH = 32;
 

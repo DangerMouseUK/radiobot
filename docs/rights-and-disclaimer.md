@@ -6,8 +6,8 @@ This page is not legal advice. It explains what the Radio Bot project does and d
 
 Radio Bot is an independent, community-maintained open-source project.
 
-- **It is not affiliated with, endorsed by, sponsored by or approved by Radio FG, Maison FG, Les Indes Radios, or any other broadcaster or rights holder.**
-- The bundled starter station pack (`catalog/packs/fg`) refers to the Radio FG / Maison FG webradios by their **station names** (nominative use) so that listeners can identify them. Its `pack.json` carries an unofficial disclaimer, which is shown with the pack. The names are recorded as they appear on the official site. Their use does not imply any partnership.
+- **It is not affiliated with, endorsed by, sponsored by or approved by any broadcaster or rights holder.**
+- Station packs, including the bundled starter pack, refer to stations by their **station names** (nominative use) only so that listeners can find them. The names, audio and artwork belong to their owners. Each pack's `pack.json` carries an unofficial disclaimer, which is shown with the pack. The names are recorded as they appear on the broadcaster's official site. Their use does not imply any partnership.
 - The repository contains **no station logos, artwork or audio**, and none should be added. Don't name, brand or present your instance or your Discord application in a way that suggests it is an official broadcaster product.
 - The bot shows "Radio Bot is unofficial and not affiliated with or endorsed by any broadcaster." in its now-playing, quality, sources/inspect, browse, list and help views.
 
@@ -26,7 +26,7 @@ The PRD (§14) sets a release gate: a broadcaster's stream being freely listenab
 
 **As of v1.0.0 this gate is open:**
 
-- No permission has been requested from, or given by, Radio FG / Maison FG for third-party Discord rebroadcast or integration.
+- No permission has been requested from, or given by, the starter pack's broadcaster for third-party Discord rebroadcast or integration.
 - No review of the stations' streaming terms is recorded.
 - The software works the same whether or not you have permission. It cannot decide for you whether a given use is lawful.
 
@@ -34,14 +34,14 @@ The PRD (§14) sets a release gate: a broadcaster's stream being freely listenab
 
 - **Personal or private self-hosting**, for example you and a few friends in a private server, is the scenario the project was designed for. Even then, check the station's terms and the law where you live and where your listeners are.
 - **Public distribution of a playable station pack**, a public inviteable bot, or relaying to large or commercial communities is materially different. Before doing any of that:
-  - Ask the broadcaster (Radio FG / Maison FG, or the relevant station) whether third-party Discord rebroadcast is permitted, and record their reply and any conditions.
+  - Ask the broadcaster (or the relevant station) whether third-party Discord rebroadcast is permitted, and record their reply and any conditions.
   - Check the collecting-society licensing that applies to online streams and simulcasts in your territory. For the UK, see [PPL: playing music on radio and online](https://www.ppluk.com/licensing/playing-music-on-radio/) and [GOV.UK: licences to use music online and on mobile](https://www.gov.uk/find-licences/licences-use-music-online-mobile). Other countries have equivalent bodies, such as SACEM and SCPP in France.
   - Read Discord's [copyright and trademark policy](https://discord.com/safety/copyright-trademark-policy-explainer). It forbids unauthorised streaming of copyrighted content.
   - Get legal advice for your situation.
 - **Custom stations:** server admins who add their own streams are responsible for having the right to relay them.
 - **No bypassing.** Radio Bot doesn't bypass DRM, authentication, geographic restrictions or private APIs, and must not be modified to do so. Towards stream hosts the bot identifies as FFmpeg's network library: `Lavf/<version>` from the installed FFmpeg, which is the software that decodes the audio. It does not imitate a web browser, sends no `Referer`, and never uses signed or tokenised URLs. If a stream host still refuses access (`ACCESS_DENIED`), the bot stops using that source.
 
-If permission for a pack's sources cannot be obtained, the software is still useful for streams you are authorised to relay. Switch that pack off with `DISABLED_PACKS` (for example `DISABLED_PACKS=fg`), and use custom stations or your own packs instead.
+If permission for a pack's sources cannot be obtained, the software is still useful for streams you are authorised to relay. Switch that pack off with `DISABLED_PACKS` (for example `DISABLED_PACKS=mypack`; the pack ID is the first part of every station ID), and use custom stations or your own packs instead.
 
 ## Takedown procedure
 
@@ -50,7 +50,7 @@ If permission for a pack's sources cannot be obtained, the software is still use
 If you represent a broadcaster or rights holder and want a station, a source or a name removed from one of the project's bundled station packs:
 
 1. **Contact the maintainers privately.** Use the repository's **Security → Report a vulnerability** form (GitHub private reporting), with "Takedown request" in the title, or the maintainer contact on the repository profile. Include the station or source IDs or names, and who you represent. Please don't post takedown requests as public issues if they contain personal contact details.
-2. **The maintainers will acknowledge the request** and, where it is from the rights holder or their representative, **remove the affected entries**. A source is removed by deleting it from the pack's `sources.json`, for example `catalog/packs/fg/sources.json`, or by setting `enabled: false` with a `disabledReason`. A station is removed by deleting it from the pack's `stations.json` where appropriate, and a whole pack by deleting its folder. The change is published in a new release. Seeding **disables** any pack source that disappears from its manifest, so an upgraded instance stops using it automatically. Stations whose pack is no longer loaded are hidden. The removal is recorded in `CHANGELOG.md` and the pack's `SOURCE_PROVENANCE.md`.
+2. **The maintainers will acknowledge the request** and, where it is from the rights holder or their representative, **remove the affected entries**. A source is removed by deleting it from the pack's `sources.json` (`catalog/packs/<pack-id>/sources.json`), or by setting `enabled: false` with a `disabledReason`. A station is removed by deleting it from the pack's `stations.json` where appropriate, and a whole pack by deleting its folder. The change is published in a new release. Seeding **disables** any pack source that disappears from its manifest, so an upgraded instance stops using it automatically. Stations whose pack is no longer loaded are hidden. The removal is recorded in `CHANGELOG.md` and the pack's `SOURCE_PROVENANCE.md`.
 3. **Earlier releases and self-hosted copies** are controlled by their operators, not the maintainers. The maintainers will mention the takedown in the release notes so that operators can act.
 
 This is a volunteer project and there is no guaranteed response time, but takedown requests are given priority over other work.
@@ -61,9 +61,9 @@ You can stop playing a station or source on your own instance immediately, witho
 
 | Setting | Effect |
 |---|---|
-| `DISABLED_STATION_IDS=fg:fg-example,fg:fg-other` | Every source of those stations is disabled. They show as *Temporarily unavailable* and cannot be played. |
-| `DISABLED_SOURCE_IDS=fg-example-mp3-abc123` | Only those sources are disabled. Other sources of the station can still be used. |
-| `DISABLED_PACKS=fg` | Hides **all** stations of those packs from every server, stops their catalogue sync, and stops them resuming or autostarting after a restart. Custom stations and other packs keep working. |
+| `DISABLED_STATION_IDS=mypack:my-station,mypack:other-station` | Every source of those stations is disabled. They show as *Temporarily unavailable* and cannot be played. |
+| `DISABLED_SOURCE_IDS=mypack-my-station-mp3` | Only those sources are disabled. Other sources of the station can still be used. |
+| `DISABLED_PACKS=mypack` | Hides **all** stations of those packs from every server, stops their catalogue sync, and stops them resuming or autostarting after a restart. Custom stations and other packs keep working. |
 
 Station and source IDs are shown in `/radio list` and `/radio inspect`. If a server admin was asked to remove a custom station, they can use `/radio remove`.
 

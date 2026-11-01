@@ -80,7 +80,7 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 |---|---|
 | `ACCESS_DENIED` | The stream host refused access with HTTP 401, 403 or 451, for the stream itself or for an HLS playlist or segment. This can mean geo-restriction, rights restriction, or a host that only serves certain clients. Retrying the same source is pointless, so the bot moves straight to a fallback.<br><br>By default the bot identifies as FFmpeg's network library, `Lavf/<version>` from the installed FFmpeg. Many hosts that refuse unknown clients accept that, because it is a standard media player's network stack; the starter pack's host is one of them. Check the value in use in `/radio stats`. If you changed `STREAM_USER_AGENT`, clear it to return to FFmpeg's own.<br><br>The bot does not imitate a web browser, sends no `Referer`, and never uses signed or tokenised URLs. A host that still refuses is respected. |
 | `HTTP_STATUS` | The stream server answered with another non-2xx status, such as 404 or 5xx. |
-| `HTTP_TIMEOUT` / `HTTP_ERROR` | The server didn't respond in time, or the connection failed. For example, one of FG DJ RADIO's HLS addresses (`wknqhm4yuchvv/hls.m3u8`) redirected and then never answered in the 31 Oct 2026 probe. |
+| `HTTP_TIMEOUT` / `HTTP_ERROR` | The server didn't respond in time, or the connection failed. For example, one of the starter pack flagship's HLS addresses redirected and then never answered in the 31 Oct 2026 probe. |
 | `DNS_FAILED` | The host name didn't resolve. |
 | `REDIRECT_LIMIT` | More than 5 redirects. |
 | `CONTENT_TYPE_REJECTED` | The URL serves HTML, JSON or an image, not audio. This often means a station's web page was given instead of its stream URL. |

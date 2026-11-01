@@ -9,7 +9,7 @@ This file records where every entry in this pack's `stations.json` and `sources.
 | Item                                      | Value                                                                                                                                                                            |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Station list source                       | `https://www.radiofg.com/Webradios`, the server-rendered page's inline `var apidata` object, `webradios` array (site order)                                                      |
-| Station list snapshot                     | 31 October 2026. 63 names, in official order (PRD Appendix A)                                                                                                                    |
+| Station list snapshot                     | 31 October 2026. 63 names, in official order (`stations.json`)                                                                                                                   |
 | Source discovery                          | 31 October 2026 (`discoveredAt: 2026-10-31T14:09:29Z`)                                                                                                                           |
 | Method                                    | Redirect resolution of the official web player's signed play URLs (below)                                                                                                        |
 | Stations catalogued                       | 63                                                                                                                                                                               |
@@ -130,7 +130,7 @@ Radio Bot now identifies to stream hosts as FFmpeg's network library, the `Lavf/
 - 3 of 63 stations are confirmed usable and verified playable.
 - The other 60 use the same host and URL pattern, but have not been probed yet.
 - FG HÏ IBIZA's disabled direct mount was refused with a browser User-Agent at discovery, and still answered **HTTP 401** when re-tested with the FFmpeg User-Agent on 31 October 2026, so it stays disabled as access-restricted. The station's HLS source remains enabled.
-- No live Discord call or 72-hour soak test has been done.
+- One live Discord call so far (1 November 2026): FG DJ RADIO played on a private test server from the direct MP3 source at 128 kbps, with one Opus encode at 128 kbps and DAVE negotiated. No 72-hour soak test has been done.
 
 ## Changing this pack
 

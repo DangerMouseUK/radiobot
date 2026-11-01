@@ -62,7 +62,7 @@ export type Resolution =
 
 /**
  * Resolves user input to exactly one station or refuses. Similar names are never resolved
- * silently (e.g. "chic" does not pick FG CHIC over FG CHIC FRENCH): only exact identity
+ * silently (e.g. "jazz" does not pick Jazz FM over Jazz FM Classics): only exact identity
  * matches, or a single clearly dominant hit, are accepted.
  */
 export function resolveStation(stations: Station[], query: string): Resolution {

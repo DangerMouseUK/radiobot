@@ -2,11 +2,11 @@
 
 Radio Bot follows one rule above all: **play the correct station before the highest bitrate.** This page explains how a candidate source becomes eligible, how station identity is decided, how sources are ranked, how admins can override the ranking, and what the bundled starter pack contains.
 
-The code lives in `src/streams/identity.ts`, `src/streams/ranking.ts`, `src/streams/source-service.ts`, `src/catalogue/packs.ts` and `src/catalogue/sync.ts`. Radio Bot is unofficial and is not affiliated with or endorsed by Radio FG / Maison FG; see [rights-and-disclaimer.md](rights-and-disclaimer.md).
+The code lives in `src/streams/identity.ts`, `src/streams/ranking.ts`, `src/streams/source-service.ts`, `src/catalogue/packs.ts` and `src/catalogue/sync.ts`. Radio Bot is unofficial and is not affiliated with or endorsed by any broadcaster; see [rights-and-disclaimer.md](rights-and-disclaimer.md).
 
 ## Stations and sources
 
-- A **station** is an editorial programme, for example `fg:fg-dj-radio` (FG DJ RADIO). It has a stable ID, a display name, aliases, tags, a category and a catalogue status: `active`, `missing_from_official` or `retired`.
+- A **station** is an editorial programme, for example `mypack:my-station` ("My Station"). It has a stable ID, a display name, aliases, tags, a category and a catalogue status: `active`, `missing_from_official` or `retired`.
 - A **source** is one endpoint that may carry a station. Besides its URL, a source records:
   - transport and codec hints (hints are not evidence);
   - measured facts: transport, container, codec, profile, sample rate, channels, and advertised, codec and measured bitrate;
@@ -65,7 +65,7 @@ The labels shown in `/radio browse`, `list` and autocomplete come from `SourceSe
 
 1. **An administrator override is authoritative.** A `/radio source verify` verdict of `verified` or `mismatch` decides the status with `high` confidence, and is recorded in the evidence log as a subjective review. `clear` removes the override.
 2. **Audio correlation with an already-verified source counts as strong support.** If the latest correlation evidence `supports`, the status is `verified` with `high` confidence.
-3. **A metadata contradiction without correlation support means `mismatch`.** The source is never promoted automatically. This applies when the stream's `icy-name` is exactly the name of a *different* station in any loaded pack. That check comes **before** any match against this station's own aliases. A short alias such as "FG" can therefore never turn another station's name, such as "FG DANCE", into support. The only exception is when that exact name is also one of this station's own names or aliases.
+3. **A metadata contradiction without correlation support means `mismatch`.** The source is never promoted automatically. This applies when the stream's `icy-name` is exactly the name of a *different* station in any loaded pack. That check comes **before** any match against this station's own aliases. A short alias such as "Example" can therefore never turn another station's name, such as "Example Dance", into support. The only exception is when that exact name is also one of this station's own names or aliases.
 4. **Provenance from the official player, curation or the admin who added a custom station means `verified` with `medium` confidence.** If the `icy-name` also matches the station's name or an alias, confidence is `high`.
 5. **Anything else is `unverified` with `low` confidence.** This covers sources that were discovered automatically and have no authoritative mapping.
 
@@ -73,9 +73,9 @@ The labels shown in `/radio browse`, `list` and autocomplete come from `SourceSe
 
 ### Brand labels
 
-Some names are publisher or brand labels rather than programme names. Each pack declares its own in `pack.json` → `brandLabels`. For the starter pack they are `Radio FG`, `FG`, `Maison FG`, `FG Radio`, `RadioFG` and `Les Indes Radios`.
+Some names are publisher or brand labels rather than programme names. Each pack declares its own in `pack.json` → `brandLabels`, for example `["Example Radio", "Example"]`. The starter pack declares its broadcaster's brand and network names.
 
-When a stream's `icy-name` (normalised: case, accents and punctuation folded) is one of the station's pack's brand labels, the metadata signal is **inconclusive**. Seeing "Radio FG" in a stream header says nothing about whether it carries FG DJ RADIO or FG CHIC. Brand labels are also ignored among the station's own aliases. This is how the PRD §3.1 rule is applied.
+When a stream's `icy-name` (normalised: case, accents and punctuation folded) is one of the station's pack's brand labels, the metadata signal is **inconclusive**. Seeing "Example Radio" in a stream header says nothing about whether it carries "Example Dance" or "Example Chill". Brand labels are also ignored among the station's own aliases. This is how the PRD §3.1 rule is applied.
 
 Only the stream *name* (`icy-name`) is used for identity. `StreamTitle` (the current song) is only shown as now-playing text.
 
@@ -96,7 +96,7 @@ Only the stream *name* (`icy-name`) is used for identity. `StreamTitle` (the cur
   - the peak stands out from the other lags with a prominence of **≥ 5** (`PROMINENCE_THRESHOLD`).
 - A *uniqueness* ratio is reported but not used: repetitive dance music produces several similar peaks even for the same programme.
 - Anything weaker is inconclusive.
-- **Calibration.** On live radio on 31 October 2026, the same station across MP3, AAC and HLS scored **0.38–0.90**. Different stations scored **0.08–0.14**. A comparison can still come out inconclusive for the same station, for example during a quiet passage. FG CHIC scored 0.08 in one run, having matched at 0.61 and 0.49 in earlier runs. That is why a failed comparison never demotes a source.
+- **Calibration.** On live radio on 31 October 2026, the same station across MP3, AAC and HLS scored **0.38–0.90**. Different stations scored **0.08–0.14**. A comparison can still come out inconclusive for the same station, for example during a quiet passage. One of the starter pack's probed stations scored 0.08 in one run, having matched at 0.61 and 0.49 in earlier runs. That is why a failed comparison never demotes a source.
 - Nothing is saved apart from the score, the lag and a short description.
 
 `SourceService.deepVerify()` compares each enabled source that isn't verified yet against the currently selected verified source of the same station. If no verified source exists, there is nothing to compare against and the command says so.
@@ -152,20 +152,20 @@ These are per-server overrides, stored in `guild_source_preferences`:
 
 When you pin or prefer a source that isn't eligible right now, the reply warns you and gives the reason. An override never makes an ineligible source playable: the identity and health gate always applies. The catalogue sync and seeding never touch these preferences.
 
-## The starter pack: Radio FG / Maison FG (`fg`)
+## The bundled starter pack
 
 ### Files
 
-The starter pack lives in `catalog/packs/fg/`:
+The starter pack is a folder in `catalog/packs/`, like any other pack:
 
 - **`pack.json`** holds:
-  - ID `fg`, name "Radio FG / Maison FG", and an unofficial disclaimer;
-  - six categories and the brand labels above;
-  - `sync` with the `radiofg-apidata` adapter on `https://www.radiofg.com/webradios`;
+  - the pack ID, its name and an unofficial disclaimer;
+  - six categories and the pack's brand labels;
+  - `sync` with the `webradio-apidata` adapter on the broadcaster's official station list page;
   - snapshot date 2026-10-31.
 - **`stations.json`** has 63 stations, the official list snapshot of 31 October 2026. For each: `slug`, `displayName` as listed, `externalId` (the site's stable 10-character stream ID), `aliases`, `category`, `tags`, `order`, `officialPage` where one exists, `catalogueStatus` and `catalogueLastSeen`.
 - **`sources.json`** has 126 candidate sources. For each: `id`, `station` (the slug), `url`, `label`, `priority`, `transportHint`, `codecHint`, `provenance` (`official-player` or `curated`), `provenanceDetail`, `enabled` and `disabledReason`. Every URL in this pack is HTTPS, and hints are never evidence: every source is probed at run time.
-- **[`SOURCE_PROVENANCE.md`](../catalog/packs/fg/SOURCE_PROVENANCE.md)** is the full provenance record, and **`evidence/`** holds the probe reports.
+- **`SOURCE_PROVENANCE.md`** is the full provenance record, and **`evidence/`** holds the probe reports. Each bundled pack's folder has both; the station-by-station details are recorded there.
 
 At start-up every pack is validated with Zod and cross-checked. Start-up fails if any of these is found:
 
@@ -177,27 +177,26 @@ At start-up every pack is validated with Zod and cross-checked. Start-up fails i
 
 ### How the sources were discovered
 
-On **31 October 2026** each station's entry in the official radiofg.com web player data was used. The site's page embeds this data as `var apidata`, with a `webradios` array plus the main FM stream in `radiostreams`. Each entry carries short-lived **signed play URLs** on `streams.lesindesradios.fr`, one per format (`hd`, `sd`, `hls`).
+On **31 October 2026** each station's entry in the broadcaster's official web player data was used. The site's page embeds this data as JSON, with one entry per station plus the main FM stream. Each entry carries short-lived **signed play URLs**, one per format (`hd`, `sd`, `hls`).
 
-- Each signed URL was requested once, without following redirects. The signed URL answered with a **302 redirect** to an unsigned mount on `stream.rcs.revma.com`. Those redirect targets are the pack's sources.
-- **Signed URLs and tokens were never stored.** That includes the signed play URLs, the tracking parameter (`trk_ir_c`) and the load-balancer token (`rj-tok`) that revma adds on its own next redirect.
-- Typically each station resolved to a direct MP3 mount (from `hd`/`sd`) and an HLS playlist of the form `<mount>/hls.m3u8` (from `hls`). In 36 of the 61 HLS entries the playlist is on the same revma mount as the station's direct source. In the other 25 it is on a different mount. In neither case is it assumed to carry the same encoding. Two stations (FG NOMADE and FG PULSE) expose only the direct mount, because their HLS entry redirects to the same plain mount. Two stations (FG CHIC BERLIN and FG CHIC LONDON) serve AAC on the direct mount.
+- Each signed URL was requested once, without following redirects. The signed URL answered with a **302 redirect** to an unsigned mount on the broadcaster's stream host. Those redirect targets are the pack's sources.
+- **Signed URLs and tokens were never stored.** That includes the signed play URLs, a tracking parameter, and the load-balancer token that the stream host adds on its own next redirect.
+- Typically each station resolved to a direct MP3 mount (from `hd`/`sd`) and an HLS playlist of the form `<mount>/hls.m3u8` (from `hls`). In 36 of the 61 HLS entries the playlist is on the same mount as the station's direct source. In the other 25 it is on a different mount. In neither case is it assumed to carry the same encoding. Two stations expose only the direct mount, because their HLS entry redirects to the same plain mount. Two stations serve AAC on the direct mount.
 - One short GET per distinct direct or non-standard target recorded the `Content-Type`. The HLS targets in the standard `<mount>/hls.m3u8` form were not individually checked; spot checks on other mounts returned an HLS playlist.
 
 **Four sources are disabled** because the official site's own mapping was broken at discovery time. They are kept for transparency and so that a future check can re-enable them:
 
-| Source | Problem |
+| Problem | Sources |
 |---|---|
-| `fg-buddha-bar-hls-kb8037g1t7uvv` | Malformed HLS target (`.hls.m3u8`), HTTP 404 |
-| `fg-mix-melodic-hls-h0n0zbh1t7uvv` | Malformed HLS target (`.hls.m3u8`), HTTP 404 |
-| `fg-disco-house-direct-ffn7zkskca3vv` | `.m3u8` URL serving plain `audio/mpeg`, a duplicate of the station's MP3 mount, not HLS |
-| `fg-hi-ibiza-direct-2ykcf6e1e2uvv` | Direct mount answered HTTP 401 at discovery (browser User-Agent), and again on 31 October 2026 with the bot's FFmpeg User-Agent. Access is restricted, so it stays disabled. The station's HLS source remains enabled. |
+| Malformed HLS target (`.hls.m3u8`), HTTP 404 | 2 |
+| `.m3u8` URL serving plain `audio/mpeg`, a duplicate of the station's MP3 mount, not HLS | 1 |
+| Direct mount answered HTTP 401 at discovery (browser User-Agent), and again on 31 October 2026 with the bot's FFmpeg User-Agent. Access is restricted, so it stays disabled. The station's HLS source remains enabled. | 1 |
 
-The flagship **FG DJ RADIO** has four sources:
+The flagship station has four sources:
 
-- the webradio entry's MP3 mount and its HLS playlist;
-- the HLS playlist of the site's main FM stream ("RADIO FG", shown on the site as "Live : FG DJ RADIO");
-- an extra **direct AAC** mount, `gk9y379uquhvv`, recorded as **`curated`**. It comes from an earlier investigation on 30 October 2026 (about 128 kbps AAC, stereo, 44.1 kHz at the time). The site itself does not reference that bare mount; it only references its `/hls.m3u8`. It is in the catalogue as a candidate to compare, not as a claimed higher-quality feed.
+- its webradio entry's MP3 mount and HLS playlist;
+- the HLS playlist of the site's main FM stream, which carries the same programme;
+- an extra **direct AAC** mount, recorded as **`curated`**. It comes from an earlier investigation on 30 October 2026 (about 128 kbps AAC, stereo, 44.1 kHz at the time). The site itself does not reference that bare mount; it only references its `/hls.m3u8`. It is in the catalogue as a candidate to compare, not as a claimed higher-quality feed.
 
 ### Coverage
 
@@ -207,25 +206,25 @@ The PRD asks for separate counts. For the starter pack:
 |---|---|---|
 | Catalogued | **63** | Station names in the official list snapshot of 31 Oct 2026. |
 | With a source | **63** | Stations with at least one enabled source: 126 sources, of which 122 are enabled. |
-| Usable | **3 confirmed** (FG DJ RADIO, FG CHIC, FG DANCE); 60 not probed yet | Stations with a source that a probe has successfully decoded. This is determined at run time. See the probe run below. |
-| Verified playable | **3 confirmed** | Stations with an *eligible* source: probed, decoded, identity verified, healthy. For the starter pack, identity comes from official-player provenance. Audio correlation additionally supports FG DJ RADIO and FG DANCE. |
+| Usable | **3 confirmed**; 60 not probed yet | Stations with a source that a probe has successfully decoded. This is determined at run time. See the probe run below. |
+| Verified playable | **3 confirmed** | Stations with an *eligible* source: probed, decoded, identity verified, healthy. For the starter pack, identity comes from official-player provenance. Audio correlation additionally supports two of the three. |
 
-**Release probe run.** The evidence from 31 October 2026 is in [`catalog/packs/fg/evidence/probe-2026-10-31.json`](../catalog/packs/fg/evidence/probe-2026-10-31.json). It covers the 8 sources of FG DJ RADIO, FG CHIC and FG DANCE.
+**Release probe run.** The evidence from 31 October 2026 is in the pack folder's `evidence/`. It covers the 8 sources of three stations: the flagship and two others.
 
 | Station | Source | Result |
 |---|---|---|
-| FG DJ RADIO | direct MP3 `wknqhm4yuchvv` | MP3, 128 kbps measured, 44.1 kHz stereo |
-| FG DJ RADIO | direct AAC `gk9y379uquhvv` (curated) | AAC-LC, ≈128 kbps measured, 44.1 kHz stereo |
-| FG DJ RADIO | HLS `gk9y379uquhvv/hls.m3u8` | AAC-LC, ≈128 kbps measured, 44.1 kHz stereo |
-| FG DJ RADIO | HLS `wknqhm4yuchvv/hls.m3u8` | Failed: redirects, then never answers (`HTTP_TIMEOUT`) |
-| FG CHIC | direct MP3 / HLS | MP3 128 kbps / AAC-LC 128 kbps, both 44.1 kHz stereo |
-| FG DANCE | direct MP3 / HLS | MP3 128 kbps / AAC-LC 128 kbps, both 44.1 kHz stereo |
+| Flagship | direct MP3 | MP3, 128 kbps measured, 44.1 kHz stereo |
+| Flagship | direct AAC (curated) | AAC-LC, ≈128 kbps measured, 44.1 kHz stereo |
+| Flagship | HLS (main FM stream's playlist) | AAC-LC, ≈128 kbps measured, 44.1 kHz stereo |
+| Flagship | HLS (webradio entry's playlist) | Failed: redirects, then never answers (`HTTP_TIMEOUT`) |
+| Second station | direct MP3 / HLS | MP3 128 kbps / AAC-LC 128 kbps, both 44.1 kHz stereo |
+| Third station | direct MP3 / HLS | MP3 128 kbps / AAC-LC 128 kbps, both 44.1 kHz stereo |
 
 Audio comparisons in the same run:
 
-- FG DJ RADIO: MP3 against HLS scored 0.58, and MP3 against AAC scored 0.61. Both support identity.
-- FG DANCE: MP3 against HLS scored 0.90, which supports identity.
-- FG CHIC: MP3 against HLS was inconclusive in this run, having matched at 0.61 and 0.49 in earlier runs.
+- Flagship: MP3 against HLS scored 0.58, and MP3 against AAC scored 0.61. Both support identity.
+- Third station: MP3 against HLS scored 0.90, which supports identity.
+- Second station: MP3 against HLS was inconclusive in this run, having matched at 0.61 and 0.49 in earlier runs.
 
 No higher-bitrate feed was found: the direct and HLS sources all carry about 128 kbps. Because of the transport tier, the bot plays the direct MP3, or the flagship's direct AAC, and keeps HLS as the fallback.
 
@@ -239,7 +238,7 @@ The bot now identifies to stream hosts as FFmpeg's network library. It uses the 
 
 The other **60 stations** use the same host and URL pattern but have **not been probed yet**.
 
-For pack sources, *identity verified* currently rests on official-player (or curated) **provenance** plus a successful probe. Audio correlation additionally supports FG DJ RADIO and FG DANCE, as above. No listening test has been recorded. Read "verified" accordingly. Use `compare:true` or an operator's `/radio source verify` for stronger evidence.
+For pack sources, *identity verified* currently rests on official-player (or curated) **provenance** plus a successful probe. Audio correlation additionally supports two of the three probed stations, as above. No listening test has been recorded. Read "verified" accordingly. Use `compare:true` or an operator's `/radio source verify` for stronger evidence.
 
 The bot's live coverage is in `/radio stats`, with one line per pack: "N catalogued · N usable · N verified playable", followed by the pack's list-sync status. The footer of `/radio list` for packs adds the "with a known source" count.
 
@@ -255,16 +254,16 @@ pnpm validate-catalogue
 pnpm validate-catalogue --pack ./my-pack
 
 # probe specific stations, run the ~40 s audio comparison, and write the evidence
-pnpm validate-catalogue --probe fg:fg-dj-radio fg:fg-chic --compare --json evidence.json
+pnpm validate-catalogue --probe mypack:my-station mypack:other-station --compare --json evidence.json
 
 # every enabled source of one pack: slow, and it loads the broadcaster's servers, so run it sparingly
-pnpm validate-catalogue --probe --pack-id fg
+pnpm validate-catalogue --probe --pack-id mypack
 ```
 
 In the Docker container:
 
 ```sh
-docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe fg:fg-dj-radio
+docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe mypack:my-station
 ```
 
 `--probe` needs station IDs or `--pack-id`; with neither, it stops with a message. `--compare` compares the first successfully probed source of each station with each of its other successful sources. Each probe line prints the transport, codec, measured, codec and advertised bitrates, the sample rate, the channels, the `icy-name` and the start-up time. A failure prints its reason code. Probes run one at a time. Audio samples stay in memory and are discarded. The script does not write to the bot's database. To refresh the evidence the bot uses, run `/radio rescan` in Discord.
@@ -273,14 +272,14 @@ docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe fg
 
 `CatalogueSync` (`src/catalogue/sync.ts`) reconciles each **enabled pack that declares `sync`** in its `pack.json` with that pack's official list. It runs on its own jittered schedule for each pack, daily by default (`CATALOG_SYNC_ENABLED`, `CATALOG_SYNC_INTERVAL_HOURS`), and on `/radio sync [pack]`. The list is parsed by the adapter the pack names in `src/catalogue/sync-adapters.ts`:
 
-- `radiofg-apidata` reads the radiofg.com `var apidata` webradio list, used by the starter pack;
+- `webradio-apidata` reads a webradio list embedded in a station website's page (a `webradios[]` array in the page's `var apidata` JSON); the starter pack uses it;
 - `json-name-list` reads a plain JSON list of `{ id, name }`.
 
-For the starter pack, a sync:
+A sync:
 
-- fetches `https://www.radiofg.com/webradios` through the safe HTTP client, capped at 6 MiB and 20 s;
-- reads **only station names and stable IDs** from the page's `var apidata` → `webradios` array, skipping entries with `displayOnWebsite: false`, and falls back to the site's navigation list;
-- **never collects stream URLs, and ignores the short-lived signed play URLs on the page.** New sources are only ever added by a reviewed change to `catalog/packs/fg/sources.json`;
+- fetches the URL in the pack's `sync` through the safe HTTP client, capped at 6 MiB and 20 s;
+- reads **only station names and stable IDs**. With `webradio-apidata` that is each `webradios` entry's `label` and `id`, skipping entries with `displayOnWebsite: false`, with the page's navigation list as a fallback;
+- **never collects stream URLs, and ignores any short-lived signed play URLs on the page.** New sources are only ever added by a reviewed change to the pack's `sources.json`;
 - treats a list as implausible, and changes nothing, when it has fewer than 10 names, or fewer than half the pack's stations for packs with fewer than 20;
 - matches by stable ID, then by normalised name. If an unmatched new name closely resembles a single missing station, it is treated as a rename;
 - on a **rename**, keeps the station ID, favourites and preferences, and keeps the old name as an alias;

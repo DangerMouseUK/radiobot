@@ -50,11 +50,12 @@ export const decodeEntities = (s: string): string =>
   });
 
 /**
- * radiofg.com webradio list. Reads only `webradios[].label` and `.id` from the page's
+ * A webradio list embedded in a station website's page. Reads only `webradios[].label` and
+ * `.id` from the page's
  * `var apidata` object; the short-lived signed play URLs on the same page are ignored and
  * never stored. Falls back to the header dropdown markup.
  */
-export function parseRadioFgApidata(html: string): OfficialEntry[] {
+export function parseWebradioApidata(html: string): OfficialEntry[] {
   const marker = html.indexOf('var apidata');
   if (marker >= 0) {
     const brace = html.indexOf('{', marker);
@@ -101,6 +102,6 @@ export function parseJsonNameList(text: string): OfficialEntry[] {
 }
 
 export const SYNC_ADAPTERS: Record<string, SyncAdapter> = {
-  'radiofg-apidata': parseRadioFgApidata,
+  'webradio-apidata': parseWebradioApidata,
   'json-name-list': parseJsonNameList,
 };

@@ -40,8 +40,8 @@ export function metadataSignal(
   const own = [station.displayName, ...station.aliases]
     .map(normalizeName)
     .filter((n) => n && !brandLabels.has(n));
-  // Exact name of another station first: a short alias of this station (e.g. "FG") must never
-  // turn another station's name ("FG DANCE") into support, whatever brand labels a pack declares.
+  // Exact name of another station first: a short alias of this station (e.g. "XY") must never
+  // turn another station's name ("XY DANCE") into support, whatever brand labels a pack declares.
   const other = otherStations.find((s) => s.id !== station.id && normalizeName(s.displayName) === meta);
   if (other && !own.includes(meta)) {
     return {

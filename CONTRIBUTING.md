@@ -9,7 +9,9 @@ Thank you for helping. Radio Bot is a small, self-hosted Discord radio bot. Its 
 
 Contributions that keep to these rules are very welcome. By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-**Naming:** the product is **Radio Bot** (package and image `radio-bot`; the repository is [DangerMouseUK/radiobot](https://github.com/DangerMouseUK/radiobot)). Don't call it "FG Radio" or anything else that implies it is a broadcaster's product. It is unofficial; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
+**Naming:** the product is **Radio Bot** (package and image `radio-bot`; the repository is [DangerMouseUK/radiobot](https://github.com/DangerMouseUK/radiobot)). Never name it after a broadcaster or a station pack, or in any way that implies it is a broadcaster's product. It is unofficial and not affiliated with or endorsed by any broadcaster; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
+
+**Pack names stay in the pack:** outside a pack's own folder (`catalog/packs/<id>/`), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them. Use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays.
 
 ## Development setup
 
@@ -56,10 +58,10 @@ Use a separate Discord application and a private test server for development. Ne
 
 ### Catalogue changes
 
-Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The bundled starter pack is `catalog/packs/fg/`. A new pack must be **labelled as unofficial** (with a `disclaimer` and no logos or artwork) unless the broadcaster has agreed otherwise. For these files:
+Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The code must stay pack-agnostic: never special-case a pack ID in `src/`. A new pack must be **labelled as unofficial** (with a `disclaimer` and no logos or artwork) unless the broadcaster has agreed otherwise. For these files:
 
 - **Every source mapping needs provenance and evidence:**
-  - **Provenance:** how the URL is tied to the station, and when. For example: "Official radiofg.com web player entry `<officialId>` redirected to this mount on YYYY-MM-DD". Put this in `provenanceDetail`, and add a row or section to `SOURCE_PROVENANCE.md`.
+  - **Provenance:** how the URL is tied to the station, and when. For example: "Official web player entry `<officialId>` redirected to this mount on YYYY-MM-DD". Put this in `provenanceDetail`, and add a row or section to `SOURCE_PROVENANCE.md`.
   - **Evidence:** what you checked and what you saw: HTTP status and content type, and ideally `validate-catalogue --probe` output (codec, measured bitrate, `icy-name`) and a `--compare` result against an already-verified source of the same station. Attach the `--json` evidence file, or its relevant excerpt, to the pull request.
 - **Use only `official-player` or `curated` provenance.** Automatically discovered URLs don't belong in the manifest.
 - **Pack URLs should be HTTPS.** The schema accepts `http://`, but such sources are refused when `ALLOW_INSECURE_HTTP_STREAMS=false`. They must not contain signatures, tokens, session or tracking parameters. Short-lived signed URLs must never be committed.

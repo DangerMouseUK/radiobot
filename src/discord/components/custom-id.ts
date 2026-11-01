@@ -33,7 +33,7 @@ export class ComponentIds {
   /** @param ttlMs time to live; null for persistent panels (still re-authorised on click). */
   make(guildId: string, action: string, arg = '', ttlMs: number | null = 15 * 60_000): string {
     if (!/^[a-z0-9-]{1,16}$/.test(action)) throw new Error(`invalid action ${action}`);
-    // Station ids contain one colon ("fg:fg-chic"); it is carried as "." to keep 5 parts.
+    // Station ids contain one colon ("mypack:my-station"); it is carried as "." to keep 5 parts.
     if (!/^[A-Za-z0-9_-]*(:[A-Za-z0-9_-]+)?$/.test(arg)) throw new Error(`invalid component arg ${arg}`);
     const safeArg = arg.replace(':', '.');
     const exp = ttlMs === null ? '0' : Math.ceil((this.#now() + ttlMs) / 1000).toString(36);

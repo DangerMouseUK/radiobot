@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- The sync adapter that reads a `webradios[]` list from a page's embedded JSON is now called `webradio-apidata`; a pack that names it by its old name must be updated (the bundled pack already is), or it fails validation at start-up.
+- The documentation outside the station packs uses generic examples (`mypack:my-station`) and no longer names a pack's broadcaster or stations. Pack-specific detail stays in each pack's own folder.
+
 ## [1.0.1] - 2026-11-01
 
 ### Fixed
@@ -16,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 First public release. The items not yet verified are listed under *Release status* below.
 
-> **Unofficial integration, not endorsed by the broadcaster.** Radio Bot is an independent project. It is not affiliated with, endorsed by or sponsored by Radio FG, Maison FG or any other broadcaster. The bundled starter station pack names their stations only to identify them. The MIT licence covers this project's original code only. The rights and branding release gate (PRD §14) is **not** resolved by this release; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
+> **Unofficial, not endorsed by any broadcaster.** Radio Bot is an independent project. It is not affiliated with, endorsed by or sponsored by any broadcaster. The bundled starter station pack names stations only so that people can find them; the names, audio and artwork belong to their owners. The MIT licence covers this project's original code only. The rights and branding release gate (PRD §14) is **not** resolved by this release; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
 ### Added
 
@@ -27,9 +32,9 @@ First public release. The items not yet verified are listed under *Release statu
   - Each pack has its own categories, brand labels, disclaimer and optional official-list sync.
   - Packs are switched on according to `enabledByDefault`, `ENABLED_PACKS` and `DISABLED_PACKS`.
   - The authoring guide is `catalog/README.md`.
-- **The bundled starter pack, Radio FG / Maison FG (`fg`).** It has all 63 stations on the official webradio list as of 31 October 2026, and 126 candidate sources from the official web player's redirects. 122 sources are enabled. 4 are disabled because the site's own mapping was broken: two HLS 404s, one duplicate mislabelled as `.m3u8`, and one direct mount returning 401. Provenance is in `catalog/packs/fg/SOURCE_PROVENANCE.md`.
+- **The bundled starter pack.** It has all 63 stations on its broadcaster's official list as of 31 October 2026, and 126 candidate sources from the official web player's redirects. 122 sources are enabled. 4 are disabled because the site's own mapping was broken: two HLS 404s, one duplicate mislabelled as `.m3u8`, and one direct mount returning 401. Provenance is in the pack folder's `SOURCE_PROVENANCE.md`.
 - **Pack validation at start-up.** Start-up checks the schema; unique pack IDs, slugs and (across packs) source IDs; names and aliases unique within a pack; declared categories; source-to-station references; and that no URL is mapped to two stations.
-- **Per-pack catalogue sync through adapters** (`radiofg-apidata`, `json-name-list`). It reconciles names and stable IDs with each pack's official list, on one daily schedule per syncable pack, or on `/radio sync [pack]`. It never harvests stream URLs and ignores signed play URLs. Renames keep station IDs and favourites. Missing stations are kept and flagged. New stations need a reviewed source mapping. Each run produces a report.
+- **Per-pack catalogue sync through adapters** (`json-name-list`, and an adapter for a webradio list embedded in a station website's page, now called `webradio-apidata`). It reconciles names and stable IDs with each pack's official list, on one daily schedule per syncable pack, or on `/radio sync [pack]`. It never harvests stream URLs and ignores signed play URLs. Renames keep station IDs and favourites. Missing stations are kept and flagged. New stations need a reviewed source mapping. Each run produces a report.
 - Truthful station availability labels: Available, Degraded, Unverified, Temporarily unavailable, No stream source known, Retired. Nothing else is ever played in a station's place.
 
 **Source inspection and selection**
@@ -73,7 +78,7 @@ First public release. The items not yet verified are listed under *Release statu
 - Recovery and error notices to an optional channel, with repeats coalesced.
 - Stream titles, which may be songs or shows, are shown as **On air** in now-playing views. Titles from older servers that send Latin-1 or Windows-1252 keep their accented characters. Empty and placeholder titles ("Unknown", "Advert" and similar) clear the line instead of leaving the last song showing, and separators left by an empty half ("Artist - ") are removed.
 - The voice channel's status shows what that server is playing: "📻 Station · Artist - Title", following the same title changes, cleared when playback stops or the bot leaves. It needs the optional Set Voice Channel Status permission (now in the invite link) and can be switched off per server in `/radio config` → Notifications. A server's custom station can be named here, because only that server sees it. Migration `0002` adds the setting, on by default.
-- The bot's own Discord status shows what it plays: "Listening to FG DJ RADIO · Artist - Title". `PRESENCE_MODE` chooses `track` (default), `station` or `off`. With several servers playing different stations it shows "radio in N servers", and a server's custom station is never named. It needs no extra intent or permission.
+- The bot's own Discord status shows what it plays: "Listening to My Station · Artist - Title". `PRESENCE_MODE` chooses `track` (default), `station` or `off`. With several servers playing different stations it shows "radio in N servers", and a server's custom station is never named. It needs no extra intent or permission.
 - Least privilege: the `Guilds` and `GuildVoiceStates` intents only, and the permissions View Channels, Send Messages, Embed Links, Attach Files, Connect and Speak, plus the optional Set Voice Channel Status (`281474979908608`; `3197952` without it).
 
 **Custom stations and configuration**
@@ -88,7 +93,7 @@ First public release. The items not yet verified are listed under *Release statu
 
 - SQLite (`node:sqlite`) with versioned, checksummed migrations. A consistent backup is taken before migrating an existing database, and `scripts/backup.ts` takes manual backups. Each kind rotates separately: the newest 5 pre-migration backups and the newest 10 manual ones are kept.
 - A heartbeat-file healthcheck (`scripts/healthcheck.ts`), `scripts/register-commands.ts`, and an optional diagnostics endpoint on `127.0.0.1`.
-- Stream requests identify as FFmpeg's network library: `Lavf/<version>` of the installed FFmpeg, overridable with `STREAM_USER_AGENT`, and shown in `/radio stats`. Stream hosts that refuse unknown clients but serve standard media players, such as the starter pack's, now answer. No browser is imitated and no `Referer` is sent.
+- Stream requests identify as FFmpeg's network library: `Lavf/<version>` of the installed FFmpeg, overridable with `STREAM_USER_AGENT`, and shown in `/radio stats`. Stream hosts that refuse unknown clients but serve standard media players, such as the starter pack's host, now answer. No browser is imitated and no `Referer` is sent.
 - Structured, redacted JSON logs. There is no telemetry, and `TELEMETRY_ENABLED=true` is refused.
 - **A one-line installer and the `radio-bot` command.** `install.sh` downloads the newest release into `~/radio-bot` and hands over to `scripts/radio-bot.sh`. That script checks for Docker (and on Linux offers Docker's official installer), asks for the Application ID and token, pulls the release image or builds it, starts the bot, waits until it is connected, and prints the invite link. Afterwards `radio-bot` offers `status`, `logs`, `start`/`stop`/`restart`, `config`, `invite`, `backup`, `restore`, `update` (backs up first, newest `vX.Y.Z` release, refuses to overwrite edited files) and `uninstall` (offers a data copy, asks before deleting the volume). It runs on Linux, macOS and Windows through WSL, and is tested end to end in CI against a fake Docker (`tests/lifecycle/`).
 - A beginner's install guide, `docs/install.md`.
@@ -115,11 +120,11 @@ A full code review before tagging found and fixed these; each has a regression t
 
 The following PRD acceptance items (§17, §20) are **open** for this release:
 
-- **Only 3 of the starter pack's 63 stations are confirmed by live probe.** On 31 October 2026 (`catalog/packs/fg/evidence/probe-2026-10-31.json`), FG DJ RADIO, FG CHIC and FG DANCE all played: direct MP3 at 128 kbps, HLS AAC-LC at 128 kbps, and FG DJ RADIO's direct AAC-LC at 128 kbps, all 44.1 kHz stereo. One flagship HLS address timed out. The other 60 stations use the same host and pattern but have not been probed.
-- An end-to-end pipeline check (no Discord call) of FG DJ RADIO, MP3 and HLS, produced about 486 kbps Opus against a 510 kbps target. It used a single encoder process, the voice library only demuxed, and no process was left behind.
-- Identity "verified" for pack sources rests on official-player provenance. Audio correlation additionally supports FG DJ RADIO (MP3 against HLS at 0.58, MP3 against AAC at 0.61) and FG DANCE (MP3 against HLS at 0.90). FG CHIC was inconclusive in the latest run, having matched in earlier runs. No listening review has been recorded.
+- **Only 3 of the starter pack's 63 stations are confirmed by live probe.** On 31 October 2026 (the probe report is in the pack folder's `evidence/`), the three probed stations all played: direct MP3 at 128 kbps, HLS AAC-LC at 128 kbps, and the flagship's direct AAC-LC at 128 kbps, all 44.1 kHz stereo. One flagship HLS address timed out. The other 60 stations use the same host and pattern but have not been probed.
+- An end-to-end pipeline check (no Discord call) of the flagship station, MP3 and HLS, produced about 486 kbps Opus against a 510 kbps target. It used a single encoder process, the voice library only demuxed, and no process was left behind.
+- Identity "verified" for pack sources rests on official-player provenance. Audio correlation additionally supports two of the three probed stations (scores of 0.58 to 0.90). The third was inconclusive in the latest run, having matched in earlier runs. No listening review has been recorded.
 - The stream-side `/radio stats` figures were checked on the real flagship stream: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported. The **Discord-side** figures (voice endpoint, WebSocket ping, packets per second, encryption) were seen on the live call below.
-- One live Discord test has been run. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. It found the self-cancelling start that is fixed above. Not yet tested live: station switching with identity checks, permission scenarios, and kick, move and delete handling.
+- One live Discord test has been run. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played the starter pack's flagship station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. It found the self-cancelling start that is fixed above. Not yet tested live: station switching with identity checks, permission scenarios, and kick, move and delete handling.
 - No 72-hour soak test has been run.
 - The release workflow publishes the Docker image to GHCR, but the Docker, Linux (systemd) and container-platform deployments have not been smoke-tested on real hosts.
 - Resource use is measured for one stream only: about 8% of one CPU core and about 200 MB of memory at 128 kbps (the README now has a Requirements section). Several streams at once, long runs and ARM boards are unmeasured. DAVE negotiation has been seen on one live call only.

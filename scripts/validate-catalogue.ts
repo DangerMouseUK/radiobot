@@ -3,8 +3,8 @@
  *
  *   node dist/scripts/validate-catalogue.js                       # validate all packs (built-in + EXTRA_PACKS_DIR)
  *   node dist/scripts/validate-catalogue.js --pack ./my-pack      # validate one pack folder
- *   node dist/scripts/validate-catalogue.js --probe fg:fg-dj-radio [other:station ...]
- *   node dist/scripts/validate-catalogue.js --probe --pack-id fg  # every enabled source in one pack (slow; be gentle)
+ *   node dist/scripts/validate-catalogue.js --probe mypack:my-station [other:station ...]
+ *   node dist/scripts/validate-catalogue.js --probe --pack-id mypack  # every enabled source in one pack (slow; be gentle)
  *   add --compare to run a ~40 s audio comparison between sources of each probed station
  *   add --json <file> to write the evidence report
  *
@@ -50,7 +50,9 @@ for (const p of packs) {
 
 if (!flag('--probe')) process.exit(0);
 if (stationFilter.length === 0 && !packId) {
-  process.stderr.write('Name stations to probe (e.g. fg:fg-dj-radio) or a whole pack with --pack-id <id>.\n');
+  process.stderr.write(
+    'Name stations to probe (e.g. mypack:my-station) or a whole pack with --pack-id <id>.\n',
+  );
   process.exit(2);
 }
 

@@ -4,7 +4,7 @@
 
 This guide runs Radio Bot with Docker Engine and the Compose plugin on any Linux machine, on 64-bit x86 or ARM, as long as an image exists for its CPU architecture. To run without containers, see [install-linux.md](install-linux.md); for hosted platforms, see [install-container-platforms.md](install-container-platforms.md). The bot needs **outbound** internet access to Discord and to the radio stream hosts. It needs **no inbound port, domain or reverse proxy**.
 
-You will run your own Discord application, with your own token. Radio Bot is unofficial and is not affiliated with or endorsed by Radio FG / Maison FG or any broadcaster. Before running it for anyone other than yourself, read [rights-and-disclaimer.md](rights-and-disclaimer.md).
+You will run your own Discord application, with your own token. Radio Bot is unofficial and is not affiliated with or endorsed by any broadcaster. Before running it for anyone other than yourself, read [rights-and-disclaimer.md](rights-and-disclaimer.md).
 
 ## Requirements
 
@@ -129,7 +129,7 @@ As a bot admin (the server owner, or a member with Discord's **Administrator** p
      - the preferred voice channel, plus *Autostart*, *Resume after restart* and *Lock to preferred channel*.
    - **Notifications page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and a switch for showing what's playing as the voice channel status (on by default; needs the optional Set Voice Channel Status permission).
    - Set a default station with `/radio config default_station:` and a manual Opus target with `/radio config manual_bitrate:`.
-2. Join a voice channel and run **`/radio play station:FG DJ RADIO`**, or use **`/radio browse`**.
+2. Join a voice channel and run **`/radio play`**, then start typing a station's name and pick it from the list, or use **`/radio browse`**.
 3. Run **`/radio quality`** to see the source, the Discord output and the processing report.
 4. Optionally, post a persistent control panel with **`/radio panel channel:#radio`**.
 

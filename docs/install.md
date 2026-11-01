@@ -4,7 +4,7 @@ This guide takes you from nothing to a working radio bot in your Discord server,
 
 Radio Bot is **self-hosted**: it runs on a computer you control, using a Discord bot account you create. Nobody else runs it for you, and it only works while that computer is switched on.
 
-> Radio Bot is unofficial and isn't affiliated with or endorsed by Radio FG / Maison FG or any broadcaster. Before running it for anyone other than yourself, read [rights-and-disclaimer.md](rights-and-disclaimer.md).
+> Radio Bot is unofficial and isn't affiliated with or endorsed by any broadcaster. Before running it for anyone other than yourself, read [rights-and-disclaimer.md](rights-and-disclaimer.md).
 
 ## Contents
 
@@ -139,7 +139,7 @@ Never give the bot **Administrator**; it doesn't need it. If your voice channels
 In your Discord server:
 
 1. Join a voice channel.
-2. Type `/radio play` and start typing a station name, such as `FG DJ RADIO`. Pick it from the list that appears and press Enter. Or type `/radio browse` to pick from the full list.
+2. Type `/radio play` and start typing the name of a station. Pick it from the list that appears and press Enter. Or type `/radio browse` to pick from the full list.
 3. The bot joins your channel and starts playing. The first time each station plays, the bot checks its streams first, which can take a few seconds.
 
 Useful next steps:
@@ -147,8 +147,8 @@ Useful next steps:
 - `/radio help` lists every command.
 - **Server owners and administrators:** `/radio config` chooses which channels the bot can be used in, which roles count as DJs, what happens when everyone leaves the channel, and the audio quality. `/radio panel` posts a control panel whose buttons work for everyone allowed to control playback (DJs and admins, plus listeners if you allow it).
 - The [README's command list](../README.md#commands) explains every command and who can use it.
-- While it plays, the bot's status in the member list says what it's playing, such as "Listening to FG DJ RADIO · Artist - Title". To show only the station, or nothing, run `radio-bot config` and set `PRESENCE_MODE=station` or `PRESENCE_MODE=off`.
-- The voice channel shows it too, under the channel's name, for example "📻 FG DJ RADIO · Artist - Title". This uses the **Set Voice Channel Status** permission from the invite link. To turn it off for your server, use `/radio config` → **Notifications**.
+- While it plays, the bot's status in the member list says what it's playing, such as "Listening to My Station · Artist - Title". To show only the station, or nothing, run `radio-bot config` and set `PRESENCE_MODE=station` or `PRESENCE_MODE=off`.
+- The voice channel shows it too, under the channel's name, for example "📻 My Station · Artist - Title". This uses the **Set Voice Channel Status** permission from the invite link. To turn it off for your server, use `/radio config` → **Notifications**.
 
 ## Looking after your bot
 

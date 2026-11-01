@@ -85,5 +85,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            Radio Bot ${{ github.ref_name }} — an **unofficial** integration, **not affiliated with or endorsed by** Radio FG / Maison FG or any broadcaster.
-            See CHANGELOG.md for details and docs/rights-and-disclaimer.md before distributing or operating publicly.
+            Radio Bot ${{ github.ref_name }}: an independent project, **not affiliated with or endorsed by any broadcaster**.
+            See CHANGELOG.md for what changed, and docs/rights-and-disclaimer.md before running it for anyone other than yourself.

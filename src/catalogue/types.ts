@@ -1,4 +1,4 @@
-/** A station pack id (e.g. "fg") or "custom" for a server's own stations. */
+/** A station pack id (e.g. "mypack") or "custom" for a server's own stations. */
 export type Provider = string;
 export type CatalogueStatus = 'active' | 'missing_from_official' | 'retired';
 export type Transport = 'http-continuous' | 'hls' | 'unknown';

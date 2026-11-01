@@ -6,9 +6,9 @@
 **Product type:** Self-hosted Discord voice bot for live internet radio
 **Licence:** MIT for the project's own code (see §14)
 
-> **Central promise:** Make it easy to listen to live internet radio in a Discord voice channel, organised in reviewable **station packs** and starting with a bundled pack of the Radio FG / Maison FG webradios, using the **best *verified* live source** that can legitimately be reached, with uninterrupted playback and truthful information about source and Discord audio quality.
+> **Central promise:** Make it easy to listen to live internet radio in a Discord voice channel, organised in reviewable **station packs** and starting with a bundled starter pack of 63 webradios, using the **best *verified* live source** that can legitimately be reached, with uninterrupted playback and truthful information about source and Discord audio quality.
 
-> **Unofficial.** Radio Bot is an independent open-source project. It is not affiliated with, endorsed by or sponsored by Radio FG, Maison FG or any broadcaster. Station names in the bundled starter pack are used only to identify the stations.
+> **Unofficial.** Radio Bot is an independent open-source project. It is not affiliated with, endorsed by or sponsored by any broadcaster. Station packs name stations only so that people can find them; the names, audio and artwork belong to their owners.
 
 Section numbers and requirement IDs (FR-xxx, NFR-xx) are stable: the source code and the other documents refer to them.
 
@@ -16,7 +16,7 @@ Section numbers and requirement IDs (FR-xxx, NFR-xx) are stable: the source code
 
 ## 1. Executive summary
 
-Radio Bot is an open-source Discord application that plays live internet radio in voice channels. Its stations come from **station packs**. A pack is a folder of three reviewable JSON files, and nothing in the code is specific to any pack. The bot ships with one starter pack, the 63 webradios listed by Radio FG / Maison FG. Operators can add their own packs, and each server can add its own public streams.
+Radio Bot is an open-source Discord application that plays live internet radio in voice channels. Its stations come from **station packs**. A pack is a folder of three reviewable JSON files, and nothing in the code is specific to any pack. The bot ships with one starter pack: the 63 webradios on one broadcaster's official list. Operators can add their own packs, and each server can add its own public streams.
 
 What distinguishes it from a generic music bot is that it treats **station identity**, **delivery transport**, **codec**, **measured source quality** and **Discord output quality** as separate facts. It inspects every candidate stream itself, records the evidence, prefers the best *verified* source, and says plainly when something is unknown. It never claims a stream is "HD" because of a label, never treats HLS as a codec, and never plays a different station because its feed looked better.
 
@@ -25,7 +25,7 @@ Anyone can run their own instance with their own Discord application token. It r
 ### 1.1 What success looks like
 
 - A server can use the bot immediately after setup, without building a station list by hand.
-- The flagship FG DJ RADIO is never confused with FG DANCE, FG CHIC, MAXXIMUM or any other station.
+- A pack's flagship station is never confused with a similarly named station of the same broadcaster, or with any other station.
 - Each pack lists every station on its official list. Stations that cannot be played are shown honestly, never silently mapped to another feed.
 - Every station shown as playable has at least one working, identity-verified source with codec and bitrate evidence.
 - One command starts a station; a Discord-native browser makes switching easy.
@@ -44,7 +44,7 @@ Anyone can run their own instance with their own Discord application token. It r
 
 ## 2. Product principles
 
-1. **Curated station packs come first.** The default experience is the enabled packs, which out of the box means the Radio FG / Maison FG starter pack, flagship first. Custom stations come second. There is no music search, playlist or song queue; the only queue lines up whole stations (FR-010).
+1. **Curated station packs come first.** The default experience is the enabled packs, which out of the box means the bundled starter pack, flagship first. Custom stations come second. There is no music search, playlist or song queue; the only queue lines up whole stations (FR-010).
 2. **Correct station before higher bitrate.** A supposedly better feed is rejected if it carries another programme.
 3. **Evidence over labels.** A source is described only by what was measured. Unknown values are shown as unknown.
 4. **Quality is bounded by the source and by Discord.** Lost detail cannot be restored. HLS is a delivery protocol, not a codec.
@@ -79,38 +79,38 @@ Pack stations come from **station packs**. Each pack is a folder in `catalog/pac
 
 Station IDs are `<pack-id>:<slug>`. A pack is enabled unless its `enabledByDefault` is `false`. Operators opt in with `ENABLED_PACKS` and switch packs off with `DISABLED_PACKS`. Every pack is validated at start-up, and an invalid pack stops start-up with a precise message. The authoring guide is `catalog/README.md`, and the formats are in Appendix B.
 
-The rest of this section describes the bundled starter pack, **Radio FG / Maison FG** (`fg`).
+The rest of this section describes the bundled **starter pack**.
 
 ### 3.1 Station list and identity
 
-The starter pack is seeded from the official Radio FG webradio list as published on 31 October 2026: **63 stations** (Appendix A). The list is a snapshot of names and the site's stable station IDs, not proof that each station has a reachable stream.
+The starter pack is seeded from its broadcaster's official webradio list as published on 31 October 2026: **63 stations** (Appendix A). The list is a snapshot of names and the site's stable station IDs, not proof that each station has a reachable stream.
 
-- Every station has a stable ID (`fg:<slug>`, for example `fg:fg-dj-radio`), its official display name, aliases, category, tags and pack order.
-- `fg:fg-dj-radio` always means the flagship programme.
-- "Radio FG", "FG", "Maison FG", "FG Radio", "RadioFG" and "Les Indes Radios" are publisher or brand labels, declared in the pack's `brandLabels`. Seeing one in stream metadata says nothing about which programme a feed carries, so such labels never confirm or contradict a station's identity. Every pack declares its own brand labels.
+- Every station has a stable ID (`<pack-id>:<slug>`, for example `mypack:my-station`), its official display name, aliases, category, tags and pack order.
+- The flagship station's ID always means the flagship programme, even if its display name changes.
+- The broadcaster's own brand and network names are publisher or brand labels, declared in the pack's `brandLabels`. Seeing one in stream metadata says nothing about which programme a feed carries, so such labels never confirm or contradict a station's identity. Every pack declares its own brand labels.
 
 ### 3.2 Candidate sources
 
-The starter pack lists **126 candidate sources** (`catalog/packs/fg/sources.json`):
+The starter pack lists **126 candidate sources** (in its `sources.json`):
 
-- **Official-player sources (125).** On 31 October 2026, each station entry of the official web player redirected to an unsigned stream mount on `stream.rcs.revma.com`. That mapping, taken from the broadcaster's own player, is the source's provenance. Most stations have a direct MP3 (two have direct AAC) and an HLS rendition.
-- **One curated source.** The flagship's direct AAC mount (`gk9y379uquhvv`) comes from an earlier technical investigation. It is the same mount as the official FM entry's HLS stream.
+- **Official-player sources (125).** On 31 October 2026, each station entry of the official web player redirected to an unsigned stream mount on the broadcaster's stream host. That mapping, taken from the broadcaster's own player, is the source's provenance. Most stations have a direct MP3 (two have direct AAC) and an HLS rendition.
+- **One curated source.** The flagship's direct AAC mount comes from an earlier technical investigation. It is the same mount as the official FM entry's HLS stream.
 - **4 sources ship disabled** because they were broken or refused on the official site at discovery time (two HLS playlists returning 404, one HLS address serving plain MP3, one mount answering HTTP 401).
 
 Codec and bitrate hints in the catalogue are not evidence. Every source is probed at runtime (§7). Short-lived signed play URLs from the official site were never stored or used.
 
-**Live evidence (31 October 2026, `catalog/packs/fg/evidence/`).** FG DJ RADIO, FG CHIC and FG DANCE were probed:
+**Live evidence (31 October 2026, in the pack folder's `evidence/`).** Three stations, the flagship and two others, were probed:
 
 - direct MP3 at 128 kbps on all three;
 - HLS AAC-LC at 128 kbps on all three;
 - direct AAC-LC at 128 kbps on the flagship's curated mount;
 - all 44.1 kHz stereo.
 
-One flagship HLS address (`wknqhm4yuchvv/hls.m3u8`) redirects and then never answers. No higher-bitrate feed exists among these sources. The other 60 stations use the same host and pattern, and have not been probed yet.
+One flagship HLS address redirects and then never answers. No higher-bitrate feed exists among these sources. The other 60 stations use the same host and pattern, and have not been probed yet.
 
 The host refuses unknown clients (HTTP 401) but serves standard media players. That is why the bot identifies as FFmpeg (§10.2).
 
-Provenance details for each station are recorded in `catalog/packs/fg/SOURCE_PROVENANCE.md`, and probe evidence in `catalog/packs/fg/evidence/`.
+Provenance details for each station are recorded in the pack folder's `SOURCE_PROVENANCE.md`, and probe evidence in its `evidence/` folder.
 
 ### 3.3 Coverage policy
 
@@ -122,7 +122,7 @@ Provenance details for each station are recorded in `catalog/packs/fg/SOURCE_PRO
 
 ## 4. Users and use cases
 
-- **U1 — Listener.** Types `/radio play fg-dj-radio` and hears the flagship; switches to FG CHIC without knowing any URL.
+- **U1 — Listener.** Types `/radio play My Station` and hears it; switches to another station without knowing any URL.
 - **U2 — Audio enthusiast.** Wants to see each candidate's codec, bitrate and evidence, the reason for the chosen source, an option to pin a source, and what Discord actually receives.
 - **U3 — Server administrator.** Restricts the bot to approved text and voice channels, assigns DJ roles, sets idle behaviour, default station and restart behaviour.
 - **U4 — Self-hoster.** Clones the repository or pulls the image, adds their own bot token, starts one service, keeps settings across upgrades and reads useful logs.
@@ -143,8 +143,8 @@ Provenance details for each station are recorded in `catalog/packs/fg/SOURCE_PRO
   - no URL mapped to two stations;
   - source IDs unique across all packs.
 - Packs are enabled by `enabledByDefault`, `ENABLED_PACKS` and `DISABLED_PACKS`. Stations of a disabled or missing pack are hidden.
-- The bundled starter pack (`fg`) has all 63 official Radio FG / Maison FG names (Appendix A), with aliases and six categories.
-- Partial and fuzzy search by name, alias, tag or category (for example `fg`, `chic`, `techno`, `ibiza`, `maxximum`, `deep`).
+- The bundled starter pack has all 63 names on its broadcaster's official list (Appendix A), with aliases and six categories.
+- Partial and fuzzy search by name, alias, tag or category (for example `techno`, `deep`, `lounge`, or part of a station's name).
 - `/radio browse` and `/radio list` group stations under pack headings in pack order, with custom stations last. They filter by pack and by category (categories come from the enabled packs), and are paged to fit Discord's component limits.
 - Visible statuses: Available, Degraded, Unverified, Temporarily unavailable, No stream source known, Retired.
 - Ambiguous input is never resolved silently: only an exact ID, name or alias match, or a single clearly dominant match, plays directly; otherwise the user picks from a list.
@@ -154,7 +154,7 @@ Provenance details for each station are recorded in `catalog/packs/fg/SOURCE_PRO
 ### FR-002 — Catalogue synchronisation (P0/P1)
 
 - A pack may declare an official list in `pack.json` (`sync: { adapter, url }`). The generic `CatalogueSync` fetches that list through the safe HTTP client, and a named **adapter** (`src/catalogue/sync-adapters.ts`) extracts station names and stable IDs:
-  - `radiofg-apidata`, used by the starter pack, reads the radiofg.com `var apidata` webradio list and ignores, and never stores, the short-lived signed play URLs on that page;
+  - `webradio-apidata`, used by the starter pack, reads a webradio list embedded in a station website's page (a `webradios[]` array in its `var apidata` JSON) and ignores, and never stores, any short-lived signed play URLs on that page;
   - `json-name-list` reads a plain JSON list of `{ id, name }`.
 - Runs on one jittered daily schedule per syncable enabled pack (configurable), and on admin request (`/radio sync [pack]`), with rate limits.
 - Renames are detected by stable ID (or a single clearly similar name); the station keeps its ID and favourites, and the old name becomes an alias.
@@ -201,9 +201,9 @@ A source is **identity-verified** only through one of:
 3. authoritative provenance (official player mapping, or a curated mapping with recorded evidence) together with a successful probe and no contradicting metadata;
 4. for custom stations, the administrator's declaration when adding the URL.
 
-Stream metadata that names a *different* station exactly is a contradiction. This is checked before any match against the station's own aliases, so a short alias such as "FG" never turns "FG DANCE" into support. A pack's brand labels are neutral. Without audio support, a contradicted source becomes a **mismatch** and is excluded. This is checked at probe time and again on every live connection. A failed or inconclusive audio comparison never demotes an established source. Automatically discovered sources are never verified on provenance alone.
+Stream metadata that names a *different* station exactly is a contradiction. This is checked before any match against the station's own aliases, so a short alias such as "Example" never turns "Example Dance" into support. A pack's brand labels are neutral. Without audio support, a contradicted source becomes a **mismatch** and is excluded. This is checked at probe time and again on every live connection. A failed or inconclusive audio comparison never demotes an established source. Automatically discovered sources are never verified on provenance alone.
 
-**Acceptance:** a newly found higher-bitrate feed that actually carries FG DANCE is never selected for FG DJ RADIO.
+**Acceptance:** a newly found higher-bitrate feed that actually carries another station of the same broadcaster is never selected for the flagship.
 
 ### FR-006 — Best verified source selection (P0)
 
@@ -398,7 +398,7 @@ Calibration on live radio on 31 October 2026:
 - the same station across MP3, AAC and HLS scored **0.38–0.90**;
 - different stations scored **0.08–0.14**.
 
-A match is strong identity evidence. No match is *inconclusive*, not proof of a different station: FG CHIC, for example, matched in two runs and was inconclusive in a third. Listening reviews are recorded as subjective admin overrides.
+A match is strong identity evidence. No match is *inconclusive*, not proof of a different station: one of the starter pack's probed stations, for example, matched in two runs and was inconclusive in a third. Listening reviews are recorded as subjective admin overrides.
 
 ### 7.6 Refresh
 
@@ -566,7 +566,7 @@ radiobot/
 ├── .env.example, Dockerfile, compose.yaml, package.json, pnpm-lock.yaml
 ├── .github/workflows/        ci.yml, release.yml, security.yml
 ├── catalog/                  README.md (pack authoring guide)
-│   └── packs/fg/             pack.json, stations.json, sources.json, SOURCE_PROVENANCE.md, evidence/
+│   └── packs/<pack-id>/      pack.json, stations.json, sources.json, SOURCE_PROVENANCE.md, evidence/
 ├── deploy/systemd/           radio-bot.service
 ├── docs/                     PRD.md and user/operator guides
 ├── migrations/               versioned SQL
@@ -616,7 +616,7 @@ Freely listenable web radio is not automatically licensed for retransmission to 
 - The project is **unofficial**. Station names identify stations only; no logos or artwork are bundled.
 - The MIT licence covers the project's own code only, not station names, trademarks, audio, artwork, or third-party binaries such as FFmpeg in the image.
 - **Operators are responsible** for how they run an instance. Personal self-hosting and public or commercial operation are different situations; public operation needs the broadcaster's permission and appropriate music licensing.
-- **Takedown:** an operator can disable stations or sources immediately (`DISABLED_STATION_IDS`, `DISABLED_SOURCE_IDS`) or whole packs (`DISABLED_PACKS`, for example `fg`). Maintainers remove mappings from a pack on a valid request (see `SECURITY.md`).
+- **Takedown:** an operator can disable stations or sources immediately (`DISABLED_STATION_IDS`, `DISABLED_SOURCE_IDS`) or whole packs (`DISABLED_PACKS`, for example `mypack`). Maintainers remove mappings from a pack on a valid request (see `SECURITY.md`).
 - The bot respects access restrictions and never bypasses them (§2, principle 11). The architecture works with user-supplied streams and operator packs even if the starter pack cannot be used.
 
 **Release gate (open for 1.0.0):** whether the starter pack's stations may be distributed and used for rebroadcast has not been cleared with the broadcaster. Releasing the code does not settle that question.
@@ -676,7 +676,7 @@ Fresh install with minimum permissions; audible playback confirmed from a separa
 
 ### 17.4 Audio-quality checks (per release)
 
-Probe each bundled pack's sources on the release candidate's network; confirm labels match probe output; record evidence in the pack's `evidence/` folder (for example `catalog/packs/fg/evidence/`); never claim higher fidelity without reproducible evidence.
+Probe each bundled pack's sources on the release candidate's network; confirm labels match probe output; record evidence in the pack's `evidence/` folder (`catalog/packs/<pack-id>/evidence/`); never claim higher fidelity without reproducible evidence.
 
 ### 17.5 Catalogue checks (automated and per release)
 
@@ -696,8 +696,8 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 
 **Open release gates for 1.0.0:**
 
-- **Starter pack: 3 of 63 stations confirmed playable by live probe.** FG DJ RADIO, FG CHIC and FG DANCE were confirmed (`catalog/packs/fg/evidence/probe-2026-10-31.json`). Audio correlation also supports identity for FG DJ RADIO and FG DANCE, while FG CHIC was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed. An end-to-end pipeline check of FG DJ RADIO (safe client → one libopus encode → `@discordjs/voice`, which only demuxed) produced about 486 kbps of Opus against the 510 kbps target, with no leftover process. It was not a Discord call.
-- One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
+- **Starter pack: 3 of 63 stations confirmed playable by live probe.** The flagship and two other stations were confirmed (the probe report is in the pack folder's `evidence/`). Audio correlation also supports identity for two of the three, while the third was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed. An end-to-end pipeline check of the flagship (safe client → one libopus encode → `@discordjs/voice`, which only demuxed) produced about 486 kbps of Opus against the 510 kbps target, with no leftover process. It was not a Discord call.
+- One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played the starter pack's flagship station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live. The stream-side statistics were checked on the real flagship stream on 31 October 2026: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported.
 - The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
 - Resource use measured for a single stream only; no multi-stream, long-run or ARM measurements.
 - Encoding above the voice channel's bitrate setting (up to 510 kbps) rests on the project owner's statement that the setting doesn't cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate a listener receives has **not been measured**.
@@ -748,42 +748,7 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 
 ## Appendix A — Starter pack station list (63)
 
-The `fg` pack, from the official list as published on 31 October 2026. Names only; see `catalog/packs/fg/SOURCE_PROVENANCE.md` for sources.
-
-| # | Station | # | Station |
-|---:|---|---:|---|
-| 1 | FG DJ RADIO | 2 | FG CHIC |
-| 3 | FG DANCE | 4 | MAXXIMUM |
-| 5 | FG STARTER FG BY HAKIMAKLI | 6 | FG AMSTERDAM DANCE EVENT |
-| 7 | FG DEEP DANCE | 8 | FG REMIX |
-| 9 | FG AT WORK | 10 | FG HITS |
-| 11 | FG DAVID GUETTA | 12 | FG BOB SINCLAR |
-| 13 | FG CHIC FRENCH | 14 | FG CHIC LOUNGE |
-| 15 | FG CHIC MIX | 16 | FG CHIC SOUL |
-| 17 | FG CHIC & CHILL | 18 | FG CHIC SPA |
-| 19 | FG YOGA | 20 | FG CHIC by Renault |
-| 21 | FG CHIC VINTAGE | 22 | FG DISCO FUNK |
-| 23 | FG CLASSICS | 24 | MAXXIMUM 90's |
-| 25 | FG NEW WAVE | 26 | FG MADONNA |
-| 27 | FG POP LEGENDS | 28 | FG RnB LEGENDS |
-| 29 | FG DANCEFLOOR | 30 | FG MIX HOUSE |
-| 31 | FG MIX AFRO HOUSE | 32 | FG BUDDHA BAR |
-| 33 | FG NOMADE | 34 | FG APERO |
-| 35 | FG FRENCH TOUCH | 36 | FG DISCO HOUSE |
-| 37 | FG DEEP HOUSE | 38 | FG TRAINING |
-| 39 | FG ON THE ROAD | 40 | FG RELAX |
-| 41 | FG DEFECTED | 42 | FG PURPLE DISCO MACHINE |
-| 43 | FG USHUAÏA IBIZA | 44 | FG HÏ IBIZA |
-| 45 | FG UNVRS | 46 | FG MARTIN GARRIX |
-| 47 | FG CLUBBING | 48 | FG PULSE |
-| 49 | FG FUCKING GOOD MUSIC | 50 | FG TECHNO |
-| 51 | FG MIX TECHNO | 52 | FG MIX TRANCE |
-| 53 | FG MIX FESTIVAL | 54 | FG MIX MELODIC |
-| 55 | FG MIX CLUB | 56 | FG PHONK & GAMING |
-| 57 | FG BEATPORT | 58 | FG BELGIUM |
-| 59 | FG CHIC BERLIN | 60 | FG CHIC LONDON |
-| 61 | FG CHIC IBIZA | 62 | FG DANCE TOP40 |
-| 63 | FG FEEL GOOD | | |
+The starter pack has 63 stations, taken from its broadcaster's official list as published on 31 October 2026. The names are kept with the pack, not in this document: its `stations.json` lists them in official order, and its `SOURCE_PROVENANCE.md` maps each one to its sources.
 
 ---
 
@@ -791,40 +756,40 @@ The `fg` pack, from the official list as published on 31 October 2026. Names onl
 
 All pack files have `"schemaVersion": 1`. `stations.json` wraps entries in `{ "schemaVersion": 1, "stations": [...] }`, and `sources.json` in `{ "schemaVersion": 1, "sources": [...] }`. Pack metadata is in B.4. The authoring guide is `catalog/README.md`.
 
-### B.1 Station entry (`catalog/packs/fg/stations.json`)
+### B.1 Station entry (`catalog/packs/<pack-id>/stations.json`)
 
-The station ID is derived: `<pack id>:<slug>`, here `fg:fg-dj-radio`. Only `slug`, `displayName` and `order` are required.
+The station ID is derived: `<pack id>:<slug>`, here `mypack:my-station`. Only `slug`, `displayName` and `order` are required.
 
 ```json
 {
-  "slug": "fg-dj-radio",
-  "displayName": "FG DJ RADIO",
-  "externalId": "z0fDRzUSa2",
-  "aliases": ["Radio FG", "FG", "FG DJ Radio", "FG Radio", "FG Live"],
+  "slug": "my-station",
+  "displayName": "My Station",
+  "externalId": "a1B2c3D4e5",
+  "aliases": ["My Station Live"],
   "category": "flagship",
   "tags": ["flagship", "live", "dj", "electro", "house"],
   "order": 1,
-  "officialPage": "https://www.radiofg.com/radiofg",
+  "officialPage": "https://www.example.com/my-station",
   "catalogueStatus": "active",
   "catalogueLastSeen": "2026-10-31"
 }
 ```
 
-### B.2 Source entry (`catalog/packs/fg/sources.json`)
+### B.2 Source entry (`catalog/packs/<pack-id>/sources.json`)
 
 `station` is the slug of a station in the same pack. `id` must be unique across all packs. `provenance` is `official-player` or `curated`.
 
 ```json
 {
-  "id": "fg-dj-radio-mp3-wknqhm4yuchvv",
-  "station": "fg-dj-radio",
-  "url": "https://stream.rcs.revma.com/wknqhm4yuchvv",
+  "id": "mypack-my-station-mp3",
+  "station": "my-station",
+  "url": "https://stream.example.com/my-station",
   "label": "Direct MP3",
   "priority": 10,
   "transportHint": "http-continuous",
   "codecHint": "mp3",
   "provenance": "official-player",
-  "provenanceDetail": "Official radiofg.com web player entry z0fDRzUSa2 redirected to this mount on 2026-10-31.",
+  "provenanceDetail": "Official web player entry a1B2c3D4e5 redirected to this mount on 2026-10-31.",
   "enabled": true,
   "disabledReason": null
 }
@@ -834,31 +799,31 @@ The station ID is derived: `<pack id>:<slug>`, here `fg:fg-dj-radio`. Only `slug
 
 Input: station and source ID, transport (and HLS rendition), codec and container, bitrate with its evidence strength and the live network rate, sample rate, channels. Output: Opus, 48 kHz, 2 channels, 20 ms, encoder target and mode, the voice channel's bitrate setting (marked as not a cap), observed encoder output rate, encryption state. Processing: number of lossy encodes, resampling, confirmation that no volume or loudness processing is applied, notes. Decision: conclusion and explanation.
 
-### B.4 Pack metadata (`catalog/packs/fg/pack.json`)
+### B.4 Pack metadata (`catalog/packs/<pack-id>/pack.json`)
 
 ```json
 {
   "schemaVersion": 1,
-  "id": "fg",
-  "name": "Radio FG / Maison FG",
-  "description": "The webradios listed on radiofg.com …",
-  "disclaimer": "Unofficial: Radio Bot is not affiliated with or endorsed by Radio FG / Maison FG. Station names identify the stations only.",
+  "id": "mypack",
+  "name": "My Pack",
+  "description": "The webradios listed on the broadcaster's website …",
+  "disclaimer": "Unofficial: Radio Bot is not affiliated with or endorsed by any broadcaster. Station names identify the stations only.",
   "order": 10,
   "enabledByDefault": true,
-  "brandLabels": ["Radio FG", "FG", "Maison FG", "FG Radio", "RadioFG", "Les Indes Radios"],
-  "categories": [{ "id": "flagship", "name": "Flagship" }, { "id": "chic-chill", "name": "Chic & chill" }],
-  "sync": { "adapter": "radiofg-apidata", "url": "https://www.radiofg.com/webradios" },
+  "brandLabels": ["Example Radio", "Example"],
+  "categories": [{ "id": "flagship", "name": "Flagship" }, { "id": "chill", "name": "Chill" }],
+  "sync": { "adapter": "webradio-apidata", "url": "https://www.example.com/webradios" },
   "snapshotDate": "2026-10-31"
 }
 ```
 
-The real file declares six categories. `sync` is optional (`null` for packs without an official list).
+The starter pack's file has the same shape and declares six categories. `sync` is optional (`null` for packs without an official list).
 
 ---
 
 ## Appendix C — References
 
-1. Radio FG webradio list: <https://www.radiofg.com/webradios>
+1. The starter pack's official station list: the URL in its `pack.json` `sync` entry, also recorded in its `SOURCE_PROVENANCE.md`.
 2. `@discordjs/voice`: <https://discord.js.org/docs/packages/voice/main>
 3. Discord voice connections and DAVE: <https://docs.discord.com/developers/topics/voice-connections>
 4. Discord audio bitrate FAQ: <https://support.discord.com/hc/en-us/articles/11635925354775-Audio-Bitrate-FAQ>
@@ -876,7 +841,7 @@ The real file declares six categories. `sync` is optional (`null` for packs with
 | Decision | Choice |
 |---|---|
 | Product name | Radio Bot (unofficial) |
-| Product focus | Curated station packs first (starting with the Radio FG / Maison FG starter pack); custom stations second |
+| Product focus | Curated station packs first (starting with the bundled starter pack); custom stations second |
 | Station catalogue | Modular station packs (`pack.json`, `stations.json`, `sources.json`); no pack-specific code; per-pack sync adapters; operators can add packs via `EXTRA_PACKS_DIR` |
 | Distribution | Public GitHub repository; operators self-host with their own token |
 | Source of truth | Official station names (per pack) + reviewed source mappings + runtime evidence |

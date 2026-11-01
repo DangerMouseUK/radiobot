@@ -34,7 +34,7 @@
     }
   ],
   "sync": {
-    "adapter": "radiofg-apidata",
+    "adapter": "webradio-apidata",
     "url": "https://www.radiofg.com/webradios"
   },
   "snapshotDate": "2026-10-31"
