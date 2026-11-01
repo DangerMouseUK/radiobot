@@ -119,7 +119,7 @@ export function resolveStation(stations: Station[], query: string): Resolution {
     if (exact.length === 1 || exact[1]!.score < top.score) return { kind: 'match', station: top.station };
     return { kind: 'ambiguous', candidates: exact.map((h) => h.station) };
   }
-  // A single name/word match that clearly dominates everything else (e.g. "ushuaia ibiza").
+  // A single name/word match that clearly dominates everything else (e.g. "my station").
   const [top, next] = hits;
   if (top && top.score >= 500 && (!next || next.score < 450)) return { kind: 'match', station: top.station };
   return { kind: 'ambiguous', candidates: hits.slice(0, 10).map((h) => h.station) };

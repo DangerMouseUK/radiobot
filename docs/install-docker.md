@@ -159,7 +159,7 @@ docker compose logs -f --tail=200 radio-bot
 
 - `LOG_LEVEL` can be `fatal`, `error`, `warn`, `info` (the default), `debug`, `trace` or `silent`. `debug` adds state transitions and the voice dependency report.
 - The Discord token, URL fields and authorisation or cookie headers are redacted, and so are query strings in URLs found in error messages and FFmpeg output.
-- **Log retention is controlled by Docker, not by the bot.** The shipped `compose.yaml` keeps at most 5 × 10 MB of logs (`json-file` with `max-size: 10m`, `max-file: 5`). How many days that covers depends on traffic and `LOG_LEVEL`. Adjust the numbers to keep more or less history.
+- **Log retention is controlled by Docker, not by the bot.** The shipped `compose.yaml` keeps at most 5 × 10 MB of logs (`json-file` with `max-size: 10m`, `max-file: 5`). How many days that covers depends on traffic and `LOG_LEVEL`. Adjust the numbers to keep more or less history. `radio-bot update` also keeps the last 500 lines of each replaced container in `logs/` (the newest 5 files).
 
 ## Healthcheck
 

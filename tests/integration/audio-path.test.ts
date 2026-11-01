@@ -219,6 +219,18 @@ describe('identity: time-aligned comparison (FR-005, §17.2)', () => {
     expect(Math.abs(Math.abs(r.lagSeconds) - 7)).toBeLessThan(0.5);
   }, 90_000);
 
+  it('stops the other capture as soon as one side fails', async () => {
+    const started = Date.now();
+    await expect(
+      compareSources(deps, `${radio.base}/404`, `${radio.base}/prog-a`, { seconds: 30 }),
+    ).rejects.toThrow();
+    // Without stopping the other side, this would wait out its 30 s capture.
+    expect(Date.now() - started).toBeLessThan(10_000);
+    const wait = Date.now();
+    while (registry.active > 0 && Date.now() - wait < 5000) await new Promise((r) => setTimeout(r, 50));
+    expect(registry.active).toBe(0);
+  }, 60_000);
+
   it('does not match a different programme', async () => {
     const r = await compareSources(deps, `${radio.base}/prog-a`, `${radio.base}/prog-b`, { seconds: 30 });
     expect(correlationEvidence(r, 'a').verdict).toBe('inconclusive');

@@ -137,7 +137,7 @@ It also includes a short explanation, for example "All eligible sources carry eq
 
 Probing order (`prepareForPlayback`):
 
-- When an eligible source exists, it is used immediately. The station's other due sources (last checked more than 24 h ago, or failing and past their back-off) are re-checked in the background only once the stream has played steadily for 30 s, one at a time and at the lowest CPU priority, so a live stream is never disturbed. A check someone is waiting for interrupts a background check on the same host; the interrupted check records nothing and runs again later.
+- When an eligible source exists, it is used immediately. The station's other due sources (last checked more than 24 h ago, or failing and past their back-off) are re-checked in the background only once the stream has played steadily for 30 s, one at a time and at the lowest CPU priority, so a live stream is never disturbed. A source is queued once and skipped if it was checked meanwhile, and no background check starts while any stream on the installation is in its first 30 s. A check someone is waiting for interrupts a background check on the same host; the interrupted check records nothing and runs again later.
 - When none is eligible, unprobed or stale sources are probed in the foreground, one after another (when someone wants a station and none of its sources works, its failing sources are re-checked despite the back-off, at most every 10 min within a day of last working, then hourly. Paused sources are skipped): the admin's preferred source first, then direct before HLS, then by priority. This stops as soon as one becomes eligible, and the rest are refreshed in the background.
 
 ## Pin, prefer and auto

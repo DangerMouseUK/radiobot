@@ -3,9 +3,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /** A stand-in for @discordjs/voice's VoiceConnection: a state plus status events. */
 class FakeConnection extends EventEmitter {
-  state: { status: string; reason?: number; closeCode?: number } = { status: 'ready' };
+  state: { status: string; reason?: number; closeCode?: number; networking?: { state: object } } = {
+    status: 'ready',
+    networking: { state: {} },
+  };
+  ping = { ws: 10 };
   joinConfig = { channelId: 'voice-1' };
   rejoins = 0;
+  /** What the next dispatchAudio calls report: true when a packet went out. */
+  sends: boolean[] = [];
+  dispatchAudio(): boolean {
+    return this.sends.shift() ?? true;
+  }
   subscribe() {
     return { unsubscribe() {} };
   }
@@ -99,5 +108,41 @@ describe('DiscordVoiceLink', () => {
     expect(MAX_MISSED_FRAMES * 20).toBeGreaterThan(
       DEFAULT_TIMINGS.stallMs + DEFAULT_TIMINGS.watchdogIntervalMs,
     );
+  });
+
+  it('times the packets it sends, ignoring gaps across a pause or a reconnect', async () => {
+    const { connection, link } = await connect();
+    let t = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => t);
+    const send = (at: number) => {
+      t = at;
+      connection.dispatchAudio();
+    };
+    try {
+      send(0);
+      send(20);
+      send(90); // 70 ms late
+      expect(link.stats().packetTiming).toEqual({ late: 1, worstGapMs: 70 });
+      // The player stops playing: the gap until it plays again is not lateness.
+      link.player.emit('stateChange', { status: 'playing' }, { status: 'idle' });
+      send(5_000);
+      // Nor is a gap across a voice reconnect.
+      connection.setState({ status: 'connecting' });
+      connection.setState({ status: 'ready', networking: { state: {} } });
+      send(9_000);
+      send(9_020);
+      expect(link.stats().packetTiming).toEqual({ late: 1, worstGapMs: 70 });
+      // A packet that wasn't sent isn't timed.
+      connection.sends.push(false);
+      send(9_500);
+      send(9_520);
+      expect(link.stats().packetTiming.late).toBe(2);
+      // Once the link is gone, its timer stops counting.
+      link.destroy();
+      send(20_000);
+      expect(link.stats().packetTiming.late).toBe(2);
+    } finally {
+      now.mockRestore();
+    }
   });
 });

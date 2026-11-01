@@ -51,7 +51,8 @@ src/
   index.ts              entry: config → logger → createApp() → start; SIGTERM/SIGINT teardown
   app.ts                wiring: DB, repositories, packs, URL policy, HTTP client, sessions, Discord client, timers
   config/env.ts         every environment variable (Zod); invalid config → exit code 78
-  catalogue/            station packs (packs.ts), official-list sync (sync.ts, sync-adapters.ts),
+  catalogue/            station packs (packs.ts), official-list sync (sync.ts, sync-adapters.ts,
+                        sync-schedule.ts),
                         per-server custom stations (custom-provider.ts), search, shared types
   streams/              THE SOURCE-VALIDATION BOUNDARY: url-policy, safe-fetch (SSRF-safe client),
                         playlists (PLS/M3U/HLS), input (ICY demux, HLS reader), probe (ffprobe + decode),
@@ -59,14 +60,15 @@ src/
                         source-service (orchestrates all of it)
   audio/                ffmpeg.ts (process registry, version checks), encoder.ts (bitrate plan, args),
                         pipeline.ts (stdin → FFmpeg → Ogg Opus, rate meters)
-  voice/                link.ts (@discordjs/voice wrapper + stats), session.ts (per-guild state machine,
-                        watchdog, recovery, failover), session-manager.ts (all guilds, boot/resume)
+  voice/                link.ts (@discordjs/voice wrapper + stats), packet-timing.ts (late-packet count),
+                        state-machine.ts, session.ts (per-guild state machine, watchdog, recovery,
+                        failover), session-manager.ts (all guilds, boot/resume)
   discord/              controller.ts (every interaction), commands/definitions.ts (/radio),
                         permissions/authorize.ts, components/custom-id.ts (signed IDs), ui/ (views, format),
                         register.ts, notifier.ts, presence.ts (bot status),
                         voice-status.ts (voice channel status),
                         voice-access.ts, context.ts
-  persistence/          db.ts (node:sqlite, migrations, backups), repositories/ (stations, guilds, meta)
+  persistence/          db.ts (node:sqlite, migrations, backups), repositories/ (stations, guilds; MetaRepository lives in guilds.ts)
   observability/        logger, health (health.json heartbeat, diagnostics server), metrics, netstats,
                         event-loop (event-loop delay for /radio stats)
   import-export/        /radio export and import
@@ -81,7 +83,8 @@ tests/unit/             fast, pure tests;  tests/integration/  local fixture rad
 tests/helpers.ts        memoryDb(), makeSource(), silentLogger()
 tests/lifecycle/        run.sh + fake-docker: end-to-end test of the installer and manager
 docs/                   install.md (beginner guide, start here), install-docker/-linux/-container-platforms,
-                        architecture, audio, verification, permissions, PRD, troubleshooting
+                        architecture, audio-quality, station-verification, permissions, rights-and-disclaimer,
+                        PRD, troubleshooting
 deploy/systemd/         hardened unit file for bare-metal installs
 ```
 
@@ -89,7 +92,7 @@ deploy/systemd/         hardened unit file for bare-metal installs
 
 This rule outranks every other rule in this file, and every feature. The live stream must play at the best quality the station offers, from the station through to Discord, with no audible hiccup, on a host with **1 vCPU and 1 GB of memory**. Everything else the bot does is secondary and must be written so that it cannot disturb the stream. Code that runs cleanly on one core runs cleanly on any machine; the reverse isn't true.
 
-**Why it breaks easily.** `@discordjs/voice` sends one Opus packet every 20 ms from a timer on Node's main thread. Every command, button, autocomplete, database query (`node:sqlite` is synchronous), timer and log call runs on that same thread. While the thread is busy, packets wait, then leave in a burst. Discord's client then stretches the audio and speeds it up again, and a gap of about 55 ms or more is heard as a small cut. In a soak test on a 1-vCPU host, a single `/radio stats` delayed a packet by 47 ms.
+**Why it breaks easily.** `@discordjs/voice` sends one Opus packet every 20 ms from a timer on Node's main thread. Every command, button, autocomplete, database query (`node:sqlite` is synchronous), timer and log call runs on that same thread. While the thread is busy, packets wait, then leave in a burst. Discord's client then stretches the audio and speeds it up again, and a gap of about 55 ms or more is heard as a small cut. Measured on a one-core host, a single `/radio stats` delayed a packet by 47 ms.
 
 These are coding rules. A change that breaks one is a bug, even if the tests pass:
 

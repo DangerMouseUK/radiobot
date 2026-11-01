@@ -583,6 +583,10 @@ export class GuildSession {
     // Tears down the previous run, aborting its probes and requests. The new run's controller is
     // created afterwards: created first, the teardown would abort it and cancel every start.
     this.#teardownAudio();
+    // The source belongs to the run that chose it. If this run fails before choosing one, a
+    // failure must not be blamed on the last run's source (and fail over from it at once, again
+    // and again, if every start keeps failing the same way).
+    this.#source = null;
     const abort = new AbortController();
     this.#runAbort = abort;
     try {
@@ -658,6 +662,8 @@ export class GuildSession {
         };
       }
       this.#setState('PLAYING');
+      // Audio is flowing now; background checks wait until it has had time to settle.
+      this.#d.sources.holdBackground?.(this.#t.stableMs);
       this.#lastError = null;
       this.#voiceReconnectAttempts = 0;
       this.#persist('playing', { lastSuccessfulSourceId: source.id, lastErrorCode: null });
@@ -810,8 +816,7 @@ export class GuildSession {
     this.#failingRun = runId;
     const gen = this.#gen;
     if (this.#desired() !== 'playing' || this.#destroyed) return;
-    // A source left over from the previous station is not the one that failed.
-    const source = this.#source?.stationId === this.#stationId ? this.#source : null;
+    const source = this.#source;
     if (!source) {
       // The start failed before a source was chosen, so there is nothing to fail over from.
       // Starting again at once would repeat the same failure in a tight loop; wait instead.

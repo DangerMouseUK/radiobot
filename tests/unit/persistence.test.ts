@@ -341,6 +341,18 @@ describe('statement cache', () => {
     expect(prepare).toHaveBeenCalledTimes(3);
   });
 
+  it('keeps at most 500 statements', () => {
+    const db = new Db(':memory:');
+    const prepare = vi.spyOn(db.raw, 'prepare');
+    for (let i = 0; i < 501; i++) db.get(`SELECT ${i} AS n`);
+    expect(prepare).toHaveBeenCalledTimes(501);
+    // The 501st cleared the cache, so the first statement is compiled again.
+    db.get('SELECT 0 AS n');
+    expect(prepare).toHaveBeenCalledTimes(502);
+    db.get('SELECT 500 AS n');
+    expect(prepare).toHaveBeenCalledTimes(502);
+  });
+
   it('still sees schema changes made after a statement was cached', () => {
     const db = new Db(':memory:');
     db.raw.exec('CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1)');
@@ -395,6 +407,17 @@ describe('station and source cache', () => {
     guilds.updateSettings('111111111111111111', { idleMode: '24x7' });
     stations.listStations(null);
     expect(all).toHaveBeenCalledTimes(2); // other tables' writes don't matter
+    stations.pruneSourceHistory('s1', 5);
+    stations.insertSyncReport({
+      provider: 'mypack',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      finishedAt: '2026-01-01T00:00:01.000Z',
+      success: true,
+      trigger: 'manual',
+      summary: {},
+    });
+    stations.listAllSources();
+    expect(all).toHaveBeenCalledTimes(2); // nor do probe history and sync reports
     stations.recordFailure('s1', 'TIMEOUT');
     expect(stations.getSource('s1')?.consecutiveFailures).toBe(1);
     expect(stations.listSources('mypack:a')[0]?.consecutiveFailures).toBe(1);
@@ -413,6 +436,148 @@ describe('station and source cache', () => {
     ).toThrow('roll back');
     expect(stations.listStations(null)[0]?.displayName).toBe('Before');
     expect(stations.getStation('mypack:a')?.displayName).toBe('Before');
+  });
+
+  it('sees the result of every kind of station and source write', () => {
+    const custom = (id: string, displayName = id) => ({
+      id: `custom:${id}`,
+      guildId: '111111111111111111',
+      slug: id,
+      displayName,
+      description: null,
+      category: null,
+      websiteUrl: null,
+      language: null,
+      createdById: '222222222222222222',
+    });
+    type Repo = ReturnType<typeof memoryDb>['stations'];
+    const cases: Array<[string, (r: Repo) => void, (r: Repo) => unknown, unknown]> = [
+      [
+        'setSourceEnabled',
+        (r) => r.setSourceEnabled('s1', false, 'gone'),
+        (r) => r.getSource('s1')?.enabled,
+        false,
+      ],
+      [
+        'setIdentityOverride',
+        (r) => r.setIdentityOverride('s1', 'verified'),
+        (r) => r.getSource('s1')?.identityOverride,
+        'verified',
+      ],
+      [
+        'applyProbePatch',
+        (r) => r.applyProbePatch('s1', { codec: 'mp3' }),
+        (r) => r.listSources('mypack:a')[0]?.codec,
+        'mp3',
+      ],
+      [
+        'recordSuccess',
+        (r) => r.recordSuccess('s1', '2026-01-01T00:00:00.000Z'),
+        (r) => r.getSource('s1')?.lastSuccessAt,
+        '2026-01-01T00:00:00.000Z',
+      ],
+      [
+        'setCooldown',
+        (r) => r.setCooldown('s1', '2030-01-01T00:00:00.000Z'),
+        (r) => r.getSource('s1')?.cooldownUntil,
+        '2030-01-01T00:00:00.000Z',
+      ],
+      ['deleteSource', (r) => r.deleteSource('s1'), (r) => r.listAllSources().length, 0],
+      [
+        'upsertSeedSource (new URL)',
+        (r) => r.upsertSeedSource({ ...source('s1', 'mypack:a'), url: 'https://moved.example.com/' }),
+        (r) => r.getSource('s1')?.url,
+        'https://moved.example.com/',
+      ],
+      [
+        'restoreSource',
+        (r) => {
+          const row = r.snapshotSource('s1')!;
+          r.applyProbePatch('s1', { codec: 'aac' });
+          r.listAllSources();
+          r.restoreSource(row);
+        },
+        (r) => r.getSource('s1')?.codec,
+        null,
+      ],
+      [
+        'setCatalogueStatus',
+        (r) => r.setCatalogueStatus('mypack:a', 'retired'),
+        (r) => r.listStations(null).length,
+        0,
+      ],
+      [
+        'renameStation',
+        (r) => r.renameStation('mypack:a', 'Renamed', true),
+        (r) => r.getStation('mypack:a')?.aliases,
+        ['mypack:a'],
+      ],
+      [
+        'insertCustomStation',
+        (r) => r.insertCustomStation(custom('mine')),
+        (r) => r.listStations('111111111111111111').length,
+        2,
+      ],
+      [
+        'updateCustomStation',
+        (r) => {
+          r.insertCustomStation(custom('mine'));
+          r.listStations(null);
+          r.updateCustomStation('111111111111111111', 'custom:mine', { displayName: 'Changed' });
+        },
+        (r) => r.getStation('custom:mine')?.displayName,
+        'Changed',
+      ],
+      [
+        'deleteCustomStation',
+        (r) => {
+          r.insertCustomStation(custom('mine'));
+          r.listStations(null);
+          r.deleteCustomStation('111111111111111111', 'custom:mine');
+        },
+        (r) => r.getStation('custom:mine'),
+        null,
+      ],
+      [
+        'deleteGuildCustomStations',
+        (r) => {
+          r.insertCustomStation(custom('mine'));
+          r.listStations(null);
+          r.deleteGuildCustomStations('111111111111111111');
+        },
+        (r) => r.listStations('111111111111111111').length,
+        1,
+      ],
+    ];
+    for (const [name, write, read, expected] of cases) {
+      const { stations } = memoryDb();
+      stations.upsertProviderStation(station('mypack:a'));
+      stations.upsertSeedSource(source('s1', 'mypack:a'));
+      // Fill the cache first, so a write that skipped invalidation would leave old values.
+      stations.listStations(null);
+      stations.listAllSources();
+      write(stations);
+      expect(read(stations), name).toEqual(expected);
+    }
+  });
+
+  it('forgets a nested write that rolled back, and keeps the outer one', () => {
+    const { stations } = memoryDb();
+    stations.upsertProviderStation(station('mypack:a', 'Before'));
+    stations.transaction(() => {
+      stations.renameStation('mypack:a', 'Outer', false);
+      try {
+        stations.transaction(() => {
+          stations.renameStation('mypack:a', 'Inner', false);
+          expect(stations.getStation('mypack:a')?.displayName).toBe('Inner');
+          throw new Error('inner only');
+        });
+      } catch {
+        /* the outer transaction carries on */
+      }
+      expect(stations.listStations(null)[0]?.displayName).toBe('Outer');
+    });
+    expect(stations.getStation('mypack:a')?.displayName).toBe('Outer');
   });
 
   it('shares rows read-only, so one caller cannot change what another sees', () => {
@@ -441,5 +606,28 @@ describe('control panels at start-up', () => {
     const before = rows();
     guilds.guildsWithPanel();
     expect(rows()).toBe(before);
+  });
+});
+
+describe('transactions', () => {
+  it('rolls back and keeps working when a commit itself fails', () => {
+    const db = new Db(':memory:');
+    db.raw.exec(`CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (id INTEGER PRIMARY KEY,
+        parent_id INTEGER REFERENCES parent (id) DEFERRABLE INITIALLY DEFERRED);`);
+    const before = db.rollbacks;
+    // The foreign key is only checked at COMMIT, so the commit is what fails.
+    expect(() => db.transaction(() => db.run('INSERT INTO child (parent_id) VALUES (42)'))).toThrow(
+      /FOREIGN KEY/,
+    );
+    expect(db.rollbacks).toBe(before + 1);
+    expect(db.raw.isTransaction).toBe(false);
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM child')?.n).toBe(0);
+    // Later transactions, nested ones included, still work.
+    db.transaction(() => {
+      db.run('INSERT INTO parent (id) VALUES (1)');
+      db.transaction(() => db.run('INSERT INTO child (parent_id) VALUES (1)'));
+    });
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM child')?.n).toBe(1);
   });
 });

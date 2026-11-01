@@ -116,19 +116,38 @@ export class Db {
 
   /** Runs fn atomically; nested calls use savepoints. */
   transaction<T>(fn: () => T): T {
+    const outer = this.#txDepth === 0;
     const sp = `sp_${this.#txDepth}`;
-    this.raw.exec(this.#txDepth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${sp}`);
+    this.raw.exec(outer ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${sp}`);
     this.#txDepth++;
+    let result: T;
     try {
-      const result = fn();
-      this.#txDepth--;
-      this.raw.exec(this.#txDepth === 0 ? 'COMMIT' : `RELEASE ${sp}`);
-      return result;
+      result = fn();
     } catch (err) {
       this.#txDepth--;
-      this.raw.exec(this.#txDepth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
-      this.#rollbacks++;
+      this.#rollback(outer, sp);
       throw err;
+    }
+    this.#txDepth--;
+    try {
+      this.raw.exec(outer ? 'COMMIT' : `RELEASE ${sp}`);
+    } catch (err) {
+      // A commit can fail (a full disk, an I/O error, a deferred constraint). Undo the rest, so
+      // the connection isn't left inside an open transaction that every later write would join.
+      this.#rollback(outer, sp);
+      throw err;
+    }
+    return result;
+  }
+
+  #rollback(outer: boolean, sp: string): void {
+    // Counted first: readers that cached rows written inside the transaction must read again
+    // even if SQLite already rolled back by itself and the ROLLBACK below fails.
+    this.#rollbacks++;
+    try {
+      this.raw.exec(outer ? 'ROLLBACK' : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
+    } catch {
+      /* SQLite already rolled the transaction back */
     }
   }
 

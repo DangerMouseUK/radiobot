@@ -85,6 +85,17 @@ check "keeps older images when the new version fails" grep -q "radio-bot:v0.9.0 
 out=$(FAKE_PLAYING=1 finish)
 check "warns when an older copy of the script started the update" has "$out" "Radio Bot is playing in 1 server."
 check "removes older images once healthy" test "$(wc -l <"$T/state/images")" -eq 1
+echo "ghcr.io/dangermouseuk/radio-bot:<none> sha256:dangling" >>"$T/state/images"
+for i in 1 2 3 4 5 6; do touch -d "$i days ago" "$RADIO_BOT_DIR/logs/radio-bot-v0.$i.0-old.log"; done
+out=$(finish)
+check "removes a dangling image of the bot" test "$(wc -l <"$T/state/images")" -eq 1
+check "keeps only the newest 5 saved logs" test "$(find "$RADIO_BOT_DIR/logs" -name 'radio-bot-*.log' | wc -l)" -eq 5
+# shellcheck disable=SC2016
+check "keeps the log it just saved" bash -c 'ls -t "$1"/logs/radio-bot-*.log | head -n 1 | grep -qv -- -old.log' _ "$RADIO_BOT_DIR"
+chmod 000 "$RADIO_BOT_DIR/logs"
+out=$(finish)
+chmod 700 "$RADIO_BOT_DIR/logs"
+check "finishes the update even when the log can't be saved" has "$out" "Updated v1.0.0"
 echo "local edit" >>"$RADIO_BOT_DIR/README.md"
 out=$(radio-bot update 2>&1 | strip)
 check "refuses to update over edited files" has "$out" "were edited"

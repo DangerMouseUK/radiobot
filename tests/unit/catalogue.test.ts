@@ -435,4 +435,41 @@ describe('official list sync (FR-002)', () => {
     expect(r.added).toEqual(['Example Three']);
     expect(r.missing).toEqual(['Example Two']);
   });
+
+  it('accepts a renamed station only when one missing name is clearly the most similar', async () => {
+    const run = async (stationNames: string[], listed: string[]) => {
+      const { stations, meta } = memoryDb();
+      const root = tempRoot();
+      writePack(root, 'example', {
+        meta: { sync: { adapter: 'json-name-list', url: 'https://example.org/list.json' } },
+        stations: stationNames.map((displayName, i) => ({ slug: `s${i}`, displayName, order: i })),
+        sources: [],
+      });
+      const registry = PackRegistry.load(root, { enabled: new Set(), disabled: new Set(['fg']) });
+      seedPacks(stations, registry);
+      const http = {
+        fetchText: async () => ({
+          text: JSON.stringify(listed.map((name, id) => ({ id, name }))),
+          finalUrl: new URL('https://example.org'),
+          status: 200,
+          headers: {},
+        }),
+      };
+      const sync = new CatalogueSync(
+        stations,
+        meta,
+        http as unknown as SafeHttpClient,
+        registry,
+        silentLogger(),
+      );
+      return sync.sync('example', 'admin');
+    };
+    const renamed = await run(['Example One', 'Example Two'], ['Example One', 'Example Twoo']);
+    expect(renamed.renamed).toEqual([{ from: 'Example Two', to: 'Example Twoo' }]);
+    expect(renamed.added).toEqual([]);
+    // Two missing names are about as close as each other: no guess, the new name is added.
+    const unsure = await run(['Example One', 'Example Two', 'Example Twp'], ['Example One', 'Example Twq']);
+    expect(unsure.renamed).toEqual([]);
+    expect(unsure.added).toEqual(['Example Twq']);
+  });
 });

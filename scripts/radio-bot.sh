@@ -406,16 +406,24 @@ warn_if_playing() { # warn_if_playing [no-ask]; fails if the user decides not to
 }
 
 # The container's logs go when it is replaced, so the old version's last lines are kept in logs/.
+# Best effort: nothing here may stop an update halfway (the new version is already checked out).
 save_logs() { # save_logs VERSION
   [ "$(container_state)" != missing ] || return 0
-  local file
-  mkdir -p logs && chmod 700 logs
-  file="logs/radio-bot-${1:-old}-$(date +%Y%m%d-%H%M%S).log"
-  (umask 077 && compose logs --no-color --no-log-prefix --tail=500 "$SERVICE" >"$file" 2>&1) || true
+  local file version=${1:-old}
+  if ! { mkdir -p logs && chmod 700 logs; } 2>/dev/null; then
+    warn "Couldn't use $DIR/logs, so the old version's log wasn't saved."
+    return 0
+  fi
+  file="logs/radio-bot-${version//\//-}-$(date +%Y%m%d-%H%M%S).log"
+  if (umask 077 && compose logs --no-color --no-log-prefix --tail=500 "$SERVICE" >"$file" 2>/dev/null); then
+    ok "Saved the last 500 log lines to $DIR/$file"
+  else
+    rm -f "$file"
+    warn "Couldn't save the old version's log."
+  fi
   # Keep the newest 5. The names are ours and have no spaces, so ls is safe here.
   # shellcheck disable=SC2012
   ls -1t logs/radio-bot-*.log 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done || true
-  ok "Saved the last 500 log lines to $DIR/$file"
 }
 
 # Every update downloads a new image of about 1 GB, so older ones are removed once the new version
@@ -552,7 +560,7 @@ ${BOLD}radio-bot${RESET} — manage your Radio Bot install ($DIR)
   ${BOLD}invite${RESET}            Print the link that adds the bot to a Discord server
   ${BOLD}backup${RESET}            Back up the database and copy it to $DIR/backups/
   ${BOLD}restore${RESET} FILE      Replace the database with a backup
-  ${BOLD}update${RESET} [vX.Y.Z]   Update to the newest release (or the one named), backing up first
+  ${BOLD}update${RESET} [vX.Y.Z]   Update to the newest release (or the one named): backs up first, keeps the old log, removes old images
   ${BOLD}uninstall${RESET}         Remove the bot, optionally keeping a copy of its data
   ${BOLD}install${RESET}           Set up or repair this install (safe to run again)
   ${BOLD}version${RESET}           Print the installed version

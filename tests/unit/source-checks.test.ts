@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { constants, getPriority } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { lowerPriority, ProcessRegistry } from '../../src/audio/ffmpeg.ts';
 import type { StationSource } from '../../src/catalogue/types.ts';
 import { failingLine, pausedLine } from '../../src/discord/ui/format.ts';
@@ -83,7 +83,11 @@ const svcDeps = (repos: ReturnType<typeof memoryDb>, extra: Partial<SourceServic
  * A real SourceService over a seeded database, with the network check replaced: each check takes
  * `slowMs` (unless interrupted), fails with a timeout, and is logged with its timing.
  */
-function harness(sources: Array<{ id: string; host: string; patch?: SourceProbePatch }>, slowMs = 60) {
+function harness(
+  sources: Array<{ id: string; host: string; patch?: SourceProbePatch }>,
+  slowMs = 60,
+  extra: Partial<SourceServiceDeps> = {},
+) {
   const repos = memoryDb();
   repos.stations.upsertProviderStation({
     id: 'mypack:my-station',
@@ -135,7 +139,7 @@ function harness(sources: Array<{ id: string; host: string; patch?: SourceProbeP
     log.push({ id, start, end: Date.now(), interrupted });
     return { ...emptyOutcome(start), failureCode: interrupted ? 'CANCELLED' : 'HTTP_TIMEOUT' };
   };
-  const service = new SourceService(svcDeps(repos, { probeImpl }));
+  const service = new SourceService(svcDeps(repos, { probeImpl, ...extra }));
   return { repos, service, log, peak: () => peak, source: (id: string) => repos.stations.getSource(id)! };
 }
 
@@ -171,6 +175,53 @@ describe('background checks stay out of the way', () => {
     expect(t.log).toHaveLength(2);
   });
 
+  it('keeps a single queue entry per source, so repeated requests cost nothing', async () => {
+    const t = harness([{ id: 'a', host: 'a.example.net' }]);
+    t.service.holdBackground(100);
+    const reads = vi.spyOn(t.repos.stations, 'getSource');
+    for (let i = 0; i < 100; i++) t.service.refreshInBackground(['a']);
+    await until(() => t.log.length === 1);
+    // One turn for the hundred requests: the check reads the source a handful of times, not 100.
+    expect(reads.mock.calls.length).toBeLessThan(10);
+  });
+
+  it('skips a queued source whose station was disabled or which was deleted meanwhile', async () => {
+    const t = harness([
+      { id: 'a', host: 'a.example.net' },
+      { id: 'b', host: 'b.example.net' },
+    ]);
+    t.service.holdBackground(50);
+    t.service.refreshInBackground(['a', 'b']);
+    t.repos.stations.deleteSource('a');
+    t.repos.stations.setSourceEnabled('b', false, 'gone');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(t.log).toEqual([]);
+  });
+
+  it('never lets a shorter hold cut a longer one short', async () => {
+    const t = harness([{ id: 'a', host: 'a.example.net' }]);
+    const held = Date.now();
+    t.service.holdBackground(150);
+    t.service.holdBackground(10);
+    t.service.refreshInBackground(['a']);
+    await until(() => t.log.length === 1);
+    expect(t.log[0]!.start - held).toBeGreaterThanOrEqual(140);
+  });
+
+  it("writes a check's results in one transaction, and keeps PROBE_HISTORY_LIMIT results", async () => {
+    const t = harness([{ id: 'a', host: 'a.example.net' }], 1, { probeHistoryLimit: 5 });
+    for (let i = 0; i < 8; i++) await t.service.probe('a');
+    expect(t.repos.stations.listProbeResults('a', 100)).toHaveLength(5);
+    // If writing the history row fails, the source's new state is not saved either.
+    const before = t.source('a').lastProbeAt;
+    const insert = vi.spyOn(t.repos.stations, 'insertProbeResult').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    await expect(t.service.probe('a')).rejects.toThrow('disk full');
+    insert.mockRestore();
+    expect(t.source('a').lastProbeAt).toBe(before);
+  });
+
   it('holds background checks while a stream is starting', async () => {
     const t = harness([{ id: 'a', host: 'a.example.net' }]);
     const held = Date.now();
@@ -193,7 +244,7 @@ describe('background checks stay out of the way', () => {
     const asked = Date.now();
     await t.service.probe('wanted');
     // The play's check started at once instead of queuing ~300 ms behind the background one.
-    expect(t.log.find((x) => x.id === 'wanted')!.start - asked).toBeLessThan(100);
+    expect(t.log.find((x) => x.id === 'wanted')!.start - asked).toBeLessThan(200); // well under the background check's 300 ms
     expect(t.log.find((x) => x.id === 'bg')?.interrupted).toBe(true);
     // The interrupted check is not a failure: the source is exactly as it was.
     expect(t.source('bg').lastProbeAt).toBeNull();

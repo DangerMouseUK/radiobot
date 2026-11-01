@@ -49,7 +49,7 @@ Use a separate Discord application and a private test server for development. Ne
 
 ## Before opening a pull request
 
-- `pnpm typecheck`, `pnpm lint` and `pnpm test` all pass.
+- `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` succeeds. If you touched `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` pass too.
 - New behaviour has tests. Bug fixes have a test that failed before the fix.
 - If the change adds work to the bot's main thread, the description says what it costs and how you measured it (see [The stream comes first](#the-stream-comes-first)).
 - Documentation is updated where behaviour changed: `README.md`, `docs/` and `CHANGELOG.md` under *Unreleased*. The docs must describe what the code actually does.
@@ -63,13 +63,13 @@ This rule outranks every other rule and every feature. The live stream must play
 Voice packets go out every 20 ms from Node's main thread. That's the same thread that runs every command, button, autocomplete, database query (`node:sqlite` is synchronous) and log call. While it is busy, packets leave late, and a gap of about 55 ms or more is heard as a small cut. So, in any code that runs in the bot process:
 
 1. **Budget the main thread.** Keep each synchronous stretch of work under 10 ms on a 1-vCPU host; 20 ms or more is a bug. Batch, cache, page or cap anything that grows with the number of stations, sources, servers or stored history.
-2. **Move heavy work off it.** Run CPU-bound work in a child process at the lowest priority (`lowerPriority()` in `src/audio/ffmpeg.ts`), or split it into slices that yield to the event loop. Only the live encoder runs at normal priority.
+2. **Move heavy work off it.** Run CPU-bound work in a child process at the lowest priority (`lowerPriority()` in `src/audio/ffmpeg.ts`), or split it into slices that yield to the event loop. Only the live encoder runs at normal priority. While streams play, do no large synchronous file I/O, compression, hashing or JSON work on the main thread.
 3. **Background work yields.**
    - Run background jobs one at a time.
    - Don't start them during a stream's first 30 s.
    - Back off when they fail.
    - Let anything a listener is waiting for interrupt them.
-4. **Keep the audio path minimal.** Per-packet code is constant-time, with no logging, I/O or `await`. Add no buffering, no extra latency, no second encode and no processing.
+4. **Keep the audio path minimal.** Per-packet code is constant-time, with no logging, I/O, `await` or per-packet allocation of its own. Add no buffering, no extra latency, no second encode and no processing.
 5. **Bound memory.** Every cache, history and queue has a limit.
 6. **Measure, don't guess.** Say in the pull request what new main-thread work costs and how you measured it. On a running bot, the event-loop delay and the late-packet count in `/radio stats` show the effect.
 7. **Logging costs nothing when it's off.** Never log per packet, and guard costly debug entries with `logger.isLevelEnabled('debug')`.

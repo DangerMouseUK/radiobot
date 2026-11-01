@@ -46,7 +46,7 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 |---|---|---|
 | CPU | 1 core, 64-bit (x86-64 or ARM64, such as a Raspberry Pi 4 or 5) | 1–2 cores |
 | Memory | 512 MB | 1 GB |
-| Disk | 2 GB free (the Docker image, the database and backups) | 5 GB |
+| Disk | 3 GB free (the Docker image, about 1 GB, is briefly there twice during an update; plus the database and backups) | 5 GB |
 | Network | Outbound only, including UDP for Discord voice; no open ports | |
 | Bandwidth | Each playing server uses the station's bitrate in and about the same out: roughly 60–70 MB per hour each way at 128 kbps, and up to about 230 MB per hour out at the 510 kbps maximum | |
 
@@ -72,7 +72,7 @@ From then on, the `radio-bot` command looks after it:
 | Command | Does |
 |---|---|
 | `radio-bot status` · `radio-bot logs` | Version, health and available updates · the live log |
-| `radio-bot update` | Backs up the database, then updates to the newest release |
+| `radio-bot update` | Updates to the newest release: warns you first if the bot is playing, backs up the database, keeps the old version's last 500 log lines and removes old images |
 | `radio-bot backup` · `radio-bot restore <file>` | Copy the database out · put a copy back |
 | `radio-bot config` | Edit installation settings, then restart to apply them |
 | `radio-bot uninstall` | Remove it, optionally keeping a copy of your data |
@@ -242,7 +242,7 @@ Settings come from environment variables, usually through `.env`; [`.env.example
 | `MAX_CONCURRENT_PROBES` | `2` | Concurrent source probes across the installation (1–16). Probes to the same host always run one at a time. |
 | `MAX_CUSTOM_STATIONS_PER_GUILD` | `25` | Custom stations per server (0–500). `0` turns `/radio add` off. |
 | `ALLOW_INSECURE_HTTP_STREAMS` | `true` | Whether plain `http://` stream URLs are allowed, for custom stations and pack sources alike. |
-| `STREAM_USER_AGENT` | empty | User-Agent sent to stream hosts. Empty means FFmpeg's own, `Lavf/<version>`, taken from the installed FFmpeg (fallback `Lavf/61.7.100`). |
+| `STREAM_USER_AGENT` | empty | User-Agent sent to stream hosts (up to 300 characters). Empty means FFmpeg's own, `Lavf/<version>`, taken from the installed FFmpeg (fallback `Lavf/61.7.100`). |
 | `CATALOG_SYNC_ENABLED` | `true` | Scheduled sync of station names for each pack that declares an official list. Names and IDs only, never stream URLs. |
 | `CATALOG_SYNC_INTERVAL_HOURS` | `24` | Time between syncs, 6–720 hours, with up to 15 minutes of jitter. |
 | `EXTRA_PACKS_DIR` | empty | A directory of extra pack folders to load, for example `/app/data/packs` in Docker. |
@@ -293,7 +293,7 @@ Version **1.0.3** is the current release; 1.0.0 was the first public release. Li
 - **Encoding above the channel's bitrate setting:** in the live test the bot sent 128 kbps into a channel set to 96 kbps and it sounded right, but the bitrate a listener's client actually receives hasn't been measured.
 - **Resource use is measured for one stream only** (see [Requirements](#requirements)): about 8% of one CPU core and about 200 MB of memory at 128 kbps. Several streams at once, long runs, and a Raspberry Pi haven't been measured yet.
 - **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
-- **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker, and were exercised on Ubuntu 24.04 (WSL). On 1 November 2026, `radio-bot update` took a real Docker install on a 1-vCPU cloud server from 1.0.1 to 1.0.3 (backup first, healthy straight away, settings kept); that run found the old-image clean-up bug fixed in 1.0.4. A fresh install hasn't yet been run against real Docker on a Linux server, a Raspberry Pi, macOS or Windows.
+- **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker, and were exercised on Ubuntu 24.04 (WSL). `radio-bot update` has also taken a real Docker install from 1.0.1 to 1.0.3 (backup first, healthy straight away, settings kept); that run found the old-image clean-up bug fixed in the next release. A fresh install hasn't yet been run against real Docker on a Linux server, a Raspberry Pi, macOS or Windows.
 - **Rights:** no permission has been requested from or granted by any broadcaster. If you operate an instance, that is your responsibility; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
 ## Development

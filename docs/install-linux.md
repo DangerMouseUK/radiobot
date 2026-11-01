@@ -77,7 +77,7 @@ Back up `/var/lib/radio-bot/` like any other application data. Nothing is writte
 
 ```bash
 cd /opt/radio-bot
-sudo git fetch --tags && sudo git checkout v1.0.1   # the release you want
+sudo git fetch --tags && sudo git checkout vX.Y.Z   # the release you want
 sudo pnpm install --frozen-lockfile --ignore-scripts
 sudo pnpm run build
 sudo pnpm prune --prod --ignore-scripts

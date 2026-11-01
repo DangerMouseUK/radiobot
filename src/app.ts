@@ -14,6 +14,7 @@ import { checkFfmpeg, ProcessRegistry } from './audio/ffmpeg.ts';
 import { CustomStationService } from './catalogue/custom-provider.ts';
 import { PackRegistry, seedPacks } from './catalogue/packs.ts';
 import { CatalogueSync } from './catalogue/sync.ts';
+import { scheduleCatalogueSyncs } from './catalogue/sync-schedule.ts';
 import type { AppConfig } from './config/env.ts';
 import { ComponentIds } from './discord/components/custom-id.ts';
 import { type AppContext, isVisible, RateLimits } from './discord/context.ts';
@@ -192,8 +193,6 @@ export function createApp(
   // The session keeps its voice connection open until the clear finishes (bounded).
   sessions.setLeaveHook((guildId, channelId) => voiceStatus.clear(guildId, channelId));
   const timers: NodeJS.Timeout[] = [];
-  /** The next scheduled sync of each pack; replaced on every run, so nothing piles up. */
-  const syncTimers = new Map<string, NodeJS.Timeout>();
   let stopping = false;
   let diagnostics: Server | null = null;
   const hbPath = heartbeatPath(config.databasePath);
@@ -220,29 +219,15 @@ export function createApp(
     }
   };
 
+  let syncSchedule: { stop(): void } | null = null;
   const scheduleSync = () => {
     if (!config.catalogSyncEnabled) return;
-    const interval = config.catalogSyncIntervalHours * 3_600_000;
-    // One independent, jittered schedule per pack that declares an official list.
-    for (const pack of catalogueSync.syncablePacks()) {
-      const packId = pack.meta.id;
-      const last = catalogueSync.lastSync(packId).at;
-      const due = last ? Math.max(0, Date.parse(last) + interval - Date.now()) : 10 * 60_000;
-      const jitter = Math.round(Math.random() * 15 * 60_000);
-      const schedule = (ms: number) => {
-        if (stopping) return;
-        const t = setTimeout(async () => {
-          try {
-            await catalogueSync.sync(packId, 'scheduled');
-          } finally {
-            schedule(interval + Math.round(Math.random() * 15 * 60_000));
-          }
-        }, ms);
-        t.unref?.();
-        syncTimers.set(packId, t);
-      };
-      schedule(Math.max(due, 60_000) + jitter);
-    }
+    syncSchedule = scheduleCatalogueSyncs({
+      packIds: catalogueSync.syncablePacks().map((p) => p.meta.id),
+      intervalMs: config.catalogSyncIntervalHours * 3_600_000,
+      lastSync: (packId) => catalogueSync.lastSync(packId).at,
+      sync: (packId) => catalogueSync.sync(packId, 'scheduled'),
+    });
   };
 
   async function start(): Promise<void> {
@@ -370,7 +355,7 @@ export function createApp(
     logger.info({ reason }, 'shutting down');
     stopping = true;
     for (const t of timers) clearTimeout(t);
-    for (const t of syncTimers.values()) clearTimeout(t);
+    syncSchedule?.stop();
     // Clear channel statuses while the bot is still connected (bounded, so shutdown never hangs).
     await Promise.race([voiceStatus.clearAll(), new Promise((r) => setTimeout(r, 2_000))]);
     ctx.eventLoop.stop();

@@ -241,7 +241,11 @@ export class StationRepository {
     sourcesByStation: Map<string, readonly StationSource[]>;
   } | null = null;
 
-  /** Bumped by every write to the station tables, which only this repository writes. */
+  /**
+   * Bumped by every write to the stations and station_sources tables, which only this repository
+   * writes. Writes to tables the cache doesn't hold (probe history, sync reports) use the database
+   * directly, so a background check doesn't make the next suggestion re-read the catalogue.
+   */
   #writes = 0;
 
   #write(sql: string, params: Params = []): { changes: number; lastInsertRowid: number } {
@@ -563,7 +567,7 @@ export class StationRepository {
     if (existing.url !== seed.url || existing.stationId !== seed.stationId) {
       if (existing.stationId !== seed.stationId) {
         // A server's pin to this source belonged to the old station.
-        this.#write(
+        this.#db.run(
           'DELETE FROM guild_source_preferences WHERE preferred_source_id = ? AND station_id <> ?',
           [seed.id, seed.stationId],
         );
@@ -716,7 +720,7 @@ export class StationRepository {
   // ---- probe results ----
 
   insertProbeResult(p: ProbeResultRecord): number {
-    return this.#write(
+    return this.#db.run(
       `INSERT INTO source_probe_results (source_id, started_at, duration_ms, kind, effective_url_host, transport,
          container, codec, profile, sample_rate_hz, channels, bitrate_estimate, bitrate_evidence, startup_ms,
          headers_summary_json, manifest_summary_json, identity_evidence_json, success, failure_code,
@@ -785,7 +789,7 @@ export class StationRepository {
   /** Bounds probe history (PRD §11.2): keep the newest `keep` rows per source and nothing older than `days`. */
   pruneProbeResults(keep: number, days: number): number {
     const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
-    const byAge = this.#write('DELETE FROM source_probe_results WHERE started_at < ?', [cutoff]).changes;
+    const byAge = this.#db.run('DELETE FROM source_probe_results WHERE started_at < ?', [cutoff]).changes;
     // Each new result already trims its own source, so this rarely finds anything. It reads the
     // index, not the rows: a window function over the whole table cost milliseconds every hour.
     let byCount = 0;
@@ -799,7 +803,7 @@ export class StationRepository {
 
   /** Keeps the newest `keep` results of one source, through the per-source index. */
   pruneSourceHistory(sourceId: string, keep: number): number {
-    return this.#write(
+    return this.#db.run(
       `DELETE FROM source_probe_results WHERE source_id = ? AND id NOT IN (
          SELECT id FROM source_probe_results WHERE source_id = ? ORDER BY started_at DESC, id DESC LIMIT ?
        )`,
@@ -817,13 +821,13 @@ export class StationRepository {
     trigger: string;
     summary: unknown;
   }): void {
-    this.#write(
+    this.#db.run(
       `INSERT INTO catalogue_sync_reports (provider, started_at, finished_at, success, trigger, summary_json)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [r.provider, r.startedAt, r.finishedAt, r.success ? 1 : 0, r.trigger, JSON.stringify(r.summary)],
     );
     // Kept per pack, so frequent syncs of one pack never evict another pack's history.
-    this.#write(
+    this.#db.run(
       `DELETE FROM catalogue_sync_reports WHERE provider = ? AND id NOT IN (
          SELECT id FROM catalogue_sync_reports WHERE provider = ? ORDER BY id DESC LIMIT 50)`,
       [r.provider, r.provider],
