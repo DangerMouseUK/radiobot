@@ -157,6 +157,7 @@ The README's "Project status" section lists what has **not** been verified, such
 ## Safety and secrets
 
 - Never commit `.env`, tokens, real Discord IDs, or signed or tokenised stream URLs. Logs and errors pass through redaction (`src/shared/redact.ts`, the logger's redact paths); keep new fields that could hold secrets or URLs covered.
+- CI runs gitleaks on every push and pull request and over the whole history weekly. `.gitleaks.toml` keeps every default rule and allowlists only the fake values used in docs and tests (`replace-with-your-…` placeholders, `123456789012345678`-style and repeated-digit IDs). Use those fakes in new docs and tests; never widen the allowlist to make a real-looking value pass.
 - Use a separate Discord application and a private test server for any live testing.
 - Don't commit, push, tag or publish images unless the maintainer asks.
 - A release tag `vX.Y.Z` must equal `package.json`'s `version` and the default image tag in `compose.yaml`; the release workflow refuses otherwise, and `radio-bot update` relies on that match to pull the right image.

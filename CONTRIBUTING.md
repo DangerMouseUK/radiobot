@@ -50,7 +50,7 @@ Use a separate Discord application and a private test server for development. Ne
 - New behaviour has tests. Bug fixes have a test that failed before the fix.
 - Documentation is updated where behaviour changed: `README.md`, `docs/` and `CHANGELOG.md` under *Unreleased*. The docs must describe what the code actually does.
 - Commits and pull request descriptions explain *why*, not just *what*.
-- There are no secrets anywhere: no tokens, no `.env`, no signed or tokenised stream URLs, and no real user, server or channel IDs in fixtures.
+- There are no secrets anywhere: no tokens, no `.env`, no signed or tokenised stream URLs, and no real user, server or channel IDs in fixtures. For IDs, use the fakes the secret scanner already allows (`123456789012345678`, `223456789012345678`, `111111111111111111` and so on; see `.gitleaks.toml`).
 
 ## Rules for particular areas
 

@@ -10,15 +10,15 @@
 Stations come from **station packs**: folders of plain JSON you can review, add to or switch off without touching the code. Before the bot trusts a stream, it probes it, checks that it really is the station it claims to be, and explains its choice. Audio reaches Discord through **one** Opus encode at the station's own bitrate, with no second encode and no processing.
 
 > [!IMPORTANT]
-> **Unofficial.** Radio Bot is an independent open-source project. It is **not affiliated with, endorsed by or sponsored by Radio FG, Maison FG or any other broadcaster**. The bundled starter pack refers to the Radio FG / Maison FG webradios by station name only, so that people can find them; those names, the audio and any artwork belong to their owners. The MIT licence covers this project's original code only. Read [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md) before running an instance for anyone other than yourself.
+> **Unofficial.** Radio Bot is an independent open-source project. It is **not affiliated with, endorsed by or sponsored by any broadcaster**. Station packs refer to stations by name only, so that people can find them; those names, the audio and any artwork belong to their owners. The MIT licence covers this project's original code only. Read [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md) before running an instance for anyone other than yourself.
 
 ## Highlights
 
-- **Station packs.** Drop a folder of three JSON files into `catalog/packs/` or your own `EXTRA_PACKS_DIR` and its stations appear. One environment variable switches whole packs on or off. A starter pack of 63 Radio FG / Maison FG webradios is included.
+- **Station packs.** Drop a folder of three JSON files into `catalog/packs/` or your own `EXTRA_PACKS_DIR` and its stations appear. One environment variable switches whole packs on or off.
 - **Evidence before bitrate.** Every candidate stream is probed with `ffprobe` and a decode check, and its identity is checked against its provenance, its stream metadata and, optionally, an audio comparison. The bot plays the *correct* station first and the best-sounding source second, and `/radio sources` tells you why it chose what it did.
 - **One encode, at the station's own quality.** FFmpeg decodes once and encodes once with `libopus` at the source's bitrate, up to 510 kbps (48 kHz stereo, music mode). A 320 kbps station goes out at 320 kbps, and a 128 kbps one isn't padded out to waste bandwidth. `@discordjs/voice` only demuxes the result. There is no normalisation, EQ or limiting, and the voice channel's bitrate setting is not used as a cap.
 - **Automatic recovery.** A watchdog spots stalls and retries with backoff. If that fails, the bot switches to another verified source and puts sources that keep failing into a cooldown. It also rebuilds lost voice connections and catches up with the live stream when it falls behind.
-- **Now playing.** The current song or show title, when the stream sends one, appears in `/radio now` and on the control panel. The bot's own Discord status shows it too: "Listening to FG DJ RADIO · Artist - Title".
+- **Now playing.** The current song or show title, when the stream sends one, appears in `/radio now` and on the control panel. The bot's own Discord status shows it too: "Listening to Station Name · Artist - Title".
 - **Queue and skip.** Line up stations with `/radio queue` and move on with `/radio skip` or the **Skip** button.
 - **Private live stats.** `/radio stats` shows administrators the input and output bitrate, the redirect host and region, and ping and jitter to both the stream server and Discord's voice server. Only they can see the message, and they can dismiss it.
 - **Secure by default.** The bot asks for the minimum Discord permissions and no privileged intents. All stream traffic goes through an SSRF-safe HTTP client, and FFmpeg reads only from stdin. Every button and command is authorised on the server side each time it is used. There is no telemetry.
@@ -52,7 +52,7 @@ You need a computer that stays on (Linux, a Raspberry Pi 4/5, a cloud server, or
 
    It downloads the newest release into `~/radio-bot`, sets up Docker if needed (on Linux, with your permission), asks for your Application ID and token, starts the bot, and waits until it is online. If you'd rather read the script before running it, this does the same thing: `git clone https://github.com/DangerMouseUK/radiobot.git ~/radio-bot && bash ~/radio-bot/scripts/radio-bot.sh install`.
 3. **Invite the bot** with the link the installer prints (or `radio-bot invite`).
-4. **In your server,** join a voice channel and run `/radio play station:FG DJ RADIO`. Admins can run `/radio config` to choose channels and DJ roles.
+4. **In your server,** join a voice channel and run `/radio play` and pick a station from the list. Admins can run `/radio config` to choose channels and DJ roles.
 
 From then on, the `radio-bot` command looks after it:
 
@@ -189,13 +189,11 @@ A station pack is a folder containing:
 | `stations.json` | The stations: names, aliases, tags and category |
 | `sources.json` | Candidate stream URLs for each station, each with its provenance |
 
-Station IDs look like `<pack-id>:<slug>`, for example `fg:fg-dj-radio`, and they are permanent.
+Station IDs look like `<pack-id>:<slug>`, for example `mypack:my-station`, and they are permanent.
 
 The bot loads every pack in `catalog/packs/` and in `EXTRA_PACKS_DIR`. A pack is switched on unless its `enabledByDefault` is `false`. `ENABLED_PACKS` switches on packs that are off by default, and `DISABLED_PACKS` switches any pack off. A pack that fails validation stops start-up with a message naming the file and field.
 
-| Pack | ID | Stations | Sources | Notes |
-|---|---|---|---|---|
-| Radio FG / Maison FG (unofficial starter pack) | `fg` | 63 | 126 | Official-list sync through the `radiofg-apidata` adapter. Provenance is in [SOURCE_PROVENANCE.md](catalog/packs/fg/SOURCE_PROVENANCE.md). |
+Each bundled pack's folder includes a `SOURCE_PROVENANCE.md` recording where every stream address came from.
 
 To write a pack, follow [catalog/README.md](catalog/README.md), then check it:
 
@@ -223,7 +221,7 @@ Settings come from environment variables, usually through `.env`; [`.env.example
 | `MAX_OPUS_BITRATE_KBPS` | `510` | Highest Opus bitrate, 32–510. `maximum` matches each source's own bitrate up to it (and uses it when the source's bitrate is unknown). Lower it to save CPU and upload bandwidth. |
 | `DEFAULT_IDLE_MODE` | `leave_when_empty` | Starting idle mode for new servers: `24x7`, `pause_when_empty` or `leave_when_empty`. |
 | `AUTO_RESUME_DEFAULT` | `false` | Starting "resume after restart" setting for new servers. |
-| `PRESENCE_MODE` | `track` | The bot's own Discord status while it plays: `track` ("Listening to FG DJ RADIO · Artist - Title"), `station` (station name only) or `off`. A bot has one status for every server, so when several servers play different stations it shows "Listening to radio in 3 servers". Custom stations are private to their server and are never named. |
+| `PRESENCE_MODE` | `track` | The bot's own Discord status while it plays: `track` ("Listening to Station Name · Artist - Title"), `station` (station name only) or `off`. A bot has one status for every server, so when several servers play different stations it shows "Listening to radio in 3 servers". Custom stations are private to their server and are never named. |
 | `MAX_ACTIVE_GUILD_STREAMS` | `3` | How many servers can stream at once on this installation (1–1000). |
 | `MAX_CONCURRENT_PROBES` | `2` | Concurrent source probes across the installation (1–16). Probes to the same host always run one at a time. |
 | `MAX_CUSTOM_STATIONS_PER_GUILD` | `25` | Custom stations per server (0–500). `0` turns `/radio add` off. |
@@ -233,8 +231,8 @@ Settings come from environment variables, usually through `.env`; [`.env.example
 | `CATALOG_SYNC_INTERVAL_HOURS` | `24` | Time between syncs, 6–720 hours, with up to 15 minutes of jitter. |
 | `EXTRA_PACKS_DIR` | empty | A directory of extra pack folders to load, for example `/app/data/packs` in Docker. |
 | `ENABLED_PACKS` | empty | Pack IDs to switch on when their `enabledByDefault` is `false`. |
-| `DISABLED_PACKS` | empty | Pack IDs to switch off, such as `fg`. Their stations are hidden and not synced. |
-| `DISABLED_STATION_IDS` | empty | Station IDs to take down, such as `fg:fg-hi-ibiza`. They show as Temporarily unavailable. |
+| `DISABLED_PACKS` | empty | Pack IDs to switch off, such as `mypack`. Their stations are hidden and not synced. |
+| `DISABLED_STATION_IDS` | empty | Station IDs to take down, such as `mypack:my-station`. They show as Temporarily unavailable. |
 | `DISABLED_SOURCE_IDS` | empty | Source IDs to take down, for takedown requests or broken feeds. |
 | `OPERATOR_USER_IDS` | empty | Discord user IDs, separated by commas or spaces, allowed to record identity reviews for pack sources. The application owner (or its team) is always allowed. |
 | `PROBE_HISTORY_LIMIT` | `30` | Probe results kept per source (1–1000). |
@@ -260,7 +258,7 @@ The module map and data flow are in [docs/architecture.md](docs/architecture.md)
 
 ## What it cannot do
 
-- **Add fidelity the source doesn't have.** Most of the starter pack's streams are 128 kbps MP3 or AAC. Encoding at the source's bitrate keeps the one extra lossy step small, and no higher target could restore what the station's own encoder removed. The bot never claims "HD" or "lossless" audio.
+- **Add fidelity the source doesn't have.** Many internet radio streams are 128 kbps MP3 or AAC. Encoding at the source's bitrate keeps the one extra lossy step small, and no higher target could restore what the station's own encoder removed. The bot never claims "HD" or "lossless" audio.
 - **Promise what listeners hear.** A voice channel's bitrate setting is 96 kbps on an unboosted server and up to 384 kbps with boosts. The bot encodes above that setting, but what each listener's client receives hasn't been measured; see [Project status](#project-status).
 - **Record.** Nothing is saved to disk. Audio exists only in a short playback buffer and, during a probe, a few seconds in memory. The bot is self-deafened and never receives voice audio.
 - **Play anything that isn't live radio.** There's no music search, YouTube or Spotify. Song and show titles appear only when the stream sends them (ICY `StreamTitle`, so not for HLS sources), and they are labelled as stream metadata.
@@ -271,11 +269,11 @@ The module map and data flow are in [docs/architecture.md](docs/architecture.md)
 
 Version **1.0.0** is the first public release. Lint, the strict typecheck and the full unit and integration suite pass, and CI runs them on every push and pull request. The integration tests run against a local fixture radio server with synthetic audio, never real stations or Discord. The following have **not** been verified yet, and are listed here so you can judge for yourself:
 
-- **Only one live Discord test so far.** On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played FG DJ RADIO in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Not yet tested on a live call: the owner, DJ and member permission scenarios, station switching, and kick, move and channel-delete handling.
+- **Only one live Discord test so far.** On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played a bundled station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Not yet tested on a live call: the owner, DJ and member permission scenarios, station switching, and kick, move and channel-delete handling.
 - **No 72-hour soak test** has been run, so long-run memory growth and FFmpeg process clean-up over days are unmeasured.
-- **Starter pack coverage is partial.** On 31 October 2026, live probes confirmed 3 of the 63 stations (FG DJ RADIO, FG CHIC and FG DANCE): direct MP3 and AAC-LC, and HLS AAC-LC, all at 128 kbps, 44.1 kHz stereo. The other 60 use the same host and URL pattern but haven't been probed. One HLS address timed out, and one station's direct mount (FG HÏ IBIZA) refuses access and is disabled. The evidence is in [`catalog/packs/fg/evidence/`](catalog/packs/fg/evidence/).
-- **End-to-end pipeline, without Discord:** FG DJ RADIO ran through the safe client, one libopus encode and `@discordjs/voice` at about 486 kbps Opus against the 510 kbps target, with one encoder process and nothing left running afterwards. The stream-side stats were checked live: the redirect to a regional server, 128 kbps in, and the TCP round trip and jitter were all reported.
-- **"Identity verified" mostly rests on provenance** (the official player maps the stream to the station) plus a successful probe. Audio comparison has confirmed FG DJ RADIO and FG DANCE; other stations haven't been compared or checked by listening. `/radio rescan compare:true` and `/radio source verify` exist to strengthen this.
+- **Bundled stations are only partly probed.** On 31 October 2026, live probes confirmed 3 of the 63 bundled stations: direct MP3 and AAC-LC, and HLS AAC-LC, all at 128 kbps, 44.1 kHz stereo. The other 60 use the same host and URL pattern but haven't been probed. One HLS address timed out, and one station's direct stream refuses access and is disabled. The probe evidence is kept in the pack's `evidence/` folder.
+- **End-to-end pipeline, without Discord:** a bundled station ran through the safe client, one libopus encode and `@discordjs/voice` at about 486 kbps Opus against the 510 kbps target, with one encoder process and nothing left running afterwards. The stream-side stats were checked live: the redirect to a regional server, 128 kbps in, and the TCP round trip and jitter were all reported.
+- **"Identity verified" mostly rests on provenance** (the official player maps the stream to the station) plus a successful probe. Audio comparison has confirmed two stations; the others haven't been compared or checked by listening. `/radio rescan compare:true` and `/radio source verify` exist to strengthen this.
 - **Encoding above the channel's bitrate setting:** in the live test the bot sent 128 kbps into a channel set to 96 kbps and it sounded right, but the bitrate a listener's client actually receives hasn't been measured.
 - **Not measured yet:** CPU, memory and bandwidth on real hosting. Upload follows the station's bitrate, up to 510 kbps (about four times a 128 kbps station).
 - **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
@@ -313,7 +311,6 @@ Use a separate Discord application and a private test server for development, ne
 | [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md) | Unofficial status, rights, takedown and privacy |
 | [docs/PRD.md](docs/PRD.md) | Product requirements, as built |
 | [catalog/README.md](catalog/README.md) | Station pack authoring guide |
-| [catalog/packs/fg/SOURCE_PROVENANCE.md](catalog/packs/fg/SOURCE_PROVENANCE.md) | Where every starter-pack source came from |
 | [CHANGELOG.md](CHANGELOG.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Project policies |
 
 ## Licence
