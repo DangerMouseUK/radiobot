@@ -1,0 +1,499 @@
+import type { APIEmbed, EmbedBuilder } from 'discord.js';
+import { describe, expect, it } from 'vitest';
+import { planEncoder } from '../../src/audio/encoder.ts';
+import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
+import { PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
+import type { Station, StationSource } from '../../src/catalogue/types.ts';
+import { loadConfig } from '../../src/config/env.ts';
+import { ComponentIds } from '../../src/discord/components/custom-id.ts';
+import type { AppContext } from '../../src/discord/context.ts';
+import {
+  availabilityBadge,
+  DISCLAIMER,
+  errorEmbed,
+  identityLine,
+  infoEmbed,
+  nowEmbed,
+  outputLine,
+  qualityEmbed,
+  sourceFormat,
+  sourcesEmbed,
+  stationLine,
+  transportLabel,
+} from '../../src/discord/ui/format.ts';
+import {
+  ambiguityView,
+  browseView,
+  configView,
+  controlRows,
+  listArg,
+  listView,
+  parseListArg,
+  type View,
+} from '../../src/discord/ui/views.ts';
+import { Metrics } from '../../src/observability/metrics.ts';
+import { selectSource } from '../../src/streams/ranking.ts';
+import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
+import { SourceService } from '../../src/streams/source-service.ts';
+import { UrlPolicy } from '../../src/streams/url-policy.ts';
+import type { SessionStatus } from '../../src/voice/session.ts';
+import { makeSource, memoryDb, silentLogger } from '../helpers.ts';
+
+const GUILD = '123456789012345678';
+
+/** Discord's own embed limits. */
+function embedSize(e: EmbedBuilder): number {
+  const j: APIEmbed = e.toJSON();
+  expect((j.title ?? '').length).toBeLessThanOrEqual(256);
+  expect((j.description ?? '').length).toBeLessThanOrEqual(4096);
+  expect((j.footer?.text ?? '').length).toBeLessThanOrEqual(2048);
+  expect((j.fields ?? []).length).toBeLessThanOrEqual(25);
+  for (const f of j.fields ?? []) {
+    expect(f.name.length).toBeLessThanOrEqual(256);
+    expect(f.value.length).toBeLessThanOrEqual(1024);
+  }
+  return (
+    (j.title ?? '').length +
+    (j.description ?? '').length +
+    (j.footer?.text ?? '').length +
+    (j.fields ?? []).reduce((n, f) => n + f.name.length + f.value.length, 0)
+  );
+}
+
+/** Message component limits: ≤5 rows, ≤5 buttons or 1 select per row, ids ≤100 chars. */
+function checkComponents(view: Pick<View, 'components'>): Array<Record<string, unknown>> {
+  expect(view.components.length).toBeLessThanOrEqual(5);
+  const all: Array<Record<string, unknown>> = [];
+  for (const row of view.components) {
+    const comps = row.toJSON().components as unknown as Array<Record<string, unknown>>;
+    expect(comps.length).toBeGreaterThan(0);
+    expect(comps.length).toBeLessThanOrEqual(5);
+    if (comps.some((c) => c.type !== 2)) expect(comps).toHaveLength(1);
+    for (const c of comps) {
+      expect(String(c.custom_id).length).toBeLessThanOrEqual(100);
+      if (Array.isArray(c.options)) expect(c.options.length).toBeLessThanOrEqual(25);
+    }
+    all.push(...comps);
+  }
+  return all;
+}
+
+function context(opts: { stale?: boolean; now?: () => number } = {}) {
+  const repos = memoryDb();
+  const packs = PackRegistry.load(null);
+  seedPacks(repos.stations, packs);
+  const sources = new SourceService({
+    stations: repos.stations,
+    guilds: repos.guilds,
+    client: new SafeHttpClient(new UrlPolicy({ allowInsecureHttp: true })),
+    registry: new ProcessRegistry(),
+    ffmpegPath: 'ffmpeg',
+    ffprobePath: 'ffprobe',
+    maxConcurrentProbes: 1,
+    logger: silentLogger(),
+    metrics: new Metrics(),
+  });
+  const ids = new ComponentIds('test-secret', opts.now);
+  const ctx = {
+    config: loadConfig({ DISCORD_TOKEN: 'x'.repeat(30), DISCORD_APPLICATION_ID: GUILD }),
+    stations: repos.stations,
+    guilds: repos.guilds,
+    packs,
+    sources,
+    ids,
+    sessions: { get: () => null },
+    catalogueSync: {
+      lastSync: () => ({ at: '2026-10-30T00:00:00.000Z', ok: true }),
+      isStale: () => opts.stale ?? false,
+    },
+  } as unknown as AppContext;
+  return { ctx, ids, ...repos };
+}
+
+const parseAll = (ids: ComponentIds, comps: Array<Record<string, unknown>>) =>
+  comps.map((c) => ids.parse(GUILD, String(c.custom_id)));
+
+describe('list arguments for paging buttons', () => {
+  it.each([
+    ['packs', 'fg', 0],
+    ['packs', null, 3],
+    ['custom', null, 1],
+    ['favourites', null, 0],
+    ['packs', 'my-pack', -1],
+  ] as const)('round-trips %s / %s / page %i', (scope, pack, page) => {
+    expect(parseListArg(listArg(scope, pack, page))).toEqual({ scope, pack, page });
+  });
+
+  it('falls back to the first page of all packs for unknown input', () => {
+    expect(parseListArg('')).toEqual({ scope: 'packs', pack: null, page: 0 });
+    expect(parseListArg('bogus_x:pz')).toEqual({ scope: 'packs', pack: 'x', page: 0 });
+  });
+
+  it('fits through a signed component id', () => {
+    const ids = new ComponentIds('s');
+    const arg = listArg('packs', 'a'.repeat(32), 49);
+    const parsed = ids.parse(GUILD, ids.make(GUILD, 'list', arg));
+    expect(parsed).toMatchObject({ action: 'list', arg });
+  });
+});
+
+describe('control buttons', () => {
+  it('offers playback buttons, with skip only when something is queued', () => {
+    const { ctx, ids } = context();
+    const rows = controlRows(ctx, GUILD, null);
+    const comps = checkComponents({ components: rows });
+    expect(parseAll(ids, comps).map((p) => p && 'action' in p && p.action)).toEqual([
+      'prev',
+      'next',
+      'stop',
+      'leave',
+      'now',
+    ]);
+  });
+
+  it('adds station buttons carrying the station id, and a queue-aware skip', () => {
+    const { ctx, ids, guilds } = context();
+    guilds.enqueue(GUILD, 'fg:fg-chic', null);
+    guilds.enqueue(GUILD, 'fg:fg-dance', null);
+    guilds.toggleFavourite(GUILD, 'fg:fg-dj-radio');
+    const rows = controlRows(ctx, GUILD, 'fg:fg-dj-radio');
+    const comps = checkComponents({ components: rows });
+    expect(comps.map((c) => c.label)).toContain('Skip (2 queued)');
+    expect(comps.map((c) => c.label)).toContain('Unfavourite');
+    const parsed = parseAll(ids, comps).filter((p) => p && 'action' in p && p.arg);
+    expect(parsed.map((p) => p && 'action' in p && [p.action, p.arg])).toEqual([
+      ['fav', 'fg:fg-dj-radio'],
+      ['srcs', 'fg:fg-dj-radio'],
+      ['insp', 'fg:fg-dj-radio'],
+    ]);
+  });
+
+  it('builds persistent panel buttons that never expire, and expiring ones otherwise', () => {
+    let now = 1_800_000_000_000;
+    const { ctx, ids } = context({ now: () => now });
+    const panel = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic', true) });
+    const temporary = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic') });
+    expect(panel).toHaveLength(10);
+    expect(panel.map((c) => c.label)).toEqual(expect.arrayContaining(['Skip (queue)', 'Browse stations']));
+    now += 16 * 60_000;
+    expect(parseAll(ids, panel).every((p) => p && !p.expired)).toBe(true);
+    expect(parseAll(ids, temporary).every((p) => p?.expired)).toBe(true);
+  });
+});
+
+describe('browse and list views', () => {
+  it('pages the catalogue 25 stations at a time with a matching picker', () => {
+    const { ctx, ids } = context();
+    const first = browseView(ctx, GUILD, { pack: null, category: null, search: null }, 'tok123', 0);
+    const comps = checkComponents(first);
+    const select = comps.find((c) => c.type === 3)!;
+    expect((select.options as unknown[]).length).toBe(25);
+    const [prev, next] = comps.filter((c) => c.type === 2);
+    expect(prev!.disabled).toBe(true);
+    expect(next!.disabled).toBe(false);
+    expect(ids.parse(GUILD, String(next!.custom_id))).toMatchObject({ action: 'browse', arg: 'tok123:p1' });
+    expect(first.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/3 · 63 stations/);
+    embedSize(first.embeds[0]!);
+
+    const last = browseView(ctx, GUILD, { pack: null, category: null, search: null }, 'tok123', 99);
+    expect(last.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 3\/3/);
+    const lastButtons = checkComponents(last).filter((c) => c.type === 2);
+    expect(lastButtons[1]!.disabled).toBe(true);
+  });
+
+  it('filters by search, category and favourites and says when nothing matches', () => {
+    const { ctx, guilds } = context();
+    const search = browseView(ctx, GUILD, { pack: 'fg', category: null, search: 'techno' }, 't', 0);
+    expect(search.embeds[0]!.toJSON().description).toMatch(/FG TECHNO/);
+    expect(search.embeds[0]!.toJSON().footer?.text).toMatch(/search: "techno"/);
+    guilds.toggleFavourite(GUILD, 'fg:fg-yoga');
+    const fav = browseView(ctx, GUILD, { pack: null, category: 'favourites', search: null }, 't', 0);
+    expect(fav.embeds[0]!.toJSON().description).toMatch(/FG YOGA/);
+    expect(fav.embeds[0]!.toJSON().footer?.text).toMatch(/1 stations/);
+    const none = browseView(ctx, GUILD, { pack: 'custom', category: null, search: null }, 't', 0);
+    expect(none.embeds[0]!.toJSON().description).toBe('No stations match.');
+    expect(none.components.every((r) => r.toJSON().components.every((c) => c.type === 2))).toBe(true);
+  });
+
+  it('lists packs 20 per page with numbered ids, coverage and the pack disclaimer', () => {
+    const { ctx, ids } = context({ stale: true });
+    const v = listView(ctx, GUILD, 'packs', 'fg', 0);
+    const e = v.embeds[0]!.toJSON();
+    expect(e.title).toBe('Station pack: Radio FG / Maison FG');
+    expect(e.description).toMatch(/^\*\*Radio FG \/ Maison FG\*\*\n1\. /);
+    expect(e.description).toContain('`fg:fg-dj-radio`');
+    expect(e.footer?.text).toMatch(/Page 1\/4 · 63 catalogued · 63 with a known source/);
+    expect(e.footer?.text).toMatch(/list may be stale/);
+    expect(e.footer?.text).toMatch(/Unofficial/);
+    embedSize(v.embeds[0]!);
+    const nav = checkComponents(v);
+    expect(ids.parse(GUILD, String(nav[1]!.custom_id))).toMatchObject({ arg: 'packs_fg:p1' });
+  });
+
+  it('shows empty custom and favourite lists without paging buttons', () => {
+    const { ctx } = context();
+    const custom = listView(ctx, GUILD, 'custom', null, 0);
+    expect(custom.embeds[0]!.toJSON().description).toBe('No stations.');
+    expect(custom.components).toEqual([]);
+    expect(listView(ctx, GUILD, 'favourites', null, 0).embeds[0]!.toJSON().description).toMatch(
+      /No favourites yet/,
+    );
+  });
+
+  it('offers at most 25 candidates when a name is ambiguous', () => {
+    const { ctx, ids, stations } = context();
+    const candidates = stations.listStations(null).slice(0, 40);
+    const v = ambiguityView(ctx, GUILD, 'fg', candidates, { channelId: '323456789012345678' });
+    const [select] = checkComponents(v);
+    expect((select!.options as unknown[]).length).toBe(25);
+    // The picker plays in the channel the original /radio play named.
+    expect(parseAll(ids, [select!])[0]).toMatchObject({ action: 'pick', arg: '323456789012345678' });
+    embedSize(v.embeds[0]!);
+  });
+
+  it('only offers a play picker for /radio play; other commands ask for the exact name', () => {
+    const { ctx, stations } = context();
+    const v = ambiguityView(ctx, GUILD, 'fg', stations.listStations(null).slice(0, 3), null);
+    expect(v.components).toEqual([]);
+    expect(v.embeds[0]!.toJSON().description).toMatch(/Run the command again/);
+  });
+});
+
+describe('settings view', () => {
+  it.each(['access', 'playback', 'notify'] as const)('builds a valid %s page with signed cfg ids', (page) => {
+    const { ctx, ids, guilds } = context();
+    const s = guilds.updateSettings(GUILD, {
+      djRoleIds: ['223456789012345678'],
+      qualityMode: 'manual',
+      manualBitrateKbps: 256,
+      defaultStationId: 'fg:fg-chic',
+    });
+    const v = configView(ctx, GUILD, s, page);
+    const comps = checkComponents(v);
+    for (const p of parseAll(ids, comps)) expect(p).toMatchObject({ action: 'cfg', expired: false });
+    const d = v.embeds[0]!.toJSON().description ?? '';
+    expect(d).toContain('<@&223456789012345678>');
+    expect(d).toContain('FG CHIC');
+    expect(d).toContain('manual (256 kbps)');
+  });
+
+  it('marks the current choices in the playback selects', () => {
+    const { ctx, guilds } = context();
+    const s = guilds.updateSettings(GUILD, { idleMode: '24x7', memberControlMode: 'any' });
+    const comps = checkComponents(configView(ctx, GUILD, s, 'playback'));
+    const defaults = comps
+      .flatMap((c) => (Array.isArray(c.options) ? c.options : []))
+      .filter((o: { default?: boolean }) => o.default)
+      .map((o: { value: string }) => o.value);
+    expect(defaults).toEqual(['24x7', 'any', 'maximum']);
+  });
+});
+
+describe('formatting helpers', () => {
+  it('labels transport and availability', () => {
+    expect(transportLabel('hls')).toBe('HLS (delivery protocol)');
+    expect(transportLabel('http-continuous')).toBe('Direct HTTP stream');
+    expect(transportLabel(null)).toBe('Unknown transport');
+    expect(availabilityBadge('available')).toBe('🟢 Available');
+    expect(availabilityBadge('no_source')).toBe('⚫ No stream source known');
+  });
+
+  it('describes measured formats and is explicit about unknowns (NFR-12)', () => {
+    expect(sourceFormat(makeSource())).toBe('MP3 · ≈128 kbps (measured) · 44.1 kHz · stereo');
+    const unknown = makeSource({
+      codec: null,
+      codecHint: 'aac',
+      measuredBitrateKbps: null,
+      codecBitrateKbps: null,
+      advertisedBitrateKbps: null,
+      sampleRateHz: null,
+      channels: null,
+    });
+    expect(sourceFormat(unknown)).toBe(
+      'codec not measured (hint: aac) · bitrate unknown · sample rate unknown · channels unknown',
+    );
+    const advertised = { measuredBitrateKbps: null, codecBitrateKbps: null, advertisedBitrateKbps: 256 };
+    expect(sourceFormat(makeSource({ ...advertised, transport: 'hls' }))).toContain('(manifest, unverified)');
+    expect(sourceFormat(makeSource(advertised))).toContain('(advertised, unverified)');
+    expect(sourceFormat(makeSource({ measuredBitrateKbps: null }))).toContain('(codec metadata)');
+    expect(sourceFormat(makeSource({ channels: 1 }))).toMatch(/mono$/);
+    expect(sourceFormat(makeSource({ channels: 6 }))).toMatch(/6 ch$/);
+  });
+
+  it('summarises identity with the first decisive piece of evidence', () => {
+    const at = new Date().toISOString();
+    expect(identityLine(makeSource({ identityConfidence: 'high' }))).toBe(
+      'Identity verified (high confidence)',
+    );
+    const mismatch = makeSource({
+      identityStatus: 'mismatch',
+      identityEvidence: [
+        { kind: 'metadata', verdict: 'inconclusive', detail: 'brand only', at },
+        { kind: 'metadata', verdict: 'contradicts', detail: 'x'.repeat(300), at },
+      ],
+    });
+    const line = identityLine(mismatch);
+    expect(line.startsWith('Identity MISMATCH — not used: xxx')).toBe(true);
+    expect(line.length).toBeLessThanOrEqual('Identity MISMATCH — not used: '.length + 160);
+    expect(identityLine(makeSource({ identityStatus: 'unverified' }))).toBe('Identity unverified');
+  });
+
+  it('reports the Discord output and that the channel setting is not a cap', () => {
+    expect(outputLine(null)).toBe('Not encoding.');
+    const plan = planEncoder({
+      qualityMode: 'maximum',
+      manualBitrateKbps: null,
+      channelBitrateBps: 64_000,
+      sourceSampleRateHz: 44_100,
+      sourceChannels: 2,
+    });
+    expect(outputLine(plan)).toBe(
+      'Opus · 48 kHz · stereo · 20 ms frames · encoder target 510 kbps (maximum) · voice-channel setting 64 kbps (not a cap)',
+    );
+  });
+
+  it('marks the current station and custom stations', () => {
+    const st = { displayName: 'Mine', provider: 'custom' } as Station;
+    expect(stationLine(st, 'unverified', true)).toBe('▶ **Mine** — ⚪ Unverified · custom');
+  });
+
+  it('truncates free-text embeds to Discord limits', () => {
+    expect(errorEmbed('e'.repeat(5000)).toJSON().description).toHaveLength(2000);
+    const info = infoEmbed('t'.repeat(300), 'm'.repeat(5000)).toJSON();
+    expect(info.title).toHaveLength(256);
+    expect(info.description).toHaveLength(4000);
+  });
+});
+
+describe('status embeds', () => {
+  const station = { id: 'fg:fg-chic', displayName: 'FG CHIC', provider: 'fg' } as Station;
+  const status = (o: Partial<SessionStatus> = {}): SessionStatus =>
+    ({
+      guildId: GUILD,
+      state: 'PLAYING',
+      desiredState: 'playing',
+      stationId: station.id,
+      channelId: 'v1',
+      source: makeSource(),
+      selection: null,
+      plan: planEncoder({
+        qualityMode: 'maximum',
+        manualBitrateKbps: null,
+        channelBitrateBps: 96_000,
+        sourceSampleRateHz: 44_100,
+        sourceChannels: 2,
+      }),
+      startedAt: Date.now(),
+      nowPlaying: null,
+      lastError: null,
+      observedOutputKbps: null,
+      observedInputKbps: null,
+      encryption: 'aead_aes256_gcm_rtpsize',
+      inputTransport: 'http-continuous',
+      hls: null,
+      ...o,
+    }) as SessionStatus;
+
+  it('shows an idle embed when nothing plays', () => {
+    const e = nowEmbed(null, null, null).toJSON();
+    expect(e.title).toBe('Radio is idle');
+    expect(e.footer?.text).toBe(DISCLAIMER);
+    expect(nowEmbed(station, status({ state: 'IDLE' }), null).toJSON().title).toBe('Radio is idle');
+  });
+
+  it('shows source, output and an honest track line while playing', () => {
+    const e = nowEmbed(station, status(), '999').toJSON();
+    expect(e.title).toBe('Now playing: FG CHIC');
+    expect(e.description).toContain('in <#999>');
+    expect(e.description).toContain('MP3 · ≈128 kbps (measured)');
+    expect(e.description).toContain('**On air:** no song or show title from the stream right now.');
+    const titled = nowEmbed(
+      station,
+      status({ nowPlaying: { title: 'Artist - Song', receivedAt: new Date().toISOString() } as never }),
+      null,
+    ).toJSON();
+    expect(titled.description).toContain('**On air:** Artist - Song');
+    const hostile = nowEmbed(
+      station,
+      status({
+        nowPlaying: {
+          title: '[Free](https://evil.example) **now**',
+          receivedAt: new Date().toISOString(),
+        } as never,
+      }),
+      null,
+    ).toJSON();
+    expect(hostile.description).toContain(String.raw`\[Free](https://evil.example) \*\*now\*\*`);
+  });
+
+  it('shows the last error while recovering', () => {
+    const e = nowEmbed(
+      station,
+      status({
+        state: 'RECOVERING',
+        lastError: { code: 'STREAM_STALLED', message: 'The stream stalled.', at: '' },
+      }),
+      null,
+    ).toJSON();
+    expect(e.title).toBe('Reconnecting to the stream: FG CHIC');
+    expect(e.description).toContain('— The stream stalled.');
+  });
+
+  it('reports one lossy encode and no processing in the quality embed', () => {
+    expect(qualityEmbed(null, null).toJSON().description).toMatch(/Nothing is playing/);
+    const e = qualityEmbed(station, status());
+    embedSize(e);
+    const text = JSON.stringify(e.toJSON());
+    expect(text).toContain('exactly one lossy encode (MP3 → Opus)');
+    expect(text).toContain('44100 Hz → 48000 Hz');
+    expect(text).toContain('Volume/normalisation/EQ/compression: off');
+    const opus = JSON.stringify(
+      qualityEmbed(station, status({ source: makeSource({ codec: 'opus' }) })).toJSON(),
+    );
+    expect(opus).toContain('zero-transcode passthrough is not used');
+  });
+
+  it('lists sources with roles, redacted endpoints and within embed limits', () => {
+    const now = Date.now();
+    const sources: StationSource[] = Array.from({ length: 4 }, (_, i) =>
+      makeSource({
+        id: `fg-chic-src-${i}`,
+        url: `https://stream.example.com/live${i}?token=SECRET${i}&listener=1`,
+        transport: i === 3 ? 'hls' : 'http-continuous',
+        priority: i,
+        lastFailureCode: 'STREAM_STALLED',
+        icyName: 'FG CHIC',
+      }),
+    );
+    const selection = selectSource(sources, null, { now });
+    const e = sourcesEmbed(station, sources, selection, true);
+    expect(embedSize(e)).toBeLessThanOrEqual(6000);
+    const text = JSON.stringify(e.toJSON());
+    expect(text).not.toContain('SECRET');
+    expect(text).toContain('— **selected**');
+    expect(text).toContain('— fallback');
+    expect(sourcesEmbed(station, [], selectSource([], null), false).toJSON().description).toMatch(
+      /No stream source is known/,
+    );
+  });
+
+  it('stays within the 6000-character embed limit for stations with many detailed sources', () => {
+    const now = Date.now();
+    const sources: StationSource[] = Array.from({ length: 12 }, (_, i) =>
+      makeSource({
+        id: `example-station-with-a-long-name-source-${i}`,
+        label: `Direct mount ${i} (high bitrate, primary CDN)`,
+        url: `https://stream-${i}.example.com/a/very/long/mount/path/for/source/${i}/stream.mp3`,
+        effectiveHost: `n0${i}-eu1.cdn.example.com`,
+        priority: i,
+        lastFailureCode: 'STREAM_STALLED',
+        icyName: 'An unusually long stream name that the station sends in its ICY headers',
+        healthScore: 40,
+        cooldownUntil: new Date(now + 60_000).toISOString(),
+      }),
+    );
+    const e = sourcesEmbed(station, sources, selectSource(sources, null, { now }), true);
+    expect(embedSize(e)).toBeLessThanOrEqual(6000);
+    expect(JSON.stringify(e.toJSON())).toMatch(/more source\(s\) not shown/);
+  });
+});

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Stand-in for the docker CLI in the lifecycle test: records each call and simulates one
+# radio-bot container. FAKE_PULL_OK=1 makes `compose pull` succeed; FAKE_CRASH=1 makes the
+# container restart-loop like a bot with a bad token. FAKE_COMPOSE_VERSION sets the reported version.
+st=$FAKE_STATE
+echo "docker $*" >>"$st/calls.log"
+now() { date -u +%Y-%m-%dT%H:%M:%S.000000000Z; }
+running() { [ -f "$st/running" ]; }
+case "$1" in
+  info | image) exit 0 ;;
+  inspect)
+    running || [ -f "$st/stopped" ] || exit 1
+    case "$3" in
+      '{{.State.Status}}') if running; then echo running; else echo exited; fi ;;
+      '{{.State.StartedAt}}') cat "$st/started" ;;
+      '{{.RestartCount}}')
+        n=$(cat "$st/restarts" 2>/dev/null || echo 0)
+        if [ -n "${FAKE_CRASH:-}" ]; then n=$((n + 1)) && echo "$n" >"$st/restarts"; fi
+        echo "$n"
+        ;;
+    esac
+    exit 0
+    ;;
+  compose) shift ;;
+  *) exit 2 ;;
+esac
+case "$1" in
+  version) echo "Docker Compose version v${FAKE_COMPOSE_VERSION:-2.40.0}" ;;
+  pull) [ -n "${FAKE_PULL_OK:-}" ] || { echo "manifest unknown" >&2 && exit 1; } ;;
+  build) echo "(built)" ;;
+  up) rm -f "$st/stopped" && touch "$st/running" && now >"$st/started" ;;
+  restart) now >"$st/started" ;;
+  stop) rm -f "$st/running" && touch "$st/stopped" ;;
+  down) rm -f "$st/running" "$st/stopped" ;;
+  exec)
+    case "$*" in
+      *backup.js*) echo "Backup written: /app/data/backups/radio-bot-manual-x.sqlite" ;;
+      *healthcheck.js*) echo "healthy: ok" ;;
+    esac
+    ;;
+  cp) dest=${*: -1} && mkdir -p "$dest" && touch "$dest/radio-bot-manual-x.sqlite" ;;
+  logs) echo "Fatal: An invalid token was provided." ;;
+esac
+exit 0

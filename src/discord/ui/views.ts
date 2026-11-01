@@ -1,0 +1,448 @@
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelSelectMenuBuilder,
+  ChannelType,
+  EmbedBuilder,
+  type MessageActionRowComponentBuilder,
+  RoleSelectMenuBuilder,
+  StringSelectMenuBuilder,
+} from 'discord.js';
+import { searchStations } from '../../catalogue/search.ts';
+import { AVAILABILITY_LABEL, type Station } from '../../catalogue/types.ts';
+import type { GuildSettings } from '../../persistence/repositories/guilds.ts';
+import { truncate } from '../../shared/text.ts';
+import type { AppContext } from '../context.ts';
+import { groupName, visibleStations } from '../context.ts';
+import { availabilityBadge, COLOR, DISCLAIMER, stationLine } from './format.ts';
+
+type Row = ActionRowBuilder<MessageActionRowComponentBuilder>;
+const row = (...c: MessageActionRowComponentBuilder[]) =>
+  new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...c);
+
+export interface View {
+  embeds: EmbedBuilder[];
+  components: Row[];
+}
+
+const PAGE_SIZE = 25;
+
+export interface BrowseState {
+  /** A pack id, "custom" or null for everything. */
+  pack: string | null;
+  /** A category id, "favourites", or null. */
+  category: string | null;
+  search: string | null;
+}
+
+/** Filters the browse list. Stations stay grouped by pack, in pack order, custom stations last. */
+export function browseStations(ctx: AppContext, guildId: string, state: BrowseState): Station[] {
+  let list = visibleStations(ctx, guildId);
+  if (state.pack) list = list.filter((s) => s.provider === state.pack);
+  if (state.category === 'favourites') {
+    const fav = new Set(ctx.guilds.listFavourites(guildId));
+    list = list.filter((s) => fav.has(s.id));
+  } else if (state.category === 'custom') {
+    list = list.filter((s) => s.provider === 'custom');
+  } else if (state.category) {
+    list = list.filter((s) => s.category === state.category);
+  }
+  if (state.search) {
+    const order = new Map(searchStations(list, state.search, 500).map((h, i) => [h.station.id, i]));
+    list = list.filter((s) => order.has(s.id)).sort((x, y) => order.get(x.id)! - order.get(y.id)!);
+  }
+  return list;
+}
+
+/** Station lines grouped under their pack (or "Custom") headings. */
+function groupedLines(
+  ctx: AppContext,
+  stations: Station[],
+  current: string | null,
+  withIds = false,
+  offset = 0,
+): string[] {
+  const lines: string[] = [];
+  let group: string | null = null;
+  stations.forEach((s, i) => {
+    if (s.provider !== group) {
+      if (lines.length > 0) lines.push('');
+      lines.push(`**${groupName(ctx, s.provider)}**`);
+      group = s.provider;
+    }
+    const prefix = withIds ? `${offset + i + 1}. ` : '';
+    const suffix = withIds ? ` — \`${s.id}\`` : '';
+    lines.push(`${prefix}${stationLine(s, ctx.sources.availability(s), s.id === current)}${suffix}`);
+  });
+  return lines;
+}
+
+export function browseView(
+  ctx: AppContext,
+  guildId: string,
+  state: BrowseState,
+  token: string,
+  page: number,
+): View {
+  const all = browseStations(ctx, guildId, state);
+  const pages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
+  const p = Math.min(Math.max(0, page), pages - 1);
+  const slice = all.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
+  const current = ctx.sessions.get(guildId)?.stationId ?? null;
+  const lines = groupedLines(ctx, slice, current);
+  const filter = [
+    state.pack ? `pack: ${groupName(ctx, state.pack)}` : null,
+    state.category ? `category: ${state.category}` : null,
+    state.search ? `search: "${state.search}"` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const embed = new EmbedBuilder()
+    .setTitle('Browse stations')
+    .setColor(COLOR.info)
+    .setDescription(truncate(lines.length > 0 ? lines.join('\n') : 'No stations match.', 4000))
+    .setFooter({
+      text: `Page ${p + 1}/${pages}${filter ? ` · ${filter}` : ''} · ${all.length} stations. ${DISCLAIMER}`,
+    });
+  const components: Row[] = [];
+  if (slice.length > 0) {
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(ctx.ids.make(guildId, 'pick'))
+      .setPlaceholder('Choose a station to play')
+      .addOptions(
+        slice.map((s) => ({
+          label: truncate(s.displayName, 100),
+          value: s.id,
+          description: truncate(
+            `${AVAILABILITY_LABEL[ctx.sources.availability(s)]}${s.tags.length ? ` · ${s.tags.slice(0, 3).join(', ')}` : ''}`,
+            100,
+          ),
+          default: s.id === current,
+        })),
+      );
+    components.push(row(select));
+  }
+  components.push(
+    row(
+      new ButtonBuilder()
+        .setCustomId(ctx.ids.make(guildId, 'browse', `${token}:p${p - 1}`))
+        .setLabel('Previous page')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(p === 0),
+      new ButtonBuilder()
+        .setCustomId(ctx.ids.make(guildId, 'browse', `${token}:p${p + 1}`))
+        .setLabel('Next page')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(p >= pages - 1),
+    ),
+  );
+  return { embeds: [embed], components };
+}
+
+/** Station picker used when a typed name is ambiguous — never guesses (FR-001). */
+/**
+ * Disambiguation for a station name. Only `/radio play` gets a picker (which plays, in the
+ * channel it named); other commands list the matches and ask for the exact name.
+ */
+export function ambiguityView(
+  ctx: AppContext,
+  guildId: string,
+  query: string,
+  candidates: Station[],
+  play: { channelId: string | null } | null,
+): View {
+  const list = candidates
+    .map((s) => `• ${s.displayName} — ${availabilityBadge(ctx.sources.availability(s))}`)
+    .join('\n');
+  const ask = play
+    ? 'Pick one below.'
+    : 'Run the command again and choose the station from the suggestions as you type.';
+  const embed = new EmbedBuilder()
+    .setColor(COLOR.warn)
+    .setTitle('Which station did you mean?')
+    .setDescription(truncate(`"${query}" matches several stations. ${ask}\n\n${list}`, 4000));
+  if (!play) return { embeds: [embed], components: [] };
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(ctx.ids.make(guildId, 'pick', play.channelId ?? ''))
+    .setPlaceholder('Choose the exact station')
+    .addOptions(candidates.slice(0, 25).map((s) => ({ label: truncate(s.displayName, 100), value: s.id })));
+  return { embeds: [embed], components: [row(select)] };
+}
+
+export type ListScope = 'packs' | 'custom' | 'favourites';
+
+/** Encodes a list query into a component argument (pack ids never contain "_"). */
+export const listArg = (scope: ListScope, pack: string | null, page: number) =>
+  `${scope}_${pack ?? ''}:p${page}`;
+
+export function parseListArg(arg: string): { scope: ListScope; pack: string | null; page: number } {
+  const [head = '', p = 'p0'] = arg.split(':');
+  const [scope, pack] = head.split('_');
+  const valid: ListScope[] = ['packs', 'custom', 'favourites'];
+  return {
+    scope: valid.includes(scope as ListScope) ? (scope as ListScope) : 'packs',
+    pack: pack ? pack : null,
+    page: Number(p.slice(1)) || 0,
+  };
+}
+
+export function listView(
+  ctx: AppContext,
+  guildId: string,
+  scope: ListScope,
+  pack: string | null,
+  page: number,
+): View {
+  const all = visibleStations(ctx, guildId);
+  let list: Station[];
+  if (scope === 'favourites') {
+    const fav = ctx.guilds.listFavourites(guildId);
+    list = fav.map((id) => all.find((s) => s.id === id)).filter((s): s is Station => Boolean(s));
+  } else if (scope === 'custom') {
+    list = all.filter((s) => s.provider === 'custom');
+  } else {
+    list = all.filter((s) => s.provider !== 'custom' && (!pack || s.provider === pack));
+  }
+  const per = 20;
+  const pages = Math.max(1, Math.ceil(list.length / per));
+  const p = Math.min(Math.max(0, page), pages - 1);
+  const lines = groupedLines(ctx, list.slice(p * per, (p + 1) * per), null, true, p * per);
+  const title =
+    scope === 'favourites'
+      ? 'Favourite stations'
+      : scope === 'custom'
+        ? 'Custom stations (this server)'
+        : pack
+          ? `Station pack: ${groupName(ctx, pack)}`
+          : 'Station packs';
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setColor(COLOR.info)
+    .setDescription(
+      truncate(
+        lines.join('\n') ||
+          (scope === 'favourites'
+            ? 'No favourites yet — use the Favourite button on /radio now.'
+            : 'No stations.'),
+        4000,
+      ),
+    );
+  let footer = `Page ${p + 1}/${pages}`;
+  if (scope === 'packs') {
+    const cov = ctx.sources.coverage(list);
+    footer += ` · ${cov.catalogued} catalogued · ${cov.withSources} with a known source · ${cov.usable} technically usable · ${cov.verifiedPlayable} verified playable`;
+    const packMeta = pack ? ctx.packs.get(pack) : null;
+    if (packMeta?.meta.sync) {
+      const sync = ctx.catalogueSync.lastSync(packMeta.meta.id);
+      if (ctx.catalogueSync.isStale(packMeta.meta.id, ctx.config.catalogSyncIntervalHours))
+        footer += ' · list may be stale';
+      else if (sync.at) footer += ` · synced ${sync.at.slice(0, 10)}`;
+    }
+    if (packMeta?.meta.disclaimer) footer += ` · ${packMeta.meta.disclaimer}`;
+  }
+  embed.setFooter({ text: truncate(`${footer}. ${DISCLAIMER}`, 2048) });
+  const nav = row(
+    new ButtonBuilder()
+      .setCustomId(ctx.ids.make(guildId, 'list', listArg(scope, pack, p - 1)))
+      .setLabel('Previous')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(p === 0),
+    new ButtonBuilder()
+      .setCustomId(ctx.ids.make(guildId, 'list', listArg(scope, pack, p + 1)))
+      .setLabel('Next')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(p >= pages - 1),
+  );
+  return { embeds: [embed], components: pages > 1 ? [nav] : [] };
+}
+
+/** Now-playing controls. `persistent` buttons (control panel) do not expire but are re-authorised on click. */
+export function controlRows(
+  ctx: AppContext,
+  guildId: string,
+  stationId: string | null,
+  persistent = false,
+): Row[] {
+  const ttl = persistent ? null : 15 * 60_000;
+  const b = (action: string, label: string, style: ButtonStyle, arg = '') =>
+    new ButtonBuilder()
+      .setCustomId(ctx.ids.make(guildId, action, arg, ttl))
+      .setLabel(label)
+      .setStyle(style);
+  const rows: Row[] = [
+    row(
+      b('prev', 'Previous station', ButtonStyle.Secondary),
+      b('next', 'Next station', ButtonStyle.Secondary),
+      b('stop', 'Stop', ButtonStyle.Danger),
+      b('leave', 'Leave', ButtonStyle.Secondary),
+    ),
+  ];
+  const queued = ctx.guilds.listQueue(guildId).length;
+  if (persistent || queued > 0) {
+    rows[0]!.addComponents(
+      b('skip', queued > 0 ? `Skip (${queued} queued)` : 'Skip (queue)', ButtonStyle.Primary),
+    );
+  }
+  const second: ButtonBuilder[] = [b('now', 'Refresh', ButtonStyle.Primary)];
+  if (persistent) second.unshift(b('openbrowse', 'Browse stations', ButtonStyle.Success));
+  if (stationId) {
+    const fav = ctx.guilds.isFavourite(guildId, stationId);
+    second.push(
+      b('fav', fav ? 'Unfavourite' : 'Favourite', ButtonStyle.Secondary, stationId),
+      b('srcs', 'Sources', ButtonStyle.Secondary, stationId),
+      b('insp', 'Inspect', ButtonStyle.Secondary, stationId),
+    );
+  }
+  rows.push(row(...second.slice(0, 5)));
+  return rows;
+}
+
+export type ConfigPage = 'access' | 'playback' | 'notify';
+
+export function configView(ctx: AppContext, guildId: string, s: GuildSettings, page: ConfigPage): View {
+  const id = (field: string) => ctx.ids.make(guildId, 'cfg', field, 30 * 60_000);
+  const station = s.defaultStationId ? ctx.stations.getStation(s.defaultStationId) : null;
+  const fmtIds = (ids: string[], kind: '#' | '@&') =>
+    ids.length ? ids.map((x) => `<${kind}${x}>`).join(', ') : 'any';
+  const embed = new EmbedBuilder()
+    .setTitle('Radio Bot settings')
+    .setColor(COLOR.info)
+    .setDescription(
+      [
+        `**Command channels:** ${fmtIds(s.allowedTextChannelIds, '#')}`,
+        `**Voice channels:** ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
+        '**Bot admins:** members with the Discord Administrator permission',
+        `**DJ roles:** ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
+        `**Listener control:** ${s.memberControlMode === 'same_channel' ? 'listeners in the same voice channel' : s.memberControlMode === 'any' ? 'anyone' : 'DJs/admins only'}`,
+        `**Default station:** ${station?.displayName ?? 'none'} · **Preferred voice channel:** ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>` : 'none'}${s.voiceLock ? ' (locked)' : ''}`,
+        `**Idle mode:** ${s.idleMode} · **Quality:** ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
+        `**Autostart on boot:** ${s.autostart ? 'on' : 'off'} · **Resume after restart:** ${s.resumeOnRestart ? 'on' : 'off'}`,
+        `**Notifications:** ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
+        '',
+        'Empty channel/role selections mean "no restriction". Set the default station and manual bitrate with `/radio config default_station:` / `manual_bitrate:`.',
+      ].join('\n'),
+    )
+    .setFooter({ text: `Page: ${page}` });
+  const nav = row(
+    ...(['access', 'playback', 'notify'] as ConfigPage[]).map((p) =>
+      new ButtonBuilder()
+        .setCustomId(id(`page-${p}`))
+        .setLabel(p === 'access' ? 'Access' : p === 'playback' ? 'Playback' : 'Notifications')
+        .setStyle(p === page ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        .setDisabled(p === page),
+    ),
+  );
+  const components: Row[] = [];
+  if (page === 'access') {
+    components.push(
+      row(
+        new ChannelSelectMenuBuilder()
+          .setCustomId(id('text'))
+          .setPlaceholder('Command channels (none = any)')
+          .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildVoice)
+          .setMinValues(0)
+          .setMaxValues(25)
+          .setDefaultChannels(s.allowedTextChannelIds.slice(0, 25)),
+      ),
+      row(
+        new ChannelSelectMenuBuilder()
+          .setCustomId(id('voice'))
+          .setPlaceholder('Approved voice channels (none = any)')
+          .setChannelTypes(ChannelType.GuildVoice)
+          .setMinValues(0)
+          .setMaxValues(25)
+          .setDefaultChannels(s.allowedVoiceChannelIds.slice(0, 25)),
+      ),
+      row(
+        new RoleSelectMenuBuilder()
+          .setCustomId(id('djs'))
+          .setPlaceholder('DJ roles')
+          .setMinValues(0)
+          .setMaxValues(25)
+          .setDefaultRoles(s.djRoleIds.slice(0, 25)),
+      ),
+      nav,
+    );
+  } else if (page === 'playback') {
+    const opt = (value: string, label: string, current: string) => ({
+      value,
+      label,
+      default: value === current,
+    });
+    components.push(
+      row(
+        new StringSelectMenuBuilder()
+          .setCustomId(id('idle'))
+          .setPlaceholder('Idle mode')
+          .addOptions(
+            opt('leave_when_empty', 'Leave when the channel is empty', s.idleMode),
+            opt('pause_when_empty', 'Pause stream when empty, resume when someone joins', s.idleMode),
+            opt('24x7', '24/7 — stay connected and keep playing', s.idleMode),
+          ),
+      ),
+      row(
+        new StringSelectMenuBuilder()
+          .setCustomId(id('member'))
+          .setPlaceholder('Who can play/stop')
+          .addOptions(
+            opt('same_channel', 'Listeners in the same voice channel (+DJs/admins)', s.memberControlMode),
+            opt('none', 'Only DJs and admins', s.memberControlMode),
+            opt('any', 'Anyone in allowed channels', s.memberControlMode),
+          ),
+      ),
+      row(
+        new StringSelectMenuBuilder()
+          .setCustomId(id('quality'))
+          .setPlaceholder('Quality mode')
+          .addOptions(
+            opt('maximum', 'Maximum — match the station’s own bitrate (up to the limit)', s.qualityMode),
+            opt('balanced', 'Balanced — up to 128 kbps', s.qualityMode),
+            opt('manual', 'Manual — fixed target (set with manual_bitrate)', s.qualityMode),
+          ),
+      ),
+      row(
+        new ChannelSelectMenuBuilder()
+          .setCustomId(id('pvoice'))
+          .setPlaceholder('Preferred voice channel (for autostart/lock)')
+          .setChannelTypes(ChannelType.GuildVoice)
+          .setMinValues(0)
+          .setMaxValues(1)
+          .setDefaultChannels(s.preferredVoiceChannelId ? [s.preferredVoiceChannelId] : []),
+      ),
+      row(
+        new ButtonBuilder()
+          .setCustomId(id('autostart'))
+          .setLabel(`Autostart: ${s.autostart ? 'on' : 'off'}`)
+          .setStyle(s.autostart ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(id('resume'))
+          .setLabel(`Resume after restart: ${s.resumeOnRestart ? 'on' : 'off'}`)
+          .setStyle(s.resumeOnRestart ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(id('lock'))
+          .setLabel(`Lock to preferred channel: ${s.voiceLock ? 'on' : 'off'}`)
+          .setStyle(s.voiceLock ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(id('page-access')).setLabel('Access').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(id('page-notify'))
+          .setLabel('Notifications')
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    );
+  } else {
+    components.push(
+      row(
+        new ChannelSelectMenuBuilder()
+          .setCustomId(id('notify'))
+          .setPlaceholder('Channel for recovery/error notices (none = off)')
+          .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+          .setMinValues(0)
+          .setMaxValues(1)
+          .setDefaultChannels(s.notificationChannelId ? [s.notificationChannelId] : []),
+      ),
+      nav,
+    );
+  }
+  return { embeds: [embed], components };
+}

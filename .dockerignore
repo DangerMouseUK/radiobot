@@ -1,0 +1,11 @@
+node_modules
+dist
+data
+coverage
+.git
+.github
+.env
+*.sqlite
+tests/fixtures/generated
+backups
+compose.override.yaml

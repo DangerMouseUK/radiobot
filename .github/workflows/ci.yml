@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - name: Validate catalogue
+        run: node scripts/validate-catalogue.ts
+      - run: pnpm test
+      - run: pnpm build
+
+  lifecycle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck the installer and manager
+        run: shellcheck -x install.sh scripts/radio-bot.sh tests/lifecycle/run.sh tests/lifecycle/fake-docker
+      - name: Install, update, back up and uninstall against a fake Docker
+        run: bash tests/lifecycle/run.sh
+
+  docker:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: radio-bot:ci
+      - name: Smoke test image (FFmpeg with libopus, config validation)
+        run: |
+          docker run --rm --entrypoint ffmpeg radio-bot:ci -hide_banner -encoders | grep -q libopus
+          set +e
+          docker run --rm radio-bot:ci > out.txt 2>&1
+          code=$?
+          set -e
+          cat out.txt
+          test "$code" = "78"
+          grep -q "DISCORD_TOKEN" out.txt

@@ -1,0 +1,4 @@
+# Keep LF everywhere (Biome expects it, and shell scripts break with CRLF).
+* text=auto eol=lf
+*.sqlite binary
+*.png binary

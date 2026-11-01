@@ -1,0 +1,49 @@
+{
+  "name": "radio-bot",
+  "version": "1.0.0",
+  "description": "Radio Bot: an unofficial, open-source, self-hosted Discord internet-radio bot with an evidence-based, high-fidelity source pipeline.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.17.0"
+  },
+  "packageManager": "pnpm@10.26.0",
+  "main": "dist/src/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/src/index.js",
+    "dev": "node --watch src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:lifecycle": "bash tests/lifecycle/run.sh",
+    "register-commands": "node dist/scripts/register-commands.js",
+    "validate-catalogue": "node dist/scripts/validate-catalogue.js",
+    "healthcheck": "node dist/scripts/healthcheck.js",
+    "backup": "node dist/scripts/backup.js"
+  },
+  "dependencies": {
+    "@discordjs/voice": "0.19.2",
+    "@snazzah/davey": "0.1.12",
+    "discord.js": "14.28.0",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4",
+    "@types/node": "24.19.2",
+    "ffmpeg-static": "5.3.0",
+    "ffprobe-static": "3.1.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "ffmpeg-static"
+    ]
+  }
+}

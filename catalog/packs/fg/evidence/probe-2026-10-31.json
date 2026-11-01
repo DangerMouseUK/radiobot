@@ -1,0 +1,364 @@
+{
+  "generatedAt": "2026-10-31T16:19:48.424Z",
+  "probes": [
+    {
+      "stationId": "fg:fg-dj-radio",
+      "sourceId": "fg-dj-radio-mp3-wknqhm4yuchvv",
+      "outcome": {
+        "success": true,
+        "failureCode": null,
+        "failureDetail": null,
+        "startedAt": "2026-10-31T16:15:43.881Z",
+        "durationMs": 7243,
+        "startupMs": 33,
+        "transport": "http-continuous",
+        "effectiveHost": "n02-eu1.rcs.revma.com",
+        "container": "mp3",
+        "codec": "mp3",
+        "profile": null,
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "channelLayout": "stereo",
+        "advertisedBitrateKbps": null,
+        "codecBitrateKbps": 128,
+        "measuredBitrateKbps": 128,
+        "networkKbps": 220,
+        "bitrateEvidence": "measured",
+        "sampleSeconds": 12,
+        "decodedSeconds": 12,
+        "decodeErrors": 0,
+        "icyName": "-",
+        "icyTitle": "OLIVER HELDENS, KRYDER, THE YOUNG PUNX - AEIOU",
+        "headersSummary": {
+          "content-type": "audio/mpeg",
+          "icy-name": "-",
+          "icy-metaint": "16000"
+        },
+        "manifestSummary": {}
+      }
+    },
+    {
+      "stationId": "fg:fg-dj-radio",
+      "sourceId": "fg-dj-radio-hls-wknqhm4yuchvv",
+      "outcome": {
+        "success": false,
+        "failureCode": "HTTP_TIMEOUT",
+        "failureDetail": "The stream server did not respond in time.",
+        "startedAt": "2026-10-31T16:15:51.124Z",
+        "durationMs": 10054,
+        "startupMs": null,
+        "transport": "unknown",
+        "effectiveHost": null,
+        "container": null,
+        "codec": null,
+        "profile": null,
+        "sampleRateHz": null,
+        "channels": null,
+        "channelLayout": null,
+        "advertisedBitrateKbps": null,
+        "codecBitrateKbps": null,
+        "measuredBitrateKbps": null,
+        "networkKbps": null,
+        "bitrateEvidence": "unknown",
+        "sampleSeconds": null,
+        "decodedSeconds": null,
+        "decodeErrors": 0,
+        "icyName": null,
+        "icyTitle": null,
+        "headersSummary": {},
+        "manifestSummary": {}
+      }
+    },
+    {
+      "stationId": "fg:fg-dj-radio",
+      "sourceId": "fg-dj-radio-hls-gk9y379uquhvv",
+      "outcome": {
+        "success": true,
+        "failureCode": null,
+        "failureDetail": null,
+        "startedAt": "2026-10-31T16:16:01.178Z",
+        "durationMs": 13803,
+        "startupMs": 43,
+        "transport": "hls",
+        "effectiveHost": "n01-eu1.rcs.revma.com",
+        "container": "aac",
+        "codec": "aac",
+        "profile": "LC",
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "channelLayout": "stereo",
+        "advertisedBitrateKbps": null,
+        "codecBitrateKbps": 113.7,
+        "measuredBitrateKbps": 128.1,
+        "networkKbps": 552,
+        "bitrateEvidence": "measured",
+        "sampleSeconds": 30,
+        "decodedSeconds": 30,
+        "decodeErrors": 0,
+        "icyName": null,
+        "icyTitle": null,
+        "headersSummary": {
+          "content-type": "application/vnd.apple.mpegurl; charset=UTF-8"
+        },
+        "manifestSummary": {
+          "playlistHost": "n01-eu1.rcs.revma.com",
+          "chosen": {
+            "bitrateKbps": null,
+            "reason": "audio-only variant (declared bandwidth)",
+            "codecs": ["mp4a.40.2"]
+          },
+          "alternatives": [],
+          "targetDuration": 11
+        }
+      }
+    },
+    {
+      "stationId": "fg:fg-dj-radio",
+      "sourceId": "fg-dj-radio-aac-gk9y379uquhvv",
+      "outcome": {
+        "success": true,
+        "failureCode": null,
+        "failureDetail": null,
+        "startedAt": "2026-10-31T16:16:14.981Z",
+        "durationMs": 7190,
+        "startupMs": 0,
+        "transport": "http-continuous",
+        "effectiveHost": "n02-eu1.rcs.revma.com",
+        "container": "aac",
+        "codec": "aac",
+        "profile": "LC",
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "channelLayout": "stereo",
+        "advertisedBitrateKbps": null,
+        "codecBitrateKbps": 176.4,
+        "measuredBitrateKbps": 128.1,
+        "networkKbps": 220,
+        "bitrateEvidence": "measured",
+        "sampleSeconds": 12.1,
+        "decodedSeconds": 12,
+        "decodeErrors": 0,
+        "icyName": "-",
+        "icyTitle": "OLIVER HELDENS, KRYDER, THE YOUNG PUNX - AEIOU",
+        "headersSummary": {
+          "content-type": "audio/aac",
+          "icy-name": "-",
+          "icy-metaint": "16000"
+        },
+        "manifestSummary": {}
+      }
+    },
+    {
+      "stationId": "fg:fg-chic",
+      "sourceId": "fg-chic-mp3-cgvrymb6p98uv",
+      "outcome": {
+        "success": true,
+        "failureCode": null,
+        "failureDetail": null,
+        "startedAt": "2026-10-31T16:16:22.171Z",
+        "durationMs": 7199,
+        "startupMs": 15,
+        "transport": "http-continuous",
+        "effectiveHost": "n08-eu1.rcs.revma.com",
+        "container": "mp3",
+        "codec": "mp3",
+        "profile": null,
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "channelLayout": "stereo",
+        "advertisedBitrateKbps": null,
+        "codecBitrateKbps": 128,
+        "measuredBitrateKbps": 128,
+        "networkKbps": 220,
+        "bitrateEvidence": "measured",
+        "sampleSeconds": 12,
+        "decodedSeconds": 12,
+        "decodeErrors": 0,
+        "icyName": "-",
+        "icyTitle": "Ferdi - LA LA LA",
+        "headersSummary": {
+          "content-type": "audio/mpeg",
+          "icy-name": "-",
+          "icy-metaint": "16000"
+        },
+        "manifestSummary": {}
+      }
+    },
+    {
+      "stationId": "fg:fg-chic",
+      "sourceId": "fg-chic-hls-tde3349uquhvv",
+      "outcome": {
+        "success": true,
+        "failureCode": null,
+        "failureDetail": null,
+        "startedAt": "2026-10-31T16:16:29.370Z",
+        "durationMs": 12876,
+        "startupMs": 51,
+        "transport": "hls",
+        "effectiveHost": "n08-eu1.rcs.revma.com",
+        "container": "aac",
+        "codec": "aac",
+        "profile": "LC",
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "channelLayout": "stereo",
+        "advertisedBitrateKbps": null,
+        "codecBitrateKbps": 138.8,
+        "measuredBitrateKbps": 128,
+        "networkKbps": 736,
+        "bitrateEvidence": "measured",
+        "sampleSeconds": 40,
+        "decodedSeconds": 40,
+        "decodeErrors": 0,
+        "icyName": null,
+        "icyTitle": null,
+        "headersSummary": {
+          "content-type": "application/vnd.apple.mpegurl; charset=UTF-8"
+        },
+        "manifestSummary": {
+          "playlistHost": "n08-eu1.rcs.revma.com",
+          "chosen": {
+            "bitrateKbps": null,
+            "reason": "audio-only variant (declared bandwidth)",
+            "codecs": ["mp4a.40.2"]
+          },
+          "alternatives": [],
+          "targetDuration": 11
+        }
+      }
+    },
+    {
+      "stationId": "fg:fg-dance",
+      "sourceId": "fg-dance-mp3-zfad8vm4srhvv",
+      "outcome": {
+        "success": true,
+        "failureCode": null,
+        "failureDetail": null,
+        "startedAt": "2026-10-31T16:16:42.246Z",
+        "durationMs": 7202,
+        "startupMs": 10,
+        "transport": "http-continuous",
+        "effectiveHost": "n07-eu1.rcs.revma.com",
+        "container": "mp3",
+        "codec": "mp3",
+        "profile": null,
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "channelLayout": "stereo",
+        "advertisedBitrateKbps": null,
+        "codecBitrateKbps": 128,
+        "measuredBitrateKbps": 128,
+        "networkKbps": 220,
+        "bitrateEvidence": "measured",
+        "sampleSeconds": 12,
+        "decodedSeconds": 12,
+        "decodeErrors": 0,
+        "icyName": "-",
+        "icyTitle": "GALA - Freed from desire",
+        "headersSummary": {
+          "content-type": "audio/mpeg",
+          "icy-name": "-",
+          "icy-metaint": "16000"
+        },
+        "manifestSummary": {}
+      }
+    },
+    {
+      "stationId": "fg:fg-dance",
+      "sourceId": "fg-dance-hls-kcgbx37uquhvv",
+      "outcome": {
+        "success": true,
+        "failureCode": null,
+        "failureDetail": null,
+        "startedAt": "2026-10-31T16:16:49.448Z",
+        "durationMs": 10194,
+        "startupMs": 49,
+        "transport": "hls",
+        "effectiveHost": "n01-eu1.rcs.revma.com",
+        "container": "aac",
+        "codec": "aac",
+        "profile": "LC",
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "channelLayout": "stereo",
+        "advertisedBitrateKbps": null,
+        "codecBitrateKbps": 140.6,
+        "measuredBitrateKbps": 128,
+        "networkKbps": 736,
+        "bitrateEvidence": "measured",
+        "sampleSeconds": 40,
+        "decodedSeconds": 40,
+        "decodeErrors": 0,
+        "icyName": null,
+        "icyTitle": null,
+        "headersSummary": {
+          "content-type": "application/vnd.apple.mpegurl; charset=UTF-8"
+        },
+        "manifestSummary": {
+          "playlistHost": "n01-eu1.rcs.revma.com",
+          "chosen": {
+            "bitrateKbps": null,
+            "reason": "audio-only variant (declared bandwidth)",
+            "codecs": ["mp4a.40.2"]
+          },
+          "alternatives": [],
+          "targetDuration": 11
+        }
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "stationId": "fg:fg-dj-radio",
+      "a": "fg-dj-radio-mp3-wknqhm4yuchvv",
+      "b": "fg-dj-radio-hls-gk9y379uquhvv",
+      "result": {
+        "score": 0.58,
+        "lagSeconds": 15.55,
+        "prominence": 12.2,
+        "uniqueness": 1.46,
+        "overlapSeconds": 32.47,
+        "verdict": "supports"
+      }
+    },
+    {
+      "stationId": "fg:fg-dj-radio",
+      "a": "fg-dj-radio-mp3-wknqhm4yuchvv",
+      "b": "fg-dj-radio-aac-gk9y379uquhvv",
+      "result": {
+        "score": 0.612,
+        "lagSeconds": 7.83,
+        "prominence": 16.8,
+        "uniqueness": 1.53,
+        "overlapSeconds": 35.25,
+        "verdict": "supports"
+      }
+    },
+    {
+      "stationId": "fg:fg-chic",
+      "a": "fg-chic-mp3-cgvrymb6p98uv",
+      "b": "fg-chic-hls-tde3349uquhvv",
+      "result": {
+        "score": 0.083,
+        "lagSeconds": 12.86,
+        "prominence": 4.3,
+        "uniqueness": 1.1,
+        "overlapSeconds": 35.16,
+        "verdict": "inconclusive"
+      }
+    },
+    {
+      "stationId": "fg:fg-dance",
+      "a": "fg-dance-mp3-zfad8vm4srhvv",
+      "b": "fg-dance-hls-kcgbx37uquhvv",
+      "result": {
+        "score": 0.904,
+        "lagSeconds": 6.63,
+        "prominence": 11.6,
+        "uniqueness": 2.86,
+        "overlapSeconds": 41.39,
+        "verdict": "supports"
+      }
+    }
+  ]
+}

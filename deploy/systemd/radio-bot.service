@@ -1,0 +1,51 @@
+# Radio Bot — systemd unit for a bare-metal or VM Linux host.
+# Install: see docs/install-linux.md. Assumes the app lives in /opt/radio-bot and its
+# configuration in /etc/radio-bot/radio-bot.env (mode 0600, readable only by root).
+[Unit]
+Description=Radio Bot (Discord internet-radio bot)
+Documentation=https://github.com/DangerMouseUK/radiobot/blob/main/docs/install-linux.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/radio-bot
+EnvironmentFile=/etc/radio-bot/radio-bot.env
+# Values from EnvironmentFile= take precedence over Environment= lines, so keep
+# DATABASE_PATH out of radio-bot.env (it is commented out in .env.example).
+Environment=NODE_ENV=production
+Environment=DATABASE_PATH=/var/lib/radio-bot/radio-bot.sqlite
+ExecStart=/usr/bin/node dist/src/index.js
+Restart=on-failure
+RestartSec=5
+# Exit code 78 means the configuration is invalid; restarting won't help until it is fixed.
+RestartPreventExitStatus=78
+TimeoutStopSec=20
+
+# Runs as a throwaway system user; systemd creates /var/lib/radio-bot for its data.
+DynamicUser=yes
+StateDirectory=radio-bot
+StateDirectoryMode=0750
+
+# Hardening: the bot needs outbound network access, FFmpeg, and its state directory.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

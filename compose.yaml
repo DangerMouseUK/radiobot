@@ -1,0 +1,32 @@
+# Radio Bot — single-container self-hosting (PRD §12.4 profile A).
+# No ports are published: the bot only needs outbound access to Discord and stream hosts.
+# Put local changes in compose.override.yaml (git-ignored), so updates never conflict with them.
+name: radio-bot
+services:
+  radio-bot:
+    image: ${RADIO_BOT_IMAGE:-ghcr.io/dangermouseuk/radio-bot:1.0.0}
+    build: .
+    container_name: radio-bot
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_PATH: /app/data/radio-bot.sqlite
+    volumes:
+      - radio-bot-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  radio-bot-data:

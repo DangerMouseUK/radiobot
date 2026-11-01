@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+coverage/
+*.sqlite
+*.sqlite-*
+.env
+*.log
+tests/fixtures/generated/
+catalog/packs/*/evidence/*.tmp
+backups/
+compose.override.yaml
