@@ -32,8 +32,30 @@ import { checkEligibility, type SelectionResult, selectSource } from './ranking.
 import type { SafeHttpClient } from './safe-fetch.ts';
 
 export const PROBE_STALE_MS = 24 * 60 * 60_000;
-/** Re-probe a failed source no more often than this, unless an admin asks. */
-const FAILED_RETRY_MS = 10 * 60_000;
+/**
+ * How long a failed source waits before its next automatic check, by failed checks in a row:
+ * about 10 min, 1 h, 6 h, 12 h, then once a day. An address that is gone (HTTP 404/410) starts
+ * at 12 h, because removed mounts rarely come back. "Check sources again" ignores the wait, and
+ * a successful check resets it. Fewer checks also means less background load on small hosts.
+ */
+export const FAILED_RETRY_STEPS_MS = [
+  10 * 60_000,
+  60 * 60_000,
+  6 * 3_600_000,
+  12 * 3_600_000,
+  24 * 3_600_000,
+] as const;
+const GONE_STEP = 3;
+
+/** When a failed source is next checked automatically (ms since the epoch), or null if it isn't failing. */
+export function nextAutomaticCheck(
+  s: Pick<StationSource, 'verificationState' | 'lastProbeAt' | 'consecutiveFailures' | 'lastFailureCode'>,
+): number | null {
+  if (s.verificationState !== 'offline' || s.lastProbeAt === null) return null;
+  let step = Math.min(Math.max(1, s.consecutiveFailures) - 1, FAILED_RETRY_STEPS_MS.length - 1);
+  if (s.lastFailureCode === 'NOT_FOUND') step = Math.max(step, GONE_STEP);
+  return Date.parse(s.lastProbeAt) + FAILED_RETRY_STEPS_MS[step]!;
+}
 /**
  * Consecutive playback failures before a source is circuit-broken: the first failure plus one per
  * same-source retry step (the session's backoff of about 1, 3 and 8 s), so every retry runs first.
@@ -79,6 +101,8 @@ export class SourceService {
   readonly #d: SourceServiceDeps;
   readonly #global: Semaphore;
   readonly #perHost = new KeyedSemaphore(1);
+  /** Background checks run one at a time, at the lowest priority, so they never crowd out a stream. */
+  readonly #background = new Semaphore(1);
   readonly #inflight = new Map<string, Promise<ProbeReport>>();
   readonly #log: Logger;
 
@@ -332,7 +356,7 @@ export class SourceService {
     if (!s.enabled || s.rightsStatus === 'blocked') return false;
     if (s.lastProbeAt === null) return true;
     const age = now - Date.parse(s.lastProbeAt);
-    if (s.verificationState === 'offline') return age > FAILED_RETRY_MS;
+    if (s.verificationState === 'offline') return now >= (nextAutomaticCheck(s) ?? 0);
     return age > PROBE_STALE_MS;
   }
 
@@ -344,8 +368,9 @@ export class SourceService {
 
   /**
    * Returns a playable selection, probing in the foreground only when no eligible source
-   * exists (PRD §7.6): candidates are probed best-first until one becomes eligible, and the
-   * rest are refreshed in the background.
+   * exists (PRD §7.6): candidates are probed best-first until one becomes eligible. Nothing
+   * else is checked here: the session calls `refreshStation()` once its stream has played
+   * steadily, so background checks never compete with a stream that is starting up.
    */
   async prepareForPlayback(
     guildId: string,
@@ -358,10 +383,7 @@ export class SourceService {
     let selection = this.select(guildId, stationId, opts.exclude);
     const sources = this.sourcesFor(stationId).filter((s) => !opts.exclude?.has(s.id));
     const stale = sources.filter((s) => this.needsProbe(s));
-    if (selection.selected) {
-      if (stale.length > 0) this.refreshInBackground(stale.map((s) => s.id));
-      return selection;
-    }
+    if (selection.selected) return selection;
     const pref = this.#d.guilds.getPreference(guildId, stationId);
     const order = [...stale].sort((a, b) => {
       if (pref?.sourceId === a.id) return -1;
@@ -370,12 +392,8 @@ export class SourceService {
       if (b.transport === 'http-continuous' && a.transport !== 'http-continuous') return 1;
       return a.priority - b.priority;
     });
-    const remaining: string[] = [];
     for (const s of order) {
-      if (selection.selected) {
-        remaining.push(s.id);
-        continue;
-      }
+      if (selection.selected) break;
       try {
         await this.probe(s.id, { signal: opts.signal });
       } catch (err) {
@@ -384,23 +402,41 @@ export class SourceService {
       if (opts.signal?.aborted) throw new RadioError('CANCELLED', 'Replaced by a newer request.');
       selection = this.select(guildId, stationId, opts.exclude);
     }
-    if (remaining.length > 0) this.refreshInBackground(remaining);
     return selection;
   }
 
+  /** Re-checks a station's due sources in the background (after its stream has played steadily). */
+  refreshStation(stationId: string): void {
+    if (this.isStationDisabled(stationId)) return;
+    const due = this.sourcesFor(stationId).filter((s) => this.needsProbe(s));
+    if (due.length > 0) this.refreshInBackground(due.map((s) => s.id));
+  }
+
+  /** Queues background checks; they run one at a time (and each check at the lowest CPU priority). */
   refreshInBackground(sourceIds: string[]): void {
     for (const id of sourceIds) {
-      this.probe(id).catch((err: unknown) =>
-        this.#log.debug({ sourceId: id, code: errorCode(err) }, 'background probe failed'),
-      );
+      this.#background
+        .run(() => this.probe(id))
+        .catch((err: unknown) =>
+          this.#log.debug({ sourceId: id, code: errorCode(err) }, 'background probe failed'),
+        );
     }
   }
 
-  /** Probes every enabled source of a station (admin rescan). */
-  async rescanStation(stationId: string, signal?: AbortSignal): Promise<ProbeReport[]> {
+  /**
+   * Probes every enabled source of a station (admin rescan), one after another; `onProgress`
+   * hears after each one. It ignores any back-off: an admin asked for it.
+   */
+  async rescanStation(
+    stationId: string,
+    signal?: AbortSignal,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<ProbeReport[]> {
+    const sources = this.sourcesFor(stationId).filter((x) => x.enabled);
     const reports: ProbeReport[] = [];
-    for (const s of this.sourcesFor(stationId).filter((x) => x.enabled)) {
+    for (const s of sources) {
       reports.push(await this.probe(s.id, { signal }));
+      onProgress?.(reports.length, sources.length);
     }
     return reports;
   }

@@ -35,6 +35,8 @@ export interface SourceSelector {
   ): Promise<SelectionResult>;
   recordPlaybackSuccess(sourceId: string): void;
   recordPlaybackFailure(sourceId: string, code: string): boolean;
+  /** Re-checks the station's other due sources in the background, once playback is stable. */
+  refreshStation?(stationId: string): void;
 }
 
 export type SessionNoticeKind =
@@ -185,6 +187,7 @@ export interface SessionStatus {
 
 const NON_RETRYABLE: ReadonlySet<ReasonCode> = new Set([
   'ACCESS_DENIED',
+  'NOT_FOUND',
   'IDENTITY_MISMATCH',
   'HLS_ENCRYPTED',
   'ADDRESS_BLOCKED',
@@ -656,6 +659,8 @@ export class GuildSession {
         if (runId !== this.#runId || this.#state !== 'PLAYING') return;
         this.#attempts = 0;
         this.#d.sources.recordPlaybackSuccess(source.id);
+        // Only now, with the stream settled, may background checks of the other sources run.
+        this.#d.sources.refreshStation?.(stationId);
       }, this.#t.stableMs);
       this.#log.info(
         {

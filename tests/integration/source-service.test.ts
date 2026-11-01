@@ -113,13 +113,13 @@ describe('SourceService', () => {
     expect(src.lastFailureCode).toBe('ACCESS_DENIED');
   }, 60_000);
 
-  it('marks missing (HTTP 404) sources offline with HTTP_STATUS evidence', async () => {
+  it('marks missing (HTTP 404) sources offline, recorded as NOT_FOUND (gone)', async () => {
     const t = setup('/nope');
     const sel = await t.service.prepareForPlayback('g', 'fg:test-station');
     expect(sel.selected).toBeNull();
     const src = t.stations.getSource('test-src')!;
     expect(src.verificationState).toBe('offline');
-    expect(src.lastFailureCode).toBe('HTTP_STATUS');
+    expect(src.lastFailureCode).toBe('NOT_FOUND');
   }, 60_000);
 
   it('never verifies an auto-discovered source on its own', async () => {

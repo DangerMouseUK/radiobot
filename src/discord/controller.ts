@@ -1039,7 +1039,14 @@ export class RadioController {
   async #rescan(i: Cmd | Comp, st: Station, compare: boolean): Promise<void> {
     this.#rate(this.#ctx.limits.probeGuild, i.guildId, 'stream checks');
     await i.deferReply({ flags: EPHEMERAL });
-    const reports = await this.#ctx.sources.rescanStation(st.id);
+    // One source at a time (per host), so show progress rather than a long silence.
+    const reports = await this.#ctx.sources.rescanStation(st.id, undefined, (done, total) => {
+      if (done < total) {
+        void i
+          .editReply({ embeds: [infoEmbed('Checking sources', `Checked ${done} of ${total}…`)] })
+          .catch(() => {});
+      }
+    });
     let compareNote = '';
     if (compare) {
       try {

@@ -18,7 +18,7 @@ export interface ProbeBudget {
 }
 
 export const DEFAULT_PROBE_BUDGET: ProbeBudget = {
-  totalMs: 15_000,
+  totalMs: 22_000,
   sampleMs: 7_000,
   maxSampleBytes: 2 * 1024 * 1024,
 };
@@ -282,7 +282,9 @@ export async function probeSource(
   try {
     input = await openSourceInput(deps.client, url, {
       signal,
-      headersTimeoutMs: Math.min(10_000, budget.totalMs),
+      // Longer than playback's 10 s: a slow server that ends with 404 is then reported as gone, not
+      // as a timeout. Checks are rare and run in the background, so the extra wait costs little.
+      headersTimeoutMs: Math.min(15_000, budget.totalMs),
     });
     input.on('metadata', (m) => {
       if (m) out.icyTitle = m.title;

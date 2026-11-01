@@ -379,7 +379,7 @@ One top-level `/radio` command, registered per server.
 7. Discard the sample.
 8. Decide identity (FR-005) and store the evidence.
 
-**Budgets:** 15 s per basic probe; about 40 s per audio comparison (90 s total); 2 concurrent probes per installation and 1 per host; sources are re-probed after 24 h, or after 10 minutes if the last probe failed and someone needs them; the name sync runs daily for each pack that declares an official list. Nothing samples all stations continuously.
+**Budgets:** 22 s per basic probe (of which up to 15 s waiting for the server's first response); about 40 s per audio comparison (90 s total); 2 concurrent probes per installation and 1 per host, and background checks one at a time; working sources are re-probed after 24 h, and a failing source backs off (about 10 min, 1 h, 6 h, 12 h, then once a day, starting at 12 h when the address is gone with HTTP 404/410); the name sync runs daily for each pack that declares an official list. Nothing samples all stations continuously.
 
 ### 7.4 Selection
 
@@ -402,7 +402,7 @@ A match is strong identity evidence. No match is *inconclusive*, not proof of a 
 
 ### 7.6 Refresh
 
-Known evidence is reused with its timestamp. A playback request probes in the foreground only when no source is eligible, best candidate first, and refreshes the rest in the background.
+Known evidence is reused with its timestamp. A playback request probes in the foreground only when no source is eligible, best candidate first. The station's other due sources are re-checked in the background only after the stream has played steadily for 30 s, one at a time, and every check runs FFmpeg/FFprobe at the lowest CPU priority, so checks never compete with a live stream (NFR: stream stability comes before background work, including on single-core hosts).
 
 ---
 

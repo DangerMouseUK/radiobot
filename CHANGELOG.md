@@ -8,7 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- The bundled starter pack is called "Radio FG" (in `/radio browse`, `/radio list` and `/radio stats`), and no longer adds its own disclaimer naming the broadcaster: station lists show only Radio Bot's generic "not affiliated with or endorsed by any broadcaster" notice. Station IDs, favourites and settings are unaffected.
+- **Stream stability comes first, on any host.** Every stream check, comparison and version check runs FFmpeg/FFprobe at the lowest CPU priority, so the live encoder is always served first. Background checks run one at a time, and only once a stream has played steadily for 30 s; they no longer start at the same moment as the stream.
+- **Failing sources back off.** Instead of every 10 minutes, a failing source's next automatic check waits about 10 min, 1 h, 6 h, 12 h, then once a day; a success resets it, and `/radio rescan` still checks at once. `/radio sources` and `/radio inspect` say how many checks failed in a row and when the next one is.
+- **Gone addresses are recognised.** HTTP 404 and 410 are reported as the new reason code `NOT_FOUND` ("Nothing is at that address any more"), start the back-off at 12 h, and make playback fail over at once instead of retrying the same source. Checks wait up to 15 s for a server's first response (playback keeps 10 s), so a slow 404 is no longer reported as a timeout.
+- `/radio rescan` shows progress after each source, and the source explanation says "not conclusively determined" once instead of repeating it.
+- The bundled starter pack's display name (in `/radio browse`, `/radio list` and `/radio stats`) drops the broadcaster's legal name, and the pack no longer adds its own disclaimer naming the broadcaster: station lists show only Radio Bot's generic "not affiliated with or endorsed by any broadcaster" notice. Station IDs, favourites and settings are unaffected.
 
 ## [1.0.2] - 2026-11-01
 

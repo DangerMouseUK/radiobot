@@ -18,6 +18,7 @@ import {
   effectiveBitrate,
   type SelectionResult,
 } from '../../streams/ranking.ts';
+import { nextAutomaticCheck } from '../../streams/source-service.ts';
 import type { SessionStatus } from '../../voice/session.ts';
 import { STATE_LABEL } from '../../voice/state-machine.ts';
 
@@ -231,6 +232,16 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
   return e;
 }
 
+/** A failing source in plain words: failures in a row, the last one, and the next automatic check. */
+export function failingLine(s: StationSource, nextCheck: number): string {
+  const n = Math.max(1, s.consecutiveFailures);
+  const last = s.lastFailureAt ? `, the last one ${ts(s.lastFailureAt)}` : '';
+  const code = s.lastFailureCode ? ` (${s.lastFailureCode})` : '';
+  const next =
+    nextCheck <= Date.now() ? 'next time the station plays' : ts(new Date(nextCheck).toISOString());
+  return `Not working: ${n} failed check${n === 1 ? '' : 's'} in a row${last}${code}. Next automatic check: ${next}.`;
+}
+
 export function sourcesEmbed(
   st: Station,
   sources: StationSource[],
@@ -271,6 +282,8 @@ export function sourcesEmbed(
       identityLine(s),
       `Check result: ${VERIFICATION_LABEL[s.verificationState]}${elig.eligible ? ' · can be used' : ` · can’t be used: ${truncate(elig.reasons.join('; '), 200)}`}`,
     ];
+    const nextCheck = nextAutomaticCheck(s);
+    if (nextCheck !== null) lines.push(failingLine(s, nextCheck));
     if (detailed) {
       lines.push(
         `Endpoint: \`${truncate(redactUrl(s.url), 120)}\`${s.effectiveHost ? ` → ${s.effectiveHost}` : ''}`,

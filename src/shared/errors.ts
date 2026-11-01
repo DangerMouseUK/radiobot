@@ -10,6 +10,7 @@ export type ReasonCode =
   | 'ADDRESS_BLOCKED'
   | 'REDIRECT_LIMIT'
   | 'HTTP_STATUS'
+  | 'NOT_FOUND'
   | 'ACCESS_DENIED'
   | 'HTTP_TIMEOUT'
   | 'HTTP_ERROR'

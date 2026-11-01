@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { constants, setPriority } from 'node:os';
 import { RadioError } from '../shared/errors.ts';
 import { redactText } from '../shared/redact.ts';
 import { lavfUserAgent } from '../streams/safe-fetch.ts';
@@ -121,8 +122,24 @@ export class StderrTail {
 }
 
 /**
+ * Gives a background process the lowest CPU priority, so on a busy or single-core host the
+ * operating system always serves the live encoder and the voice packets first. Best effort:
+ * where it isn't permitted, the process simply keeps normal priority.
+ */
+export function lowerPriority(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  try {
+    setPriority(child.pid, constants.priority.PRIORITY_LOW);
+  } catch {
+    /* not permitted on this host */
+  }
+}
+
+/**
  * Runs a short-lived FFmpeg/FFprobe job over an in-memory input buffer. The input is
- * passed only through stdin, so FFmpeg never opens a network or file URL itself.
+ * passed only through stdin, so FFmpeg never opens a network or file URL itself. These jobs
+ * (stream checks, comparisons, version checks) never play audio, so they run at the lowest
+ * CPU priority; only the live encoder (`AudioPipeline`) keeps normal priority.
  */
 export function runWithInput(
   registry: ProcessRegistry,
@@ -133,6 +150,7 @@ export function runWithInput(
 ): Promise<{ code: number | null; stdout: Buffer; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawnTracked(registry, bin, args, opts.owner, opts.kind);
+    lowerPriority(child);
     const out: Buffer[] = [];
     let outSize = 0;
     const err = new StderrTail(8000);

@@ -75,7 +75,7 @@ describe('probe: technical inspection (FR-004)', () => {
   });
 
   it('reports 404, HTML and unreachable sources as failures', async () => {
-    expect((await probeSource(deps, `${radio.base}/nope`, FAST)).failureCode).toBe('HTTP_STATUS');
+    expect((await probeSource(deps, `${radio.base}/nope`, FAST)).failureCode).toBe('NOT_FOUND');
     expect((await probeSource(deps, `${radio.base}/html`, FAST)).failureCode).toBe('CONTENT_TYPE_REJECTED');
     const prod = new SafeHttpClient(new UrlPolicy({ allowInsecureHttp: true }));
     expect((await probeSource({ ...deps, client: prod }, `${radio.base}/mp3`, FAST)).failureCode).toBe(
