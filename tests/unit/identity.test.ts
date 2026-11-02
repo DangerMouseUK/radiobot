@@ -5,6 +5,7 @@ import {
   correlateEnvelopesInSlices,
   correlationEvidence,
   decideIdentity,
+  ENVELOPE_RATE_HZ,
   metadataSignal,
   onsetEnvelope,
 } from '../../src/streams/identity.ts';
@@ -173,6 +174,69 @@ describe('audio correlation', () => {
     clearInterval(timer);
     expect(sliced).toEqual(correlateEnvelopes(a, b));
     expect(ticks).toBeGreaterThan(0);
+  });
+
+  it('scores exactly as a direct sum over every lag does', () => {
+    // The straightforward algorithm: every window's energy summed again for each lag.
+    const reference = (a: Float64Array, b: Float64Array, maxLagSeconds = 30) => {
+      const maxLag = Math.round(maxLagSeconds * ENVELOPE_RATE_HZ);
+      const scores: Array<{ lag: number; score: number }> = [];
+      let best = { score: -1, lag: 0, overlap: 0 };
+      for (let lag = -maxLag; lag <= maxLag; lag++) {
+        let sum = 0;
+        let sa = 0;
+        let sb = 0;
+        let count = 0;
+        for (let i = Math.max(0, -lag); i < a.length && i + lag < b.length; i++) {
+          sum += a[i]! * b[i + lag]!;
+          sa += a[i]! ** 2;
+          sb += b[i + lag]! ** 2;
+          count++;
+        }
+        if (count < 15 * ENVELOPE_RATE_HZ) continue;
+        const score = sa > 0 && sb > 0 ? sum / Math.sqrt(sa * sb) : 0;
+        scores.push({ lag, score });
+        if (score > best.score) best = { score, lag, overlap: count };
+      }
+      if (scores.length === 0) return null;
+      const exclusion = Math.round(0.5 * ENVELOPE_RATE_HZ);
+      let second = 0;
+      for (const s of scores)
+        if (Math.abs(s.lag - best.lag) > exclusion && s.score > second) second = s.score;
+      const mean = scores.reduce((s, v) => s + v.score, 0) / scores.length;
+      const sd = Math.sqrt(scores.reduce((s, v) => s + (v.score - mean) ** 2, 0) / scores.length) || 1e-9;
+      return {
+        score: best.score,
+        lagSeconds: best.lag / ENVELOPE_RATE_HZ,
+        prominence: (best.score - mean) / sd,
+        uniqueness: Math.max(0, best.score) / Math.max(second, 0.05),
+        overlapSeconds: best.overlap / ENVELOPE_RATE_HZ,
+      };
+    };
+    const full = programme(42, 50);
+    const noise = (seed: number, n: number) =>
+      Float64Array.from({ length: n }, (_, i) => Math.sin(seed * i) ** 2);
+    const cases: Array<[Float64Array, Float64Array]> = [
+      [onsetEnvelope(full.subarray(0, 30 * 8000)), onsetEnvelope(full.subarray(7 * 8000, 37 * 8000))],
+      [onsetEnvelope(programme(1, 30)), onsetEnvelope(programme(2, 25))],
+      [onsetEnvelope(new Int16Array(30 * 8000)), onsetEnvelope(programme(9, 30))],
+      [noise(1.3, 2_000), noise(2.7, 3_500)],
+      [noise(1.3, 1_000), noise(2.7, 1_000)], // too short to score at any lag
+    ];
+    for (const [a, b] of cases) {
+      const expected = reference(a, b);
+      const actual = correlateEnvelopes(a, b);
+      if (!expected) {
+        expect(actual).toEqual({ score: 0, lagSeconds: 0, prominence: 0, uniqueness: 0, overlapSeconds: 0 });
+        continue;
+      }
+      // The result is rounded (score to 0.001, prominence to 0.1, uniqueness to 0.01).
+      expect(Math.abs(actual.score - expected.score)).toBeLessThanOrEqual(0.0005 + 1e-9);
+      expect(Math.abs(actual.prominence - expected.prominence)).toBeLessThanOrEqual(0.05 + 1e-9);
+      expect(Math.abs(actual.uniqueness - expected.uniqueness)).toBeLessThanOrEqual(0.005 + 1e-9);
+      expect(actual.lagSeconds).toBe(expected.lagSeconds);
+      expect(actual.overlapSeconds).toBe(expected.overlapSeconds);
+    }
   });
 
   it('stops when cancelled', async () => {

@@ -257,6 +257,8 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
         } catch {
           /* try again */
         }
+        // Detached or destroyed while waiting: the connection belongs to someone else now.
+        if (this.#destroyed) return;
       }
       this.connection.rejoin();
       try {

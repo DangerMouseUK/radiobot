@@ -29,7 +29,7 @@ Each source has a `verification_state`. The PRD (§7.2) describes a longer chain
 | `unverified` | The probe succeeded but identity is not verified. | No: "station identity not verified" |
 | `offline` | The last probe failed: access denied (401/403/451), another HTTP status, a timeout, a decode failure, no audio and so on. Its next automatic check backs off (about 10 min, 1 h, 6 h, 12 h, then once a day; from 12 h when the address is gone, HTTP 404/410), unless an admin rescans. `/radio sources` and `/radio inspect` show how many checks failed in a row and when the next one is. A source with no successful check for 7 days (and at least 5 failed checks in a row) is **paused**: it is no longer checked automatically at all, in the background or for a play, until an admin runs `/radio rescan` (or a pack update gives it a new address). A temporary outage of hours or days never pauses a source. | No: "last probe failed (code)" |
 | `blocked_by_policy` | The probe failed on a policy rule: `ADDRESS_BLOCKED`, a disallowed URL host, port, scheme or credentials, or `HLS_ENCRYPTED`. | No |
-| `cooldown` | Circuit-broken after 4 consecutive playback failures (the first plus three retries). | No, until `cooldown_until` passes |
+| `cooldown` | Circuit-broken after 4 consecutive playback failures (the first plus three retries). The bot's own faults, such as FFmpeg failing to start, don't count. | No, until `cooldown_until` passes |
 
 The type definitions also reserve `resolved`, `transport_healthy`, `codec_verified`, `identity_verified` and `retired` for finer-grained tracking later; v1 does not set them. Each probe records the same facts in `source_probe_results` as evidence instead.
 

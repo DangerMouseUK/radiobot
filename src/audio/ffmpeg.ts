@@ -204,14 +204,15 @@ export async function checkFfmpeg(
   registry: ProcessRegistry,
   paths: FfmpegPaths,
 ): Promise<{ ffmpegVersion: string; ffprobeVersion: string; libopus: boolean; libavformat: string | null }> {
-  const ver = async (bin: string) => {
+  const versionOutput = async (bin: string) => {
     const r = await runWithInput(registry, bin, ['-hide_banner', '-version'], Buffer.alloc(0), {
       owner: 'startup',
       kind: 'version',
       timeoutMs: 10_000,
     });
-    return r.stdout.toString().split(/\r?\n/)[0] ?? 'unknown';
+    return r.stdout.toString();
   };
+  const firstLine = (out: string) => out.split(/\r?\n/)[0] ?? 'unknown';
   const encoders = await runWithInput(
     registry,
     paths.ffmpeg,
@@ -223,15 +224,12 @@ export async function checkFfmpeg(
       timeoutMs: 10_000,
     },
   );
-  const full = await runWithInput(registry, paths.ffmpeg, ['-hide_banner', '-version'], Buffer.alloc(0), {
-    owner: 'startup',
-    kind: 'version',
-    timeoutMs: 10_000,
-  });
+  // One run of `ffmpeg -version` gives both the version line and the libavformat version.
+  const ffmpeg = await versionOutput(paths.ffmpeg);
   return {
-    ffmpegVersion: await ver(paths.ffmpeg),
-    libavformat: lavfUserAgent(full.stdout.toString()),
-    ffprobeVersion: await ver(paths.ffprobe),
+    ffmpegVersion: firstLine(ffmpeg),
+    libavformat: lavfUserAgent(ffmpeg),
+    ffprobeVersion: firstLine(await versionOutput(paths.ffprobe)),
     libopus: /\blibopus\b/.test(encoders.stdout.toString()),
   };
 }

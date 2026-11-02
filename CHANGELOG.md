@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - A detailed sources view of a station with many sources and a server override could go over Discord's 6000-character message limit and fail to send.
 - **Previous station** with nothing playing now starts from the last station, not the one before it, and **Next** or **Previous** says there is no other station instead of restarting the one that plays.
 - `/radio join` with a default station used two play tokens instead of one, so the per-user limit ran out after three joins rather than six.
+- A station started within a second or two of the bot leaving the channel played without stall detection, so a stream that stopped sending audio was never restarted.
+- An HLS station whose playlist servers were briefly out of step could repeat a few seconds of audio.
+- One failed download of an HLS stream's start-up section (fMP4 streams) stopped the stream; it is now retried once, like the audio segments.
+- When FFmpeg failed to start, or the bot hit an internal error, the failure counted against the station's source, which could put a working source on hold and switch to a fallback for no reason. Such failures are now retried on the same source and never count against it.
+- A voice connection that had just been handed over could still try to rejoin the channel on its own.
 
 ## [1.0.5] - 2026-11-02
 
