@@ -37,7 +37,7 @@ Each source has a `verification_state`. The PRD (§7.2) describes a longer chain
 | `unverified` | The check succeeded but the identity is not verified. | No: "not verified as this station" |
 | `offline` | The last check failed: access denied (401/403/451), another HTTP status, a timeout, a decode failure, no audio and so on. See [Failed checks](#failed-checks). | No: "last check failed (code)" |
 | `blocked_by_policy` | The check failed on a safety rule: `ADDRESS_BLOCKED`, a URL host, port, scheme or credentials that aren't allowed, or `HLS_ENCRYPTED`. | No: "rejected by URL safety policy" |
-| `cooldown` | The circuit breaker tripped after 4 playback failures in a row (the first plus three retries). The bot's own faults, such as FFmpeg failing to start, don't count. | No, until the cooldown ends: "cooling down after repeated failures until …" |
+| `cooldown` | The circuit breaker tripped: at least 4 playback failures in a row over more than a minute. The bot's own faults, such as FFmpeg failing to start, don't count, and several servers failing at the same moment count once. When nothing else can play, the bot checks it every 2 min, and a good check ends the cooldown. | No, until the cooldown ends: "cooling down after repeated failures until …" |
 
 The type definitions also reserve `resolved`, `transport_healthy`, `codec_verified`, `identity_verified` and `retired` for finer tracking later; this version doesn't set them. Each check stores its findings in `source_probe_results` instead.
 
@@ -129,7 +129,7 @@ What counts as verified for a pack source is shared by every server on the insta
    - Stereo beats mono.
    - A clear difference in audio bandwidth counts: one source below 32 kHz and the other at 44.1 kHz or above.
    - **Different codecs are never ranked by bitrate.** AAC against MP3, for example, is "different codecs are not ranked by bitrate". An unknown codec is inconclusive too.
-   - Within the same codec (AAC-LC, HE-AAC, MP3 and so on each count separately), bitrates within 15 % of each other are equal. A bigger gap counts only if both figures are measured or from codec metadata; if either is only advertised, the result is inconclusive.
+   - Within the same codec (AAC-LC, HE-AAC, MP3 and so on each count separately), two **measured** bitrates within 3 % of each other are equal (a measurement is precise, so 112 against 128 kbps is a real difference). Otherwise figures within 15 % are equal, because codec metadata (for AAC only an estimate) and advertised figures are looser. A bigger gap counts only if both figures are measured or from codec metadata; if either is only advertised, the result is inconclusive.
 4. **Reliability.** A difference in health score of 20 points or more decides.
 5. **Start-up time.** A difference of more than 1.5 s in measured start-up time decides.
 6. **The pack's `priority`** (lower first), then the source ID. This is what decides between, say, a 128 kbps MP3 and a 128 kbps AAC stream of similar health: different codecs aren't ranked, so the station pack's priority settles it, and the explanation says so.
@@ -164,7 +164,7 @@ While a station plays, anyone who can control the radio can switch it to another
 
 When someone plays a station (`prepareForPlayback`):
 
-- **If an eligible source exists, it plays straight away.** The station's other sources that are due a check (last checked more than 24 h ago, or failing and past their wait) are checked in the background, but only once the stream has played steadily for 30 s. Background checks run one at a time, at the lowest CPU priority, so a live stream is never disturbed:
+- **If an eligible source exists, it plays straight away.** The station's other sources that are due a check (last checked more than 24 h ago, or failing and past their wait) are checked in the background, but only once the stream has played steadily for 30 s, and again about once a minute while it plays (that is how a source that failed earlier shows it works again, so the bot can move back to it). The source that is playing is never checked in the background: its steady playback is better evidence than a check, and 30 s of it clears a failed check. Background checks run one at a time, at the lowest CPU priority, so a live stream is never disturbed:
   - a source is queued once, and skipped if it was checked in the meantime;
   - no background check starts while any stream on the installation is in its first 30 s;
   - a check someone is waiting for interrupts a background check on the same stream host; the interrupted check records nothing and runs again later.

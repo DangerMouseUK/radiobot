@@ -526,4 +526,15 @@ describe('playback health: blips, holds and the playing source', () => {
     t.service.refreshStation(STATION, 'a');
     expect(queued).toEqual([['b']]);
   });
+
+  it('checks a source that failed in playback again a few minutes later, so the bot can move back to it', () => {
+    const t = setup([{ id: 'a', patch: verified() }]);
+    const failedAt = Date.now() + 1_000;
+    t.stations.recordFailure('a', 'STREAM_EOF', new Date(failedAt).toISOString());
+    expect(t.service.needsProbe(t.source('a'), failedAt + 60_000)).toBe(false);
+    expect(t.service.needsProbe(t.source('a'), failedAt + 6 * 60_000)).toBe(true);
+    // A failed check marks it offline, which keeps its own, longer back-off.
+    t.stations.applyProbePatch('a', { verificationState: 'offline' });
+    expect(t.service.needsProbe(t.source('a'), failedAt + 6 * 60_000)).toBe(false);
+  });
 });

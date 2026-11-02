@@ -100,6 +100,8 @@ export const CIRCUIT_BREAK_MIN_SPAN_MS = 60_000;
 export const FAILURE_DEDUP_MS = 500;
 /** A play with nothing else to use re-checks a source on hold this often, instead of waiting it out. */
 export const COOLDOWN_RECHECK_MS = 2 * 60_000;
+/** A source that failed in playback since its last check is checked again this long after, to see if it is back. */
+export const PLAYBACK_FAILURE_RECHECK_MS = 5 * 60_000;
 
 export interface SourceServiceDeps {
   stations: StationRepository;
@@ -483,6 +485,12 @@ export class SourceService {
     if (mode === 'foreground' && s.cooldownUntil && Date.parse(s.cooldownUntil) > now) {
       const lastTry = Math.max(Date.parse(s.lastProbeAt), Date.parse(s.lastFailureAt ?? s.lastProbeAt));
       return now - lastTry >= COOLDOWN_RECHECK_MS;
+    }
+    // It failed in playback since its last check (a failed check marks it offline instead): check it
+    // again a few minutes later, so that a session that moved away can move back once it works.
+    const onHold = s.cooldownUntil !== null && Date.parse(s.cooldownUntil) > now;
+    if (s.verificationState !== 'offline' && !onHold && s.lastFailureAt && s.lastFailureAt > s.lastProbeAt) {
+      return now - Date.parse(s.lastFailureAt) >= PLAYBACK_FAILURE_RECHECK_MS;
     }
     if (s.verificationState === 'offline') {
       if (isPaused(s, now)) return false;

@@ -1167,12 +1167,12 @@ export class GuildSession {
     if (!current || !stationId || !p || this.#stableTimer || this.#manualSourceId) return;
     if (now - this.#lastUpgradeCheckAt < this.#t.upgradeCheckMs) return;
     this.#lastUpgradeCheckAt = now;
-    if (now - this.#lastAutoSwitchAt < this.#t.autoSwitchMinIntervalMs) return;
     if (this.#desired() !== 'playing') return;
     try {
       // Keeps the station's other sources checked (in the background, at the lowest priority),
       // so a source that failed earlier can show that it works again.
       this.#d.sources.refreshStation?.(stationId, current.id);
+      if (now - this.#lastAutoSwitchAt < this.#t.autoSwitchMinIntervalMs) return;
       const better = this.#betterSource(stationId, current);
       if (better) {
         this.#log.info({ from: current.id, to: better.id }, 'moving back to a better source');
