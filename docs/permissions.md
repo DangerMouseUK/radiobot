@@ -58,7 +58,7 @@ Separately, the bot **operator** is either a Discord user listed in `OPERATOR_US
 Each command and component needs one capability:
 
 - **read**: browse, list (including `scope:favourites`), now, quality, sources, inspect, status, help, `queue list`, and the browse (including its Favourites filter), list, refresh, sources and inspect buttons.
-- **control**: play (including choosing a station in browse or from an ambiguity picker), stop, join, leave, skip, `queue add`, `queue remove` and `queue clear`, the next, previous and skip buttons, the favourite button, and the source picker under `/radio sources` (which only switches the station that is playing, until the station changes; when an admin has pinned the station to one source, only admins can use it).
+- **control**: play (including choosing a station in browse or from an ambiguity picker), stop, join, leave, skip, `queue add`, `queue remove` and `queue clear`, the next, previous and skip buttons, the Favourite and Unfavourite buttons, and the source picker under `/radio sources` (which only switches the station that is playing, until the station changes; when an admin has pinned the station to one source, only admins can use it).
 - **admin**: stats (including its Refresh button; its Close button only deletes the clicker's own private reply), add, edit, remove, rescan (including the re-probe button), the *Prefer the playing source* and *Back to automatic choice* buttons under `/radio sources`, sync, config (including every settings control), export, import (including Apply and Cancel), panel, and `source pin`, `prefer`, `auto` and `verify`.
 
 ### Capability matrix
@@ -94,7 +94,7 @@ An empty list means "no restriction".
 
 ### Voice channel choice
 
-For play and join, the target is chosen in this order: the locked preferred channel, then the explicit `channel` option, then the channel the bot is already in, then the requester's voice channel, then the preferred channel. The capability check runs against that target. The connection step then re-checks the allowlist and the bot's own permissions on that channel.
+For play and join, the target is chosen in this order: the locked preferred channel, then the explicit `channel` option, then the channel the bot is already in, then the requester's voice channel, then the preferred channel. The capability check runs against that target, so DJs and admins can name any channel, while listeners can name any channel only in the `any` mode and only the one they are in with `same_channel`. The connection step then re-checks the allowlist and the bot's own permissions on that channel.
 
 ## Server-side checks for buttons and menus
 
@@ -105,7 +105,7 @@ The PRD requires that "a button posted in a public channel must not become an un
    - Every ID fits Discord's 100-character limit by construction: actions are at most 7 characters (all listed in `COMPONENT_ACTIONS`), the argument at most 65, which is the longest possible station ID, and the expiry 5. Building an ID with anything longer is refused.
    - IDs in the older `rb1` format (Radio Bot 1.0.5 and earlier) are still checked, then treated as expired. The control panel is redrawn when the bot starts, so its buttons are replaced by themselves.
 3. **Expiry.** Now-playing buttons, browse pages and ambiguity pickers expire after 15 minutes, settings pages and the `/radio stats` panel after 30 minutes, and import previews after 10 minutes, each rounded up to the next whole minute. Expired controls answer "These buttons have expired. Run the command again.". Control-panel buttons have no expiry so that the panel keeps working across restarts, and they are still re-authorised on every click.
-4. **Server-held state.** Browse sessions and import previews are referenced by a random token that maps to server-side state. An import can only be applied by an admin of the same server before its preview expires, and only once.
+4. **Server-held state.** Browse sessions and import previews are referenced by a random token that maps to server-side state. An import can only be applied by an admin of the same server before its preview expires, and only once. Each server has at most one import preview: a new `/radio import` replaces the previous one, whose buttons then say it has expired.
 5. **Superseding.** A new play or switch increments the session's generation counter, so an older request that is still pending cannot overwrite a newer one. Its reply says "Superseded".
 
 ## Rate limits
@@ -121,6 +121,7 @@ These are in-memory token buckets (`RateLimits` in `src/discord/context.ts`). Ea
 | Catalogue sync | per server | 2 per hour |
 | Catalogue sync | whole installation | 1 per 10 min |
 | Button and menu clicks | per user | 20 per 20 s |
+| Settings import (`/radio import`) | per server | 5 per 10 min |
 
 Other installation-wide bounds:
 

@@ -18,6 +18,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - One failed download of an HLS stream's start-up section (fMP4 streams) stopped the stream; it is now retried once, like the audio segments.
 - When FFmpeg failed to start, or the bot hit an internal error, the failure counted against the station's source, which could put a working source on hold and switch to a fallback for no reason. Such failures are now retried on the same source and never count against it.
 - A voice connection that had just been handed over could still try to rejoin the channel on its own.
+- Pressing **Favourite** twice, or on an older card, could undo it. **Favourite** now only adds and **Unfavourite** only removes, and each says so if nothing needed to change.
+- A new `/radio import` now replaces the server's previous import preview, whose buttons then say it has expired, and imports are limited to five per server in ten minutes.
+- The `channel` option of `/radio play` said it was for DJs and admins only. Listeners can use it too: with the default listener control, only for the channel they are in.
+- `/radio join` after `/radio stop`, with the bot still in the channel, said "Already here" instead of starting the default station.
+- The voice channel status could be set again just after the bot left a channel.
+- A browse list now stays open for 15 minutes after its last use, not 15 minutes after it was opened.
+- Station suggestions that Discord gave up waiting for were logged as errors and counted as internal faults.
 
 ## [1.0.5] - 2026-11-02
 

@@ -49,7 +49,9 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addChannelOption((o) =>
           o
             .setName('channel')
-            .setDescription('Voice channel to play in (DJs and admins only)')
+            .setDescription(
+              'Voice channel to play in (by default, listeners can only pick the one they are in)',
+            )
             .addChannelTypes(ChannelType.GuildVoice),
         ),
     )

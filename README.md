@@ -133,7 +133,7 @@ Replies that only concern you are ephemeral (only you see them).
 
 | Command | Level | What it does |
 |---|---|---|
-| `/radio play <station> [channel]` | Control | Plays a station in your voice channel (or `channel`), or switches to it. An ambiguous name shows a picker; the bot never guesses. |
+| `/radio play <station> [channel]` | Control | Plays a station in your voice channel (or `channel`), or switches to it. DJs and admins can name any channel; with the default listener control, listeners can only name the one they are in. An ambiguous name shows a picker; the bot never guesses. |
 | `/radio browse [pack] [category] [search]` | Read | Paged station picker, grouped by pack, with this server's custom stations last. Picking a station plays it (needs Control). |
 | `/radio list [scope] [pack] [page]` | Read | Station list with status and IDs: pack stations (`scope:packs`, optionally one `pack`), this server's `custom` stations, or `favourites`. |
 | `/radio now` | Read | What's playing, at a glance: the song or show title from the stream, then the channel, the station's stream and what goes to Discord side by side, and one line on why this source plays (and the fallback), with control buttons and what's up next. The full figures are under Sources, Inspect and `/radio quality`. |
@@ -193,7 +193,7 @@ Radio never ends, so the queue moves only when you skip.
 
 **Favourites and the default station** do different jobs:
 
-- **Favourites** are this server's shortlist. Anyone who can control the radio adds or removes one with the **Favourite** button under a playing station. They come first in the `/radio play` suggestions, have their own list (the Favourites button in Browse, or `/radio list scope:favourites`), and when there are two or more, Next and Previous step through them while one is playing.
+- **Favourites** are this server's shortlist. Anyone who can control the radio adds one with the **Favourite** button under a playing station, and removes it with **Unfavourite**. They come first in the `/radio play` suggestions, have their own list (the Favourites button in Browse, or `/radio list scope:favourites`), and when there are two or more, Next and Previous step through them while one is playing.
 - **The default station** is the one station the bot starts by itself, set by an admin with `/radio config default_station` (choose **No default station** to clear it). `/radio join` plays it, and autostart plays it in the preferred voice channel when the bot starts. It also comes first in the `/radio play` suggestions.
 
 > `/radio` uses all 25 top-level options that Discord allows, which is why `queue` and `source` are subcommand groups.
