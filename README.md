@@ -72,8 +72,8 @@ From then on, the `radio-bot` command looks after it:
 | Command | Does |
 |---|---|
 | `radio-bot status` · `radio-bot logs` | Version, health and available updates · the live log |
-| `radio-bot update` | Updates to the newest release: warns you first if the bot is playing, backs up the database, keeps the old version's last 500 log lines and removes old images |
-| `radio-bot backup` · `radio-bot restore <file>` | Copy the database out · put a copy back |
+| `radio-bot update` | Updates to the newest release: warns you first if the bot is playing, backs up the database to `backups/`, keeps the old version's last 500 log lines and removes old images. Run it again to finish an update that stopped halfway |
+| `radio-bot backup` · `radio-bot restore <file>` | Copy the database out (or, if the bot won't start, the backups it already made) · put a copy back |
 | `radio-bot config` | Edit installation settings, then restart to apply them |
 | `radio-bot uninstall` | Remove it, optionally keeping a copy of your data |
 

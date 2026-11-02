@@ -11,3 +11,4 @@ catalog/packs/*/evidence/*.tmp
 backups/
 compose.override.yaml
 logs/
+.update-pending

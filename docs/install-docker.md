@@ -163,10 +163,10 @@ docker compose logs -f --tail=200 radio-bot
 
 ## Healthcheck
 
-The bot writes `/app/data/health.json` every 30 s. The image's `HEALTHCHECK` runs the following every 60 s, with a 10 s timeout, a 120 s start period and 3 retries:
+The bot writes `/app/data/health.json` every 30 s. The image's `HEALTHCHECK` runs the following every 60 s, with a 10 s timeout, a 120 s start period and 3 retries. It runs at the lowest CPU priority (`nice -n 19`), so on a one-core host it can't delay the stream:
 
 ```sh
-node dist/scripts/healthcheck.js
+nice -n 19 node dist/scripts/healthcheck.js
 ```
 
 The container is **unhealthy** when any of these is true:
@@ -181,7 +181,7 @@ It is normal for the container to report unhealthy for a short time after starti
 You can run the check by hand:
 
 ```sh
-docker compose exec radio-bot node dist/scripts/healthcheck.js
+docker compose exec radio-bot nice -n 19 node dist/scripts/healthcheck.js
 ```
 
 ### Optional diagnostics endpoint
@@ -200,7 +200,7 @@ Don't edit `compose.yaml` itself. Put your changes (a bind mount instead of the 
 
 ## Upgrades
 
-If you installed with the installer, run `radio-bot update`. It warns you if the bot is playing anywhere (playback only resumes by itself where **Resume after restart** is on), backs up the database, switches to the newest release, saves the last 500 log lines of the old container to `logs/` (newest 5 kept), restarts, and once the new version is healthy removes the older `radio-bot` images. By hand:
+If you installed with the installer, run `radio-bot update`. It warns you if the bot is playing anywhere (playback only resumes by itself where **Resume after restart** is on), backs up the database and copies the backups to `backups/`, switches to the newest release, saves the last 500 log lines of the old container to `logs/` (newest 5 kept), restarts, and once the new version is healthy removes the older `radio-bot` images. If an update stops after switching versions but before the restart (a failed download, Ctrl+C), `radio-bot update` notices that the container still runs the old image and finishes the job, and `radio-bot status` says so. By hand:
 
 ```sh
 docker compose logs --tail=500 radio-bot > radio-bot-before-update.log   # replacing the container deletes its logs
@@ -226,15 +226,17 @@ Read [CHANGELOG.md](../CHANGELOG.md) before upgrading.
 Take a consistent backup while the bot is running:
 
 ```sh
-docker compose exec radio-bot node dist/scripts/backup.js
+docker compose exec radio-bot nice -n 19 node dist/scripts/backup.js
 # → Backup written: /app/data/backups/radio-bot-manual-<timestamp>.sqlite
 ```
 
-Copy backups off the host:
+`nice -n 19` runs it at the lowest CPU priority, so it can't hold up the stream. Copy backups off the host (this also works while the container is stopped or restarting, for example to fetch the pre-migration backup from a version that won't start):
 
 ```sh
-docker compose cp radio-bot:/app/data/backups ./radio-bot-backups
+docker cp radio-bot:/app/data/backups ./radio-bot-backups
 ```
+
+With the installer, `radio-bot backup` does both, and `radio-bot restore FILE` puts a backup back: it checks that the file is a SQLite database before stopping anything, and starts the bot again on its current data if copying the file in fails.
 
 Backups contain Discord server, channel and role IDs, settings, custom station URLs (which may include tokens you added yourself), and the last requester's user ID. Store them as carefully as `.env`. They never contain the Discord token, which lives only in the environment.
 

@@ -29,12 +29,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `/radio import` deleted the server's favourite custom stations and its custom default station, because exports leave those out. An import now keeps them: custom-station favourites come after the file's favourites, and a custom default station stays when the file has none.
 - When the bot is removed from a server, its settings and its custom stations are now deleted together, so a failure part-way can't delete one and keep the other.
 - Some error messages in logs, and the error stored in catalogue sync reports, could include a full stream or list URL with a token in it. They are now redacted like other logged errors.
+- An update that stopped halfway (for example, the image download failed) left the old version running, and running `radio-bot update` again only said "Already on the newest version". It now finishes the update, and `radio-bot status` says when one didn't finish.
+- `radio-bot update` carried on when switching a branch install to the new version failed. It now stops and says so.
+- `radio-bot restore` now refuses a file that isn't a database backup before it stops anything, and if copying the backup in fails or is interrupted, it starts the bot again on the data it had instead of leaving it stopped.
+- The installer and `radio-bot` now also wait for FFmpeg to be reported working before saying the bot is online, as Docker's health check does.
+- Going back to an older version after an update couldn't be done as the install guide described: the update's backup stayed inside the bot's data, and `radio-bot backup` refused to run while the bot couldn't start. `radio-bot update` now copies its backup to the `backups` folder, `radio-bot backup` copies the existing backups out even when the bot isn't running, and the guide explains which backup to put back.
+- Docs: removed "v1.0.0" from status notes that apply to every release, and the install guide now says that `radio-bot logs` shows the last 200 lines.
 
 ### Changed
 
 - Database migration 4 (applied automatically after a backup at the next start) adds indexes, so deleting a station or source no longer reads every server's favourites, queue and source preferences.
 - Adding, editing or removing a custom station re-reads only that server's custom stations, not the whole catalogue.
 - Manual backups (`backup.js`, and the backups `radio-bot` takes) run at the lowest process priority, so they yield to the stream's encoder.
+- Docker's health check, the backups that `radio-bot` takes and its own health checks now run at the lowest CPU priority, so they can't hold up the stream on a one-core host.
+- Docker builds reuse downloaded packages and earlier build steps, so they are faster. The image is the same.
+- The release workflow now runs every CI check, including the installer test and the image smoke test, before it publishes an image.
 
 ## [1.0.5] - 2026-11-02
 

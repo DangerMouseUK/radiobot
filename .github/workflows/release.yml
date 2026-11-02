@@ -39,8 +39,43 @@ jobs:
           FFPROBE_PATH: /usr/bin/ffprobe
       - run: pnpm build
 
-  image:
+  lifecycle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shellcheck the installer and manager
+        run: shellcheck -x install.sh scripts/radio-bot.sh tests/lifecycle/run.sh tests/lifecycle/fake-docker
+      - name: Install, update, back up and uninstall against a fake Docker
+        run: bash tests/lifecycle/run.sh
+
+  docker:
+    runs-on: ubuntu-24.04
     needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: radio-bot:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test image (FFmpeg with libopus, config validation)
+        run: |
+          docker run --rm --entrypoint ffmpeg radio-bot:ci -hide_banner -encoders | grep -q libopus
+          set +e
+          docker run --rm radio-bot:ci > out.txt 2>&1
+          code=$?
+          set -e
+          cat out.txt
+          test "$code" = "78"
+          grep -q "DISCORD_TOKEN" out.txt
+
+  image:
+    needs: [test, lifecycle, docker]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -79,6 +114,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: true
           sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.IMAGE }}

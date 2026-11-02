@@ -6,7 +6,7 @@ The bot needs **outbound** internet access to Discord (HTTPS, WebSocket and UDP 
 
 You run your own Discord application with your own token. Radio Bot is unofficial and is not affiliated with or endorsed by any broadcaster. Before running it for anyone other than yourself, read [rights-and-disclaimer.md](rights-and-disclaimer.md).
 
-> Status: this path follows standard Node.js and systemd practice, but it has not yet been tested end to end against a live Discord server for v1.0.0.
+> Status: this path follows standard Node.js and systemd practice, but it has not yet been tested end to end against a live Discord server.
 
 ## Requirements
 
