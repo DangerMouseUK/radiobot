@@ -8,42 +8,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- A `CATALOG_SYNC_INTERVAL_HOURS` above 596 (the range goes up to 720) made catalogue sync run again and again without pause, because Node can't wait that long with a single timer. Long intervals are now waited out in full.
-- The admin buttons on the sources view (**Prefer the playing source** and **Back to automatic choice**) failed with "Something went wrong" for stations with the longest allowed IDs, because the button's ID went over Discord's 100-character limit. Button and menu IDs now fit that limit by design, whatever the station: a new, shorter way of writing the expiry leaves room for the longest station ID with every action, and lasts until 2140 (the old one would have grown a character in December 2038). Buttons sent by an earlier version say they have expired; run the command again. The control panel is redrawn when the bot starts.
-- A detailed sources view of a station with many sources and a server override could go over Discord's 6000-character message limit and fail to send.
-- **Previous station** with nothing playing now starts from the last station, not the one before it, and **Next** or **Previous** says there is no other station instead of restarting the one that plays.
+- With `CATALOG_SYNC_INTERVAL_HOURS` above 596 (the allowed range goes up to 720), catalogue sync ran again and again without a pause, because Node can't wait that long with a single timer. Long intervals are now waited out in full.
+- For stations with the longest allowed IDs, the admin buttons on the sources view (**Prefer the playing source** and **Back to automatic choice**) failed with "Something went wrong", because the button's ID went over Discord's 100-character limit. Button and menu IDs now fit that limit by design, whatever the station. A new, shorter way of writing the expiry leaves room for the longest station ID with every action, and it lasts until 2140 (the old one would have grown by a character in December 2038). Buttons sent by an earlier version say they have expired: run the command again. The control panel is redrawn when the bot starts.
+- The detailed sources view of a station with many sources and a server override could go over Discord's 6000-character message limit and fail to send.
+- **Previous station** with nothing playing now starts at the last station in the list, not the one before it. **Next** and **Previous** now say there is no other station to move to, instead of restarting the station that is playing.
 - `/radio join` with a default station used two play tokens instead of one, so the per-user limit ran out after three joins rather than six.
-- A station started within a second or two of the bot leaving the channel played without stall detection, so a stream that stopped sending audio was never restarted.
-- An HLS station whose playlist servers were briefly out of step could repeat a few seconds of audio.
-- One failed download of an HLS stream's start-up section (fMP4 streams) stopped the stream; it is now retried once, like the audio segments.
-- When FFmpeg failed to start, or the bot hit an internal error, the failure counted against the station's source, which could put a working source on hold and switch to a fallback for no reason. Such failures are now retried on the same source and never count against it.
+- A station started within a second or two of the bot leaving the channel played without stall detection, so if the stream stopped sending audio, it was never restarted.
+- An HLS station could repeat a few seconds of audio when its playlist servers were briefly out of step.
+- For HLS streams in fMP4 format, one failed download of the stream's start-up section stopped the stream. That section is now retried once, like the audio segments.
+- When FFmpeg failed to start, or the bot hit an internal error, the failure counted against the station's source. That could put a working source on hold and switch to a fallback for no reason. Such failures are now retried on the same source and never count against it.
 - A voice connection that had just been handed over could still try to rejoin the channel on its own.
-- Pressing **Favourite** twice, or on an older card, could undo it. **Favourite** now only adds and **Unfavourite** only removes, and each says so if nothing needed to change.
-- A new `/radio import` now replaces the server's previous import preview, whose buttons then say it has expired, and imports are limited to five per server in ten minutes.
-- The `channel` option of `/radio play` said it was for DJs and admins only. Listeners can use it too: with the default listener control, only for the channel they are in.
+- Pressing **Favourite** twice, or on an older message, could undo it. **Favourite** now only adds and **Unfavourite** only removes, and each one says so when nothing needed to change.
+- A new `/radio import` now replaces the server's earlier import preview, whose buttons then say it has expired. Imports are limited to five per server in ten minutes.
+- The `channel` option of `/radio play` said it was for DJs and admins only. Listeners can use it too; with the default listener control, only for the channel they are in.
 - `/radio join` after `/radio stop`, with the bot still in the channel, said "Already here" instead of starting the default station.
 - The voice channel status could be set again just after the bot left a channel.
-- A browse list now stays open for 15 minutes after its last use, not 15 minutes after it was opened.
-- Station suggestions that Discord gave up waiting for were logged as errors and counted as internal faults.
+- A browse list now stays open for 15 minutes after it was last used, not 15 minutes after it was opened.
+- Station suggestions that arrived after Discord had stopped waiting for them were logged as errors and counted as internal faults.
 - If `DIAGNOSTICS_PORT` was already in use, the bot stopped at start-up, and Docker restarted it into the same error again and again. It now logs a warning and runs without the diagnostics endpoint.
-- `/radio import` deleted the server's favourite custom stations and its custom default station, because exports leave those out. An import now keeps them: custom-station favourites come after the file's favourites, and a custom default station stays when the file has none.
+- `/radio import` deleted the server's favourite custom stations and its custom default station, because exports leave those out. An import now keeps them: the custom-station favourites come after the file's favourites, and a custom default station stays when the file sets no default.
 - When the bot is removed from a server, its settings and its custom stations are now deleted together, so a failure part-way can't delete one and keep the other.
-- Some error messages in logs, and the error stored in catalogue sync reports, could include a full stream or list URL with a token in it. They are now redacted like other logged errors.
-- An update that stopped halfway (for example, the image download failed) left the old version running, and running `radio-bot update` again only said "Already on the newest version". It now finishes the update, and `radio-bot status` says when one didn't finish.
+- Some error messages in the logs, and the error stored in catalogue sync reports, could include a full stream or list URL with a token in it. They are now redacted like other logged errors.
+- If an update stopped halfway (for example because the image download failed), the old version kept running, and running `radio-bot update` again only said "Already on the newest version". It now finishes the update, and `radio-bot status` says when an update didn't finish.
 - `radio-bot update` carried on when switching a branch install to the new version failed. It now stops and says so.
-- `radio-bot restore` now refuses a file that isn't a database backup before it stops anything, and if copying the backup in fails or is interrupted, it starts the bot again on the data it had instead of leaving it stopped.
-- The installer and `radio-bot` now also wait for FFmpeg to be reported working before saying the bot is online, as Docker's health check does.
-- Going back to an older version after an update couldn't be done as the install guide described: the update's backup stayed inside the bot's data, and `radio-bot backup` refused to run while the bot couldn't start. `radio-bot update` now copies its backup to the `backups` folder, `radio-bot backup` copies the existing backups out even when the bot isn't running, and the guide explains which backup to put back.
-- Docs: removed "v1.0.0" from status notes that apply to every release, and the install guide now says that `radio-bot logs` shows the last 200 lines.
+- `radio-bot restore` now refuses a file that isn't a database backup before it stops anything. If copying the backup in fails or is interrupted, it starts the bot again on its existing data instead of leaving it stopped.
+- The installer and `radio-bot` now also wait until FFmpeg is reported working before saying the bot is online, as Docker's health check does.
+- Going back to an older version after an update didn't work as the install guide described: the update's backup stayed inside the bot's data, and `radio-bot backup` refused to run while the bot couldn't start. `radio-bot update` now copies its backup to the `backups` folder, `radio-bot backup` copies the existing backups out even when the bot isn't running, and the guide explains which backup to put back.
+- Docs: status notes that apply to every release no longer say "v1.0.0", and the install guide now says that `radio-bot logs` shows the last 200 lines.
 
 ### Changed
 
-- Database migration 4 (applied automatically after a backup at the next start) adds indexes, so deleting a station or source no longer reads every server's favourites, queue and source preferences.
+- Database migration 4 adds indexes, so deleting a station or source no longer reads every server's favourites, queue and source preferences. It is applied automatically at the next start, after a backup.
 - Adding, editing or removing a custom station re-reads only that server's custom stations, not the whole catalogue.
-- Manual backups (`backup.js`, and the backups `radio-bot` takes) run at the lowest process priority, so they yield to the stream's encoder.
+- Manual backups (`backup.js`, and the backups `radio-bot` takes) run at the lowest process priority, so they give way to the stream's encoder.
 - Docker's health check, the backups that `radio-bot` takes and its own health checks now run at the lowest CPU priority, so they can't hold up the stream on a one-core host.
 - Docker builds reuse downloaded packages and earlier build steps, so they are faster. The image is the same.
 - The release workflow now runs every CI check, including the installer test and the image smoke test, before it publishes an image.
+- The tests can now report coverage: `pnpm test:coverage` shows how much of the bot's code they run, file by file.
 
 ## [1.0.5] - 2026-11-02
 

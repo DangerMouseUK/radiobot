@@ -24,7 +24,7 @@ You need:
 
 ```sh
 corepack enable
-pnpm install
+pnpm install --frozen-lockfile
 pnpm typecheck      # tsc --noEmit (strict)
 pnpm lint           # biome check .
 pnpm test           # vitest run (unit + integration)
@@ -36,14 +36,24 @@ Other scripts:
 | Script | What it does |
 |---|---|
 | `pnpm test:unit` / `pnpm test:integration` | Run one test suite only |
-| `pnpm format` | Apply Biome formatting |
+| `pnpm vitest run tests/unit/session.test.ts` | Run a single test file |
+| `pnpm test:coverage` | Run every test and report how much of `src/` and `scripts/` they run, file by file (V8 coverage; settings in `vitest.config.ts`) |
+| `pnpm format` | Apply Biome formatting (run it after editing anything Biome checks: `src/`, `scripts/`, `tests/`, `catalog/` and the root JSON and TS files) |
 | `pnpm dev` | Run from source with `node --watch src/index.ts`. Needs the variables from a `.env` with a **test** bot token exported into your shell; the bot does not read `.env` itself. |
 | `pnpm validate-catalogue` | Validates every station pack (plus `EXTRA_PACKS_DIR`). Add `--pack <dir>` to check one pack folder, or `--probe <stationId…>` / `--probe --pack-id <id>` for live probes, `--compare` for audio comparisons and `--json <file>` for an evidence report. Runs from `dist/`, so run `pnpm build` first. CI runs `node scripts/validate-catalogue.ts` straight from source. |
 | `pnpm register-commands` | Force guild command registration (optionally pass guild IDs). Needs a build. |
 | `pnpm healthcheck` / `pnpm backup` | Check the heartbeat file / write a manual database backup. Need a build. |
-| `pnpm test:lifecycle` | Linux only: runs `install.sh` and `scripts/radio-bot.sh` (install, update, backup, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it, plus `shellcheck`. |
+| `pnpm test:lifecycle` | Linux only: runs `install.sh` and `scripts/radio-bot.sh` (install, status, update, backup, restore, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it, plus `shellcheck`. |
 
-Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`); shared helpers are in `tests/helpers.ts`. Test files are named `*.test.ts`.
+Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`). Shared helpers are in `tests/helpers.ts`: `memoryDb()` gives an in-memory, migrated database and `makeSource()` a source fixture. Test files are named `*.test.ts`, import from `'../../src/….ts'` and use `describe`/`it` with plain `expect`.
+
+## Code style
+
+- **Node runs the `.ts` files directly** (type stripping), and `tsc` compiles them to `dist/`. So relative imports end in `.ts` (`import { x } from './foo.ts'`), type-only imports use `import type`, and syntax that can't simply be stripped is not allowed: no `enum`, `namespace` or parameter properties. Use `as const` objects or union types instead.
+- TypeScript is `strict`, with `noUncheckedIndexedAccess`; `any` is an error. The code is ESM only, and built-in modules use the `node:` prefix.
+- Biome formats the code: 2 spaces, single quotes, semicolons, trailing commas, lines up to 110 characters.
+- Private class state uses `#private` fields, validation uses Zod, and logging goes through `src/observability/logger.ts` (Pino, with secrets redacted). Never use `console.log` in `src/`.
+- User-facing text and docs use British English ("favourites", "licence", "catalogue").
 
 Use a separate Discord application and a private test server for development. Never use a production token.
 
@@ -52,7 +62,7 @@ Use a separate Discord application and a private test server for development. Ne
 - `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` succeeds. If you touched `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` pass too.
 - New behaviour has tests. Bug fixes have a test that failed before the fix.
 - If the change adds work to the bot's main thread, the description says what it costs and how you measured it (see [The stream comes first](#the-stream-comes-first)).
-- Documentation is updated where behaviour changed: `README.md`, `docs/` and `CHANGELOG.md` under *Unreleased*. The docs must describe what the code actually does.
+- Documentation is updated where behaviour changed: `README.md`, `docs/` and `CHANGELOG.md` under *Unreleased*. The docs must describe what the code actually does; the table in [AGENTS.md](AGENTS.md#documentation-must-match-the-code) says which documents go with which kind of change.
 - Commits and pull request descriptions explain *why*, not just *what*.
 - There are no secrets anywhere: no tokens, no `.env`, no signed or tokenised stream URLs, and no real user, server or channel IDs in fixtures. For IDs, use the fakes the secret scanner already allows (`123456789012345678`, `223456789012345678`, `111111111111111111` and so on; see `.gitleaks.toml`).
 
@@ -87,7 +97,7 @@ Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sour
 - **Pack URLs should be HTTPS.** The schema accepts `http://`, but such sources are refused when `ALLOW_INSECURE_HTTP_STREAMS=false`. They must not contain signatures, tokens, session or tracking parameters. Short-lived signed URLs must never be committed.
 - **Never bypass access controls.** That covers DRM, authentication, geo-blocking and private or mobile-only APIs. A source that refuses access stays out.
 - **Don't delete broken sources silently.** Set `enabled: false` with a `disabledReason`, and record why in the pack's `SOURCE_PROVENANCE.md`. Seeding already disables any source that disappears from the manifest, but an explicit record is clearer.
-- **Station IDs (`<pack-id>:<slug>`) are permanent,** and so are pack IDs. They are what favourites and preferences point to. A rename changes `displayName` and adds the old name as an alias. Within a pack, no two stations may share a name or alias, and source IDs must be unique across all packs; start-up checks both.
+- **Station IDs (`<pack-id>:<slug>`) are permanent,** and so are pack IDs. They are what favourites and preferences point to. A rename changes `displayName` and adds the old name as an alias. Within a pack, no two stations may share a name or alias, and source IDs must be unique across all packs; start-up checks both. `custom` is reserved for each server's own stations and can't be a pack ID.
 - **Declare brand labels.** Publisher or network names that appear in several stations' stream metadata belong in `brandLabels`, so they are never treated as identity evidence.
 - **Run `pnpm validate-catalogue`** (after `pnpm build`, or `node scripts/validate-catalogue.ts` from source) before pushing.
 - **Takedown requests from rights holders take priority** and are handled as described in [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md#takedown-procedure).
@@ -111,8 +121,11 @@ In the description, explain the effect on:
 In particular:
 
 - **No second lossy encode, and no default EQ, AGC, normalisation or limiting.** FFmpeg reads **stdin only** (`-protocol_whitelist pipe`). Never pass a URL, a user string or a new protocol to FFmpeg arguments.
-- **All network access goes through `SafeHttpClient`.** Don't add `fetch()` or `http.get()` calls that bypass the URL policy.
-- **Don't relax the identity or eligibility gates** without a discussion in an issue first.
+- **Follow the source's bitrate, not the channel's.** In `maximum` mode the Opus target is the source's own bitrate, capped at `MAX_OPUS_BITRATE_KBPS`. Never pad a stream above its source's rate, and never cap it at the voice channel's bitrate setting (see `planEncoder()` and [docs/audio-quality.md](docs/audio-quality.md)).
+- **All network access goes through `SafeHttpClient`.** Don't add `fetch()`, `http.get()` or `net.connect()` calls that bypass the URL policy. The one exception is `tcpPing()` in `src/observability/netstats.ts`, which only connects to an address the policy has already checked.
+- **Identify truthfully.** Stream requests use FFmpeg's `Lavf/<version>` User-Agent. Don't add a browser User-Agent, a `Referer`, cookies or anything else meant to get past a host's access control; HTTP 401, 403 and 451 are reported as `ACCESS_DENIED`.
+- **Don't relax the identity or eligibility gates** without a discussion in an issue first. The correct station beats the best bitrate, and direct streams come before HLS whatever their bitrate.
+- **No claim without evidence.** User-facing text says which kind of bitrate evidence it shows (`measured`, `codec-metadata`, `manifest`, `advertised` or `unknown`), and never claims "HD" or "lossless".
 
 ### Tests and fixtures
 
@@ -124,17 +137,20 @@ In particular:
 
 - **Never edit a migration that has been released.** Its checksum is verified at start-up. Add a new `migrations/NNNN_description.sql` instead.
 - **Migrations must not lose settings.** Start-up takes a backup before migrating; keep migrations transactional and test upgrading from the previous schema.
+- **New per-server tables** must be deleted by `GuildRepository.purgeGuild()` when the bot leaves a server, and included in `/radio export` and `/radio import` if they hold settings.
 
 ### Discord permissions
 
 - **Ask for nothing new without discussion.** No new gateway intents and no new bot permissions unless they have been discussed in an issue. The documented minimal set is a feature.
-- **Check permissions on the server side.** Every new command or component must call `authorize()` with the right capability. Components must use `ComponentIds`. Add a new action to `COMPONENT_ACTIONS` (at most 7 characters); its argument can be at most 65 characters, which is the longest station ID, so every ID fits Discord's 100-character limit.
+- **Check permissions on the server side.** Every new command or component must call `authorize()` with the right capability (`read`, `control` or `admin`). Components must use `ComponentIds`. Add a new action to `COMPONENT_ACTIONS` in `src/discord/components/custom-id.ts` (at most 7 characters); its argument can be at most 65 characters, which is the longest station ID, so every ID fits Discord's 100-character limit.
+- **Statistics stay private.** `/radio stats` and other diagnostics are ephemeral and admin-only; never post them publicly.
 - **`/radio` is full.** It uses all 25 top-level options Discord allows. A new command has to go into a subcommand group (as `queue` and `source` do), or replace an existing subcommand.
 - **Admin means owner or Administrator.** Don't reintroduce admin roles or Manage Server checks without an issue first.
 
 ### Installer and release changes
 
 - `install.sh` and `scripts/radio-bot.sh` are what beginners run. Keep them bash 3.2-compatible (macOS), `shellcheck`-clean, and covered by `tests/lifecycle/run.sh`. Every prompt and message should make sense to someone who has never used a terminal; [docs/install.md](docs/install.md) documents them in that voice.
+- `radio-bot update` rewrites `scripts/radio-bot.sh` (through `git checkout`) while the script is running. So keep its body inside functions, and keep the last line `main "$@"; exit $?` on one line.
 - A release is a `vX.Y.Z` tag. It must equal `package.json`'s `version` and the default image tag in `compose.yaml`, or the release workflow stops before publishing. `radio-bot update` moves installs to the newest such tag and pulls the matching image.
 
 ## Reporting bugs and security issues

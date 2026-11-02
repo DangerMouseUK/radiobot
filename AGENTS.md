@@ -22,6 +22,7 @@ pnpm lint                          # biome check . (CI fails on any finding)
 pnpm format                        # biome format --write .
 pnpm test                          # vitest run: unit + integration
 pnpm test:unit | pnpm test:integration
+pnpm test:coverage                 # vitest run --coverage: how much of src/ and scripts/ the tests run, by file
 pnpm test:lifecycle                # Linux only: install.sh + radio-bot.sh against a fake docker
 pnpm vitest run tests/unit/session.test.ts      # a single file
 pnpm build                         # tsc -p tsconfig.build.json → dist/
@@ -82,6 +83,8 @@ catalog/packs/<id>/     pack.json, stations.json, sources.json, SOURCE_PROVENANC
 tests/unit/             fast, pure tests;  tests/integration/  local fixture radio server + synthetic audio
 tests/helpers.ts        memoryDb(), makeSource(), silentLogger()
 tests/lifecycle/        run.sh + fake-docker: end-to-end test of the installer and manager
+vitest.config.ts        test settings, including the coverage report for `pnpm test:coverage`
+.github/workflows/      ci.yml, release.yml, security.yml (dependency audit, gitleaks, CodeQL)
 docs/                   install.md (beginner guide, start here), install-docker/-linux/-container-platforms,
                         architecture, audio-quality, station-verification, permissions, rights-and-disclaimer,
                         PRD, troubleshooting
