@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end test of install.sh and scripts/radio-bot.sh against a throwaway Git "origin" and a
 # fake docker CLI. Runs on Linux and macOS (where CI runs it with the system's bash 3.2: every
-# `bash` below is the first one on PATH, so /bin/bash there). `script` gives the prompts a terminal.
+# `bash` below is the first one on PATH, so /bin/bash there). See tty_run for the prompts' terminal.
 # Run from the repo root: bash tests/lifecycle/run.sh
 set -uo pipefail
 
@@ -36,15 +36,20 @@ git -C "$T/origin" add -A
 git -C "$T/origin" -c user.email=t@example.org -c user.name=test commit -qm v1.0.0
 git -C "$T/origin" tag v1.0.0
 
+PYTHON=$(command -v python3 || true) # found before PATH is narrowed below
 export HOME="$T/home" FAKE_STATE="$T/state" RADIO_BOT_REPO="$T/origin" RADIO_BOT_DIR="$T/home/radio-bot"
 export PATH="$T/home/.local/bin:$T/bin:/usr/bin:/bin"
 APP=123456789012345678
 TOKEN=$(head -c 54 /dev/zero | tr '\0' 'x').abcdef.ghijklmnopqrstuvwx
-tty_run() { # stdin is typed into the terminal
+# Runs a command in a terminal, typing stdin into it. util-linux `script` on Linux. Elsewhere
+# (macOS), Python's pty module: BSD `script` loses the answers to later prompts, and the output
+# after them, once its input runs out.
+tty_run() {
   if script --version >/dev/null 2>&1; then
-    script -qec "$1" /dev/null # util-linux
+    script -qec "$1" /dev/null
   else
-    script -q /dev/null bash -c "$1" # BSD (macOS)
+    "${PYTHON:?python3 is needed to run the prompts in a terminal}" -c \
+      'import pty, sys; pty.spawn(["bash", "-c", sys.argv[1]])' "$1"
   fi | strip
 }
 
