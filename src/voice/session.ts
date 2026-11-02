@@ -236,8 +236,9 @@ export function withOpenedBitrate(source: StationSource, input: Pick<SourceInput
   if (source.transport !== 'hls') return source;
   const declared = input.info.advertisedBitrateKbps;
   const stored = sourceBitrate(source)?.kbps ?? null;
-  // A declared bandwidth includes container overhead, so only a clear step up means another rendition.
-  if (typeof declared !== 'number' || stored === null || declared <= stored * 1.33) return source;
+  // A declared bandwidth includes a little container overhead (under 10 %), so only a bigger step
+  // up means another rendition. Erring upwards only ever costs a few kbps, never quality.
+  if (typeof declared !== 'number' || stored === null || declared <= stored * 1.15) return source;
   return {
     ...source,
     measuredBitrateKbps: null,
@@ -293,6 +294,14 @@ export class GuildSession {
   /** When the bot last moved this stream by itself (failover, move back, re-encode), and last looked. */
   #lastAutoSwitchAt = 0;
   #lastUpgradeCheckAt = 0;
+  /**
+   * Sources this stream failed over away from, with how often and until when the bot won't move
+   * back to them. Each failure doubles the wait, so a source that keeps dropping isn't retried
+   * every 10 minutes forever. At most one entry per source of the playing station.
+   */
+  readonly #moveBackHolds = new Map<string, { failures: number; until: number }>();
+  /** The run was a move back to a better source and hasn't proved itself yet (no steady playback). */
+  #upgradeUnproven = false;
   #watchdog: NodeJS.Timeout | null = null;
   #stableTimer: NodeJS.Timeout | null = null;
   #retryTimer: NodeJS.Timeout | null = null;
@@ -394,6 +403,8 @@ export class GuildSession {
     this.#voiceReconnectAttempts = 0;
     this.#noSourceRetries = 0;
     this.#lastAutoSwitchAt = 0;
+    this.#moveBackHolds.clear();
+    this.#upgradeUnproven = false;
     this.#persist('playing', {
       desiredStationId: stationId,
       desiredVoiceChannelId: channelId,
@@ -799,6 +810,7 @@ export class GuildSession {
         if (runId !== this.#runId || this.#state !== 'PLAYING') return;
         this.#attempts = 0;
         this.#noSourceRetries = 0;
+        this.#upgradeUnproven = false;
         try {
           this.#d.sources.recordPlaybackSuccess(source.id);
           // Only now, with the stream settled, may background checks of the other sources run.
@@ -976,7 +988,13 @@ export class GuildSession {
     const botFault = faultDomain(code) === 'bot';
     const tripped = botFault ? false : this.#d.sources.recordPlaybackFailure(source.id, code);
     this.#attempts++;
-    const retrySame = !tripped && !NON_RETRYABLE.has(code) && this.#attempts < this.#t.backoff.length + 1;
+    // A move back to a better source that fails before it has played steadily goes straight back to
+    // the source that was working, rather than leaving listeners in silence through every retry.
+    const retrySame =
+      !tripped &&
+      !this.#upgradeUnproven &&
+      !NON_RETRYABLE.has(code) &&
+      this.#attempts < this.#t.backoff.length + 1;
     if (code === 'FFMPEG_SPAWN' && !retrySame) {
       this.#attempts = 0;
       this.#setState('ERROR');
@@ -997,7 +1015,15 @@ export class GuildSession {
       await this.#start(this.#gen, { forceSourceId: source.id, reason: 'recover' });
       return;
     }
-    if (source) this.#excluded.add(source.id);
+    if (source) {
+      this.#excluded.add(source.id);
+      const hold = this.#moveBackHolds.get(source.id);
+      const failures = (hold?.failures ?? 0) + 1;
+      // 10 min after the first failure, then 20, 40 … up to 4 h, before moving back to it.
+      const wait = Math.min(this.#t.autoSwitchMinIntervalMs * 2 ** (failures - 1), 4 * 60 * 60_000);
+      this.#moveBackHolds.set(source.id, { failures, until: Date.now() + wait });
+    }
+    this.#upgradeUnproven = false;
     // A listener's chosen source has failed: the bot chooses automatically again.
     if (source?.id === this.#manualSourceId) this.#manualSourceId = null;
     this.#attempts = 0;
@@ -1136,7 +1162,7 @@ export class GuildSession {
       const behind = now - p.stats.firstOutputAt - this.#link.playbackMs();
       // When the HLS reader skips forward it is back at the live edge, so the gap it left
       // (time that passed without audio to play) no longer means playback is behind live.
-      const skips = p.input.stats.skippedSegments;
+      const skips = p.input.stats.liveEdgeSkips ?? 0;
       if (skips !== this.#lagSkips) {
         this.#lagSkips = skips;
         this.#lagCaughtUpMs = behind;
@@ -1164,7 +1190,7 @@ export class GuildSession {
     const current = this.#source;
     const stationId = this.#stationId;
     const p = this.#pipeline;
-    if (!current || !stationId || !p || this.#stableTimer || this.#manualSourceId) return;
+    if (!current || !stationId || !p || this.#stableTimer) return;
     if (now - this.#lastUpgradeCheckAt < this.#t.upgradeCheckMs) return;
     this.#lastUpgradeCheckAt = now;
     if (this.#desired() !== 'playing') return;
@@ -1172,7 +1198,7 @@ export class GuildSession {
       // Keeps the station's other sources checked (in the background, at the lowest priority),
       // so a source that failed earlier can show that it works again.
       this.#d.sources.refreshStation?.(stationId, current.id);
-      if (now - this.#lastAutoSwitchAt < this.#t.autoSwitchMinIntervalMs) return;
+      if (this.#manualSourceId || now - this.#lastAutoSwitchAt < this.#t.autoSwitchMinIntervalMs) return;
       const better = this.#betterSource(stationId, current);
       if (better) {
         this.#log.info({ from: current.id, to: better.id }, 'moving back to a better source');
@@ -1180,6 +1206,7 @@ export class GuildSession {
         this.#lastAutoSwitchAt = now;
         this.#excluded.clear();
         this.#attempts = 0;
+        this.#upgradeUnproven = true;
         this.#gen++;
         void this.#start(this.#gen, { forceSourceId: better.id, reason: 'upgrade' });
         return;
@@ -1204,6 +1231,7 @@ export class GuildSession {
     const selection = this.#d.sources.select?.(this.guildId, stationId);
     const best = selection?.selected;
     if (!best || best.id === current.id) return null;
+    if ((this.#moveBackHolds.get(best.id)?.until ?? 0) > Date.now()) return null;
     // It failed in playback since its last good check: wait for a check to show it is back.
     if (best.lastFailureAt && !(best.lastSuccessAt && best.lastSuccessAt > best.lastFailureAt)) return null;
     if (selection.preferredSourceId === best.id) return best;

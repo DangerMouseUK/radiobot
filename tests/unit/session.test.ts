@@ -909,6 +909,27 @@ describe('GuildSession: back to the best quality', () => {
     expect(t.pipelines).toHaveLength(3);
   });
 
+  it('goes straight back when a move back fails before it plays steadily, and waits twice as long next time', async () => {
+    const t = setup({ timings: { upgradeCheckMs: 10, autoSwitchMinIntervalMs: 300 } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    const primary = t.sources[0]!;
+    t.pipelines[0]!.fail('ACCESS_DENIED');
+    primary.lastFailureAt = new Date().toISOString();
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
+    primary.lastSuccessAt = later(1);
+    await until(() => t.session.status().source?.id === 'primary' && t.pipelines.length === 3);
+    // The better source fails before it has played steadily (stableMs is 50 ms): no retries on it,
+    // straight back to the source that was working.
+    t.pipelines.at(-1)!.fail('STREAM_EOF');
+    const failedAt = Date.now();
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
+    expect(t.pipelines).toHaveLength(4);
+    // It shows it works again at once, but the next move back waits 600 ms (twice 300 ms).
+    primary.lastSuccessAt = later(1);
+    await until(() => t.session.status().source?.id === 'primary', 3_000);
+    expect(Date.now() - failedAt).toBeGreaterThanOrEqual(550);
+  });
+
   it("does not move for a source that only ranks higher on health, or away from a listener's choice", async () => {
     const t = setup({
       sources: [

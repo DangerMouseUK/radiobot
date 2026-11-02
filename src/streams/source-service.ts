@@ -486,10 +486,15 @@ export class SourceService {
       const lastTry = Math.max(Date.parse(s.lastProbeAt), Date.parse(s.lastFailureAt ?? s.lastProbeAt));
       return now - lastTry >= COOLDOWN_RECHECK_MS;
     }
-    // It failed in playback since its last check (a failed check marks it offline instead): check it
-    // again a few minutes later, so that a session that moved away can move back once it works.
+    // It failed in playback since its last check, while still working by its checks (a failed check
+    // marks it offline or blocked instead, with their own waits): check it again a few minutes later,
+    // so that a session that moved away can move back once it works.
     const onHold = s.cooldownUntil !== null && Date.parse(s.cooldownUntil) > now;
-    if (s.verificationState !== 'offline' && !onHold && s.lastFailureAt && s.lastFailureAt > s.lastProbeAt) {
+    const working =
+      s.verificationState === 'eligible' ||
+      s.verificationState === 'degraded' ||
+      s.verificationState === 'cooldown';
+    if (working && !onHold && s.lastFailureAt && s.lastFailureAt > s.lastProbeAt) {
       return now - Date.parse(s.lastFailureAt) >= PLAYBACK_FAILURE_RECHECK_MS;
     }
     if (s.verificationState === 'offline') {
@@ -695,12 +700,13 @@ export class SourceService {
    * minute. Returns true if tripped.
    */
   recordPlaybackFailure(sourceId: string, code: string, now = Date.now()): boolean {
-    const streak = this.#failureStreaks.get(sourceId);
-    if (streak && now - streak.last < FAILURE_DEDUP_MS) return false;
-    if (streak) streak.last = now;
-    else this.#failureStreaks.set(sourceId, { since: now, last: now });
+    const prev = this.#failureStreaks.get(sourceId);
+    if (prev && now - prev.last < FAILURE_DEDUP_MS) return false;
     const consecutive = this.#d.stations.recordFailure(sourceId, code);
-    if (consecutive >= CIRCUIT_BREAK_FAILURES && now - (streak?.since ?? now) >= CIRCUIT_BREAK_MIN_SPAN_MS) {
+    // The first failure after any success (a check, or steady playback) starts a new streak.
+    const streak = prev && consecutive > 1 ? { since: prev.since, last: now } : { since: now, last: now };
+    this.#failureStreaks.set(sourceId, streak);
+    if (consecutive >= CIRCUIT_BREAK_FAILURES && now - streak.since >= CIRCUIT_BREAK_MIN_SPAN_MS) {
       this.#failureStreaks.delete(sourceId);
       const s = this.#d.stations.getSource(sourceId);
       const until = new Date(Date.now() + cooldownMs((s?.cooldownTrips ?? 0) + 1)).toISOString();

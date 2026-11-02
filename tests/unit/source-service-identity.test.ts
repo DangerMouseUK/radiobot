@@ -455,6 +455,25 @@ describe('playback health: blips, holds and the playing source', () => {
     expect(t.source('a').cooldownUntil).not.toBeNull();
   });
 
+  it('starts a new streak after a good check, so an old failover never makes a later blip trip it', () => {
+    const t = setup([{ id: 'a', patch: verified() }]);
+    const start = Date.now();
+    for (const at of [0, 1_000, 4_000, 12_000])
+      t.service.recordPlaybackFailure('a', 'STREAM_EOF', start + at);
+    t.stations.recordSuccess('a'); // a background check worked
+    const hour = start + 60 * 60_000;
+    for (const at of [0, 1_000, 4_000]) t.service.recordPlaybackFailure('a', 'STREAM_EOF', hour + at);
+    expect(t.service.recordPlaybackFailure('a', 'STREAM_EOF', hour + 12_000)).toBe(false);
+    expect(t.source('a').cooldownUntil).toBeNull();
+  });
+
+  it('never re-checks a source the safety rules block just because its last check failed', () => {
+    const t = setup([{ id: 'a', patch: verified({ verificationState: 'blocked_by_policy' }) }]);
+    const failedAt = Date.now() + 1_000;
+    t.stations.recordFailure('a', 'ADDRESS_BLOCKED', new Date(failedAt).toISOString());
+    expect(t.service.needsProbe(t.source('a'), failedAt + 6 * 60_000)).toBe(false);
+  });
+
   it('starts a new streak after steady playback, and steady playback clears a failed check', () => {
     const t = setup([{ id: 'a', patch: verified({ verificationState: 'offline' }) }]);
     const start = Date.now();

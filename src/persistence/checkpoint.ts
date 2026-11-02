@@ -225,18 +225,31 @@ export function openCheckpointConnection(path: string): { checkpoint(): Checkpoi
   };
 }
 
-/** Starts the checkpoint worker and resolves once its connection is open. */
-export function startCheckpointWorker(dbPath: string): Promise<CheckpointRunner> {
+/**
+ * Starts the checkpoint worker and resolves once its connection is open. Start-up waits for it,
+ * so it gives up after `timeoutMs` (the caller then keeps SQLite's own checkpoints).
+ */
+export function startCheckpointWorker(dbPath: string, timeoutMs = 10_000): Promise<CheckpointRunner> {
   const worker = new Worker(siblingModule(import.meta.url, 'checkpoint-worker'), {
     workerData: { path: dbPath },
     // It holds one statement and a tiny page cache; a small heap is plenty.
     resourceLimits: { maxOldGenerationSizeMb: 16, maxYoungGenerationSizeMb: 2, stackSizeMb: 1 },
   });
   return new Promise((resolve, reject) => {
-    const failed = (err: unknown) => reject(err);
+    const timer = setTimeout(() => {
+      worker.removeAllListeners();
+      void worker.terminate();
+      reject(new Error('checkpoint worker did not start in time'));
+    }, timeoutMs);
+    timer.unref?.();
+    const failed = (err: unknown) => {
+      clearTimeout(timer);
+      reject(err);
+    };
     worker.once('error', failed);
-    worker.once('exit', (code) => reject(new Error(`checkpoint worker exited with code ${code}`)));
+    worker.once('exit', (code) => failed(new Error(`checkpoint worker exited with code ${code}`)));
     worker.once('message', (msg: CheckpointMessage) => {
+      clearTimeout(timer);
       worker.off('error', failed);
       worker.removeAllListeners('exit');
       if (msg.type === 'ready') resolve(new WorkerRunner(worker));

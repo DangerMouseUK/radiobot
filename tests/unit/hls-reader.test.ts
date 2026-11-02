@@ -54,6 +54,7 @@ function newStats(): InputStats {
     segmentFailures: 0,
     playlistFailures: 0,
     skippedSegments: 0,
+    liveEdgeSkips: 0,
   };
 }
 

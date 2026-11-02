@@ -45,6 +45,7 @@ function input() {
       segmentFailures: 0,
       playlistFailures: 0,
       skippedSegments: 0,
+      liveEdgeSkips: 0,
     },
   );
   return { stream, src };

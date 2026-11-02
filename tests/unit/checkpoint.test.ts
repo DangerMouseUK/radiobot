@@ -188,6 +188,14 @@ describe('WAL checkpoints on a worker thread', () => {
     // A folder is not a database.
     await expect(startCheckpointWorker(dir)).rejects.toThrow();
   });
+
+  it('gives up on a worker that does not start in time, so start-up never hangs on it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'radiobot-wal-'));
+    dirs.push(dir);
+    await expect(startCheckpointWorker(join(dir, 'radio-bot.sqlite'), 0)).rejects.toThrow(
+      /did not start in time/,
+    );
+  });
 });
 
 describe('WAL checkpoint schedule', () => {

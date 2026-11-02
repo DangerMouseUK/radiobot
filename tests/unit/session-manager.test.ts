@@ -103,6 +103,7 @@ vi.mock('../../src/streams/input.ts', async (importOriginal) => {
           segmentFailures: 0,
           playlistFailures: 0,
           skippedSegments: 0,
+          liveEdgeSkips: 0,
         },
       );
       fakes.opened.push({ url, closed: () => stream.destroyed });

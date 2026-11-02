@@ -31,6 +31,8 @@ export interface InputStats {
   segmentFailures: number;
   playlistFailures: number;
   skippedSegments: number;
+  /** Times the HLS reader jumped forward to the live edge after falling out of the live window. */
+  liveEdgeSkips: number;
 }
 
 export interface NowPlayingMeta {
@@ -99,6 +101,7 @@ const newStats = (): InputStats => ({
   segmentFailures: 0,
   playlistFailures: 0,
   skippedSegments: 0,
+  liveEdgeSkips: 0,
 });
 
 function countBytes(stats: InputStats, n: number): void {
@@ -381,6 +384,7 @@ export class HlsReader extends Readable {
       } else if (segs.length > 0 && this.#nextSequence < segs[0]!.sequence) {
         // We fell out of the live window (long stall): resynchronise near the live edge.
         this.#stats.skippedSegments += segs[0]!.sequence - this.#nextSequence;
+        this.#stats.liveEdgeSkips++;
         this.#nextSequence = segs[Math.max(0, segs.length - this.#liveEdge)]!.sequence;
       }
       for (const seg of segs) {

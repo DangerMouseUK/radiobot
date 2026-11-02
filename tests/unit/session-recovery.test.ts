@@ -140,7 +140,7 @@ function setup(opts: Options = {}) {
   ];
   const links: FakeLink[] = [];
   const pipelines: FakePipeline[] = [];
-  const inputs: Array<{ closed: boolean; stats: { skippedSegments: number } }> = [];
+  const inputs: Array<{ closed: boolean; stats: { skippedSegments: number; liveEdgeSkips: number } }> = [];
   const notices: SessionNotice[] = [];
   const failures: string[] = [];
   const metrics = new Metrics();
@@ -174,7 +174,13 @@ function setup(opts: Options = {}) {
       if (signal.aborted) throw new RadioError('CANCELLED', 'aborted');
       await opts.openInput?.(opens);
       opens++;
-      const stats = { segmentHost: null, segmentsFetched: 0, segmentFailures: 0, skippedSegments: 0 };
+      const stats = {
+        segmentHost: null,
+        segmentsFetched: 0,
+        segmentFailures: 0,
+        skippedSegments: 0,
+        liveEdgeSkips: 0,
+      };
       const record = { closed: false, stats };
       inputs.push(record);
       return {
@@ -421,7 +427,7 @@ describe('GuildSession: watchdog', () => {
     const t = setup({ timings: { lagMs: 100, watchdogIntervalMs: 20 } });
     await t.session.play('mypack:my-station', 'voice-1', 'u1');
     // The player reports no audio sent, but the reader keeps skipping forward to the live edge.
-    const skipping = setInterval(() => t.inputs[0]!.stats.skippedSegments++, 10);
+    const skipping = setInterval(() => t.inputs[0]!.stats.liveEdgeSkips++, 10);
     await wait(300);
     clearInterval(skipping);
     expect(t.metrics.get('playback.resync')).toBe(0);
