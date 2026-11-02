@@ -147,13 +147,41 @@ describe('/radio play', () => {
     t.putInVoice(t.people.member, V1);
     const i = await t.command(t.people.member, { sub: 'play', strings: { station: 'My Station' } });
     expect(i.violations).toEqual([]);
-    expect(methods(i)).toEqual(['deferReply', 'editReply', 'editReply']);
-    expect(i.ephemeral).toBe(false);
+    // The card is for the person who asked; the channel gets one short public line.
+    expect(methods(i)).toEqual(['deferReply', 'editReply', 'editReply', 'followUp']);
+    expect(i.ephemeral).toBe(true);
     expect(callText(i, 1)).toMatch(/Joining <#700000000000000001> for \*\*My Station\*\*/);
+    expect(i.calls[3]!.payload).toMatchObject({
+      content: `<@${MEMBER}> started **My Station** in <#${V1}>.`,
+      allowedMentions: { parse: [] },
+    });
+    expect(i.calls[3]!.payload.flags).toBeUndefined();
     expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: st.id, channelId: V1 }]);
     expect(t.sessions.requestedBy).toEqual([MEMBER]);
     const actions = i.componentIds.map((id) => decode(t.ids, id)?.action);
     expect(actions).toEqual(['prev', 'next', 'obrowse', 'fav', 'srcs', 'insp', 'now', 'stop', 'leave']);
+  });
+
+  it('still plays, with the private card only, when Discord refuses the public line', async () => {
+    const { t, st } = customServer();
+    t.putInVoice(t.people.member, V1);
+    const refuse = vi
+      .spyOn(FakeCommand.prototype, 'followUp')
+      .mockRejectedValueOnce(new Error('Missing Access'));
+    const i = await t.command(t.people.member, { sub: 'play', strings: { station: 'My Station' } });
+    refuse.mockRestore();
+    expect(i.violations).toEqual([]);
+    expect(t.sessions.plays.map((p) => p.stationId)).toEqual([st.id]);
+    expect(i.ephemeral).toBe(true);
+  });
+
+  it('posts no public line when the station could not start', async () => {
+    const { t } = customServer();
+    t.putInVoice(t.people.member, V1);
+    t.sessions.nextResult = { ok: false, code: 'NO_ELIGIBLE_SOURCE', message: 'No source can be used.' };
+    const i = await t.command(t.people.member, { sub: 'play', strings: { station: 'My Station' } });
+    expect(methods(i)).not.toContain('followUp');
+    expect(i.ephemeral).toBe(true);
   });
 
   it('says it is switching when the bot is already playing', async () => {
@@ -812,12 +840,16 @@ describe('/radio queue', () => {
     const { t, st } = customServer();
     t.guilds.enqueue(GUILD, st.id, null);
     const once = await t.command(t.people.admin, { group: 'queue', sub: 'clear' });
-    expect(once.text).toMatch(/Removed 1 station\./);
-    expect(lastEmbed(once).color).toBe(COLOR.ok);
+    // Everyone listening sees who cleared it, in one public line with no pings.
+    expect(once.calls[0]!.payload).toMatchObject({
+      content: `<@${ADMIN}> cleared the queue (1 station).`,
+      allowedMentions: { parse: [] },
+    });
+    expect(once.ephemeral).toBe(false);
     const twice = await t.command(t.people.admin, { group: 'queue', sub: 'clear' });
-    expect(twice.text).toMatch(/Removed 0 stations\./);
-    // Nothing changed: grey.
-    expect(lastEmbed(twice).color).toBe(COLOR.neutral);
+    // Nothing changed, so only the person who asked hears about it, in grey.
+    expect(lastEmbed(twice)).toMatchObject({ title: 'Queue already empty', color: COLOR.neutral });
+    expect(twice.ephemeral).toBe(true);
     expect(t.guilds.listQueue(GUILD)).toEqual([]);
   });
 
@@ -827,7 +859,11 @@ describe('/radio queue', () => {
     t.guilds.enqueue(GUILD, st.id, null);
     t.guilds.enqueue(GUILD, other.id, null);
     const ok = await t.command(t.people.admin, { group: 'queue', sub: 'remove', ints: { position: 2 } });
-    expect(ok.text).toMatch(/Removed from queue\nOther Station was number 2 in the queue\./);
+    expect(ok.calls[0]!.payload).toMatchObject({
+      content: `<@${ADMIN}> removed **Other Station** from the queue (it was number 2).`,
+      allowedMentions: { parse: [] },
+    });
+    expect(ok.ephemeral).toBe(false);
     expect(t.guilds.listQueue(GUILD).map((e) => e.stationId)).toEqual([st.id]);
     const missing = await t.command(t.people.admin, { group: 'queue', sub: 'remove', ints: { position: 5 } });
     expect(missing.text).toMatch(/There is no station at position 5\./);
@@ -838,7 +874,8 @@ describe('/radio queue', () => {
     const { t, st } = customServer();
     t.putInVoice(t.people.admin, V1);
     const i = await t.command(t.people.admin, { group: 'queue', sub: 'add', strings: { station: st.id } });
-    expect(methods(i)).toEqual(['deferReply', 'editReply', 'editReply']);
+    expect(methods(i)).toEqual(['deferReply', 'editReply', 'editReply', 'followUp']);
+    expect(i.calls[3]!.payload.content).toBe(`<@${ADMIN}> started **My Station** in <#${V1}>.`);
     expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: st.id, channelId: V1 }]);
     expect(t.guilds.listQueue(GUILD)).toEqual([]);
   });
@@ -849,8 +886,8 @@ describe('/radio queue', () => {
     const b = t.addCustomStation('Second Up');
     playingIn(t, V1, st.id);
     const first = await t.command(t.people.admin, { group: 'queue', sub: 'add', strings: { station: a.id } });
-    expect(first.text).toMatch(
-      /\*\*First Up\*\* is number 1 in the queue\. Use \/radio skip to play it now\./,
+    expect(first.calls[0]!.payload.content).toBe(
+      `<@${ADMIN}> queued **First Up** (number 1). \`/radio skip\` plays it now.`,
     );
     expect(first.ephemeral).toBe(false);
     expect(first.calls[0]!.payload.allowedMentions).toEqual({ parse: [] });
@@ -859,7 +896,7 @@ describe('/radio queue', () => {
       sub: 'add',
       strings: { station: b.id },
     });
-    expect(second.text).toMatch(/\*\*Second Up\*\* is number 2 in the queue\.$/m);
+    expect(second.calls[0]!.payload.content).toBe(`<@${ADMIN}> queued **Second Up** (number 2).`);
     expect(t.guilds.listQueue(GUILD).map((e) => [e.stationId, e.addedById])).toEqual([
       [a.id, ADMIN],
       [b.id, ADMIN],
@@ -916,7 +953,9 @@ describe('/radio skip', () => {
     t.putInVoice(t.people.admin, V1);
     const i = await t.command(t.people.admin, { sub: 'skip' });
     expect(i.violations).toEqual([]);
-    expect(i.ephemeral).toBe(false);
+    // The card is private; the channel hears "skipped to" in one line.
+    expect(i.ephemeral).toBe(true);
+    expect(i.calls.at(-1)!.payload.content).toBe(`<@${ADMIN}> skipped to **My Station** in <#${V1}>.`);
     expect(t.sessions.plays.map((p) => p.stationId)).toEqual([st.id]);
     expect(t.guilds.listQueue(GUILD)).toEqual([]);
   });

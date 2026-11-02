@@ -10,6 +10,7 @@
 - **Everyone can look.** Browsing stations, seeing what is playing and checking audio quality are open to all, in any channel where radio commands are allowed.
 - **Only admins change settings,** add custom stations, import or export settings and see `/radio stats`.
 - **Buttons are checked every time they are clicked,** exactly like the command they belong to. A Stop button in a public channel still needs the right to control the radio.
+- **What the channel sees, and what only you see.** Everything that changes the radio for everyone gets one short public line in the channel, with no pings: changing the station (by command, button or menu), `queue add`, `queue remove`, `queue clear`, Stop and Leave. Everything else is private: the now-playing card, lists, settings, `/radio stats`, errors and refusals. These lines are replies to the command or click, so they need no extra permission. If Discord refuses one, the private reply still says what happened.
 - **Admins can limit where the bot works:** which text channels accept radio commands, and which voice channels it may join.
 - **There are rate limits,** so nobody can flood the bot with station changes or stream checks.
 

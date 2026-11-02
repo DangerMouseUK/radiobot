@@ -94,6 +94,12 @@ describe('Play buttons and the station picker', () => {
     expect(i.violations).toEqual([]);
     expect(i.calls[0]).toMatchObject({ method: 'deferReply', payload: { flags: EPHEMERAL } });
     expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: st.id, channelId: V1 }]);
+    // A station change from a button is announced to the channel too, in one public line.
+    expect(i.calls.at(-1)).toMatchObject({
+      method: 'followUp',
+      payload: { content: `<@${t.people.member.id}> started **My Station** in <#${V1}>.` },
+    });
+    expect(i.calls.at(-1)!.payload.flags).toBeUndefined();
   });
 
   it('a Play button or picker choice for a station that has gone is refused', async () => {
@@ -204,7 +210,7 @@ describe('now-playing buttons', () => {
     expect(leave.text).toMatch(/disconnected the radio/);
   });
 
-  it('Refresh updates the card in place, but answers privately from the control panel', async () => {
+  it('Refresh redraws the card it is on, the control panel included, without a reply', async () => {
     const { t, st } = customServer();
     playingIn(t, V1, st.id).fullStatus = { state: 'PLAYING', stationId: st.id, channelId: V1 };
     const card = await t.click(t.people.member, t.ids.make(GUILD, 'now'));
@@ -212,8 +218,14 @@ describe('now-playing buttons', () => {
     expect(firstEmbed(card).title).toBe('▶ Playing: My Station');
     t.guilds.updateSettings(GUILD, { panelChannelId: '800000000000000010', panelMessageId: PANEL_MESSAGE });
     const panel = await t.click(t.people.member, t.ids.make(GUILD, 'now'), 'button', [], PANEL_MESSAGE);
-    expect(panel.calls[0]).toMatchObject({ method: 'reply', payload: { flags: EPHEMERAL } });
-    expect(firstEmbed(panel).title).toBe('▶ Playing: My Station');
+    // The panel itself is redrawn for everyone: no private copy.
+    expect(methods(panel)).toEqual(['update']);
+    expect(firstEmbed(panel)).toMatchObject({
+      title: '▶ Playing: My Station',
+      author: { name: 'Radio Bot control panel' },
+    });
+    // Its buttons are still the panel's own, which never expire.
+    expect(panel.componentIds.map((id) => t.ids.parse(GUILD, id)?.expired)).not.toContain(true);
   });
 
   it('Favourite and Unfavourite refuse a station that has gone, and listeners who cannot control', async () => {

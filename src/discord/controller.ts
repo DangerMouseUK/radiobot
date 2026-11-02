@@ -461,6 +461,7 @@ export class RadioController {
     explicitChannel: string | null,
     respond: (o: InteractionEditReplyOptions) => Promise<unknown>,
     defer: () => Promise<unknown>,
+    skipped = false,
   ): Promise<void> {
     const ctx = this.#ctx;
     const settings = ctx.guilds.getSettings(i.guildId);
@@ -550,6 +551,15 @@ export class RadioController {
       embeds: [this.#withQueue(nowEmbed(station, status, target), queue)],
       components: controlRows(ctx, i.guildId, station.id, false, queue),
     });
+    // The card above is for the person who asked; the channel gets one short public line, from
+    // the command, a button or a menu alike. If Discord refuses it, the private card is enough.
+    const verb = skipped ? 'skipped to' : switching ? 'switched to' : 'started';
+    await i
+      .followUp({
+        content: `<@${i.user.id}> ${verb} **${station.displayName}**${switching ? '' : ` in <#${target}>`}.`,
+        allowedMentions: { parse: [] },
+      })
+      .catch(() => {});
     await this.refreshPanel(i.guildId);
   }
 
@@ -561,7 +571,7 @@ export class RadioController {
       station,
       channel?.id ?? null,
       (o) => i.editReply(o),
-      () => i.deferReply(),
+      () => i.deferReply({ flags: EPHEMERAL }),
     );
   }
 
@@ -668,7 +678,7 @@ export class RadioController {
         def,
         explicit,
         (o) => i.editReply(o),
-        () => i.deferReply(),
+        () => i.deferReply({ flags: EPHEMERAL }),
       );
       return;
     }
@@ -1132,20 +1142,22 @@ export class RadioController {
     }
     const a = this.#auth(i, 'control');
     if (!a.ok) return this.#deny(i, a.reason);
+    // Queue changes are public one-liners, so everyone listening sees who changed what.
     if (sub === 'clear') {
       const n = ctx.guilds.clearQueue(i.guildId);
+      if (n === 0) {
+        await i.reply({
+          embeds: [infoEmbed('Queue already empty', 'There was nothing to clear.', COLOR.neutral)],
+          flags: EPHEMERAL,
+        });
+        return;
+      }
       await i.reply({
-        embeds: [
-          infoEmbed(
-            'Queue cleared',
-            `Removed ${n} ${n === 1 ? 'station' : 'stations'}.`,
-            n > 0 ? COLOR.ok : COLOR.neutral,
-          ),
-        ],
-        flags: EPHEMERAL,
+        content: `<@${i.user.id}> cleared the queue (${n} ${n === 1 ? 'station' : 'stations'}).`,
+        allowedMentions: { parse: [] },
       });
       // The panel's Skip button and "Up next" show the queue: redraw it.
-      if (n > 0) await this.refreshPanel(i.guildId);
+      await this.refreshPanel(i.guildId);
       return;
     }
     if (sub === 'remove') {
@@ -1154,8 +1166,8 @@ export class RadioController {
       if (!removed) return this.#deny(i, `There is no station at position ${pos}.`);
       const name = ctx.stations.getStation(removed.stationId)?.displayName ?? removed.stationId;
       await i.reply({
-        embeds: [infoEmbed('Removed from queue', `${name} was number ${pos} in the queue.`, COLOR.ok)],
-        flags: EPHEMERAL,
+        content: `<@${i.user.id}> removed **${name}** from the queue (it was number ${pos}).`,
+        allowedMentions: { parse: [] },
       });
       await this.refreshPanel(i.guildId);
       return;
@@ -1180,20 +1192,14 @@ export class RadioController {
         st,
         null,
         (o) => i.editReply(o),
-        () => i.deferReply(),
+        () => i.deferReply({ flags: EPHEMERAL }),
       );
       return;
     }
     const position = ctx.guilds.enqueue(i.guildId, st.id, i.user.id);
     if (position === null) return this.#deny(i, 'The queue is full (25 stations).');
     await i.reply({
-      embeds: [
-        infoEmbed(
-          'Queued',
-          `**${st.displayName}** is number ${position} in the queue.${position === 1 ? ' Use /radio skip to play it now.' : ''}`,
-          COLOR.ok,
-        ),
-      ],
+      content: `<@${i.user.id}> queued **${st.displayName}** (number ${position}).${position === 1 ? ' `/radio skip` plays it now.' : ''}`,
       allowedMentions: { parse: [] },
     });
     await this.refreshPanel(i.guildId);
@@ -1238,23 +1244,14 @@ export class RadioController {
       }
     };
     try {
-      if (i.isMessageComponent()) {
-        await this.#play(
-          i,
-          station,
-          null,
-          (o) => i.editReply(o),
-          () => i.deferReply({ flags: EPHEMERAL }),
-        );
-      } else {
-        await this.#play(
-          i,
-          station,
-          null,
-          (o) => i.editReply(o),
-          () => i.deferReply(),
-        );
-      }
+      await this.#play(
+        i,
+        station,
+        null,
+        (o) => i.editReply(o),
+        () => i.deferReply({ flags: EPHEMERAL }),
+        true,
+      );
     } finally {
       started();
     }
@@ -1708,6 +1705,7 @@ export class RadioController {
             '`/radio play <station>`: play a station in your voice channel',
             '`/radio now` what is playing · `/radio stop` stop playing · `/radio leave` leave the channel',
             '-# Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
+            '-# Station and queue changes, Stop and Leave are announced in the channel in one line. Everything else is shown only to you.',
           ),
         },
         {
@@ -1994,8 +1992,14 @@ export class RadioController {
           return await this.#cmdStop(i);
         case 'leave':
           return await this.#cmdLeave(i);
-        case 'now':
-          return await this.#cmdNow(i, !this.#isPanel(i));
+        case 'now': {
+          if (!this.#isPanel(i)) return await this.#cmdNow(i, true);
+          const a = this.#auth(i, 'read');
+          if (!a.ok) return this.#deny(i, a.reason);
+          // Refresh on the panel redraws the panel itself: everyone sees it, and no reply is posted.
+          await i.update(this.#panelView(i.guildId));
+          return;
+        }
         case 'next':
         case 'prev':
           return await this.#step(i, action === 'next' ? 1 : -1);

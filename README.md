@@ -128,7 +128,12 @@ Everything is under `/radio`. There are three access levels:
 - **Control:** admins and members with a DJ role. Other listeners depend on the server's listener-control setting: `same_channel` (the default: listeners who are in a voice channel, and only in the bot's channel while it is playing there), `none` (nobody else) or `any` (everyone). See [docs/permissions.md](docs/permissions.md).
 - **Admin:** the server owner, or members with Discord's **Administrator** permission. Nothing else grants admin: not Manage Server, and there is no admin-role setting.
 
-Replies that only concern you are ephemeral (only you see them).
+**What everyone sees and what only you see.** Replies that only concern you are ephemeral (only you see them): the now-playing card, lists, settings, errors and refusals. What changes the radio for everyone is announced in the channel in one short line, with no pings:
+- changing the station, whether by `/radio play`, Skip, Previous, Next, Browse or a favourite: "@name switched to **My Station**";
+- `queue add`, `queue remove` and `queue clear`;
+- Stop and Leave.
+
+If the bot can't post that line, the private reply still says what happened. **Refresh** on the control panel redraws the panel itself; on any other card it redraws that card.
 
 ### Listening
 
