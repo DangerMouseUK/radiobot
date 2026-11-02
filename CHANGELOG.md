@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-02
+
 ### Fixed
 
 - After a failover, the bot stayed on the fallback source (often HLS or a lower bitrate) until someone played the station again, even once the better source was back. A steady stream now moves back to its station's better source once a background check shows that source works again, if it is a real step up: a direct stream instead of HLS, clearly better measured quality, or the source an admin chose. Each move is a brief cut, so it happens at most once every 10 minutes, and never when a listener chose the source that is playing. If the better source fails again before it has played steadily, the bot goes straight back to the source that was working, and waits twice as long each time before trying it again.
@@ -81,6 +83,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - The installer and `radio-bot` test also runs on macOS, with its bash 3.2.
   - Relative links in the README and docs are checked.
 - The Docker image is scanned for known high and critical vulnerabilities that have a fix (Trivy) on every change, weekly and before every release. The image no longer includes npm, which the bot never used and which carried vulnerable dependencies of its own. Dependabot proposes updates to npm packages, GitHub Actions and the Node base image weekly.
+- The Docker image is built on Node 24.22.2 (was 24.22.1), and CI uses the same version.
 
 ## [1.0.5] - 2026-11-02
 
@@ -269,7 +272,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.5...v1.1.0
 [1.0.5]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.2...v1.0.3

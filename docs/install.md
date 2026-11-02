@@ -225,7 +225,7 @@ Type these commands in a terminal on the computer where you installed Radio Bot.
 **`radio-bot status`** prints something like this:
 
 ```text
-Version:  v1.0.5
+Version:  v1.1.0
 Folder:   /home/you/radio-bot
 State:    running
 Health:   healthy: ok
