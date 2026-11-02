@@ -47,6 +47,43 @@ describe('scripts/validate-catalogue', () => {
     expect(r.err).toMatch(/Invalid pack: .*pack\.json is invalid/);
   });
 
+  it('validates a single pack folder and lists stations without an enabled source', () => {
+    const dir = join(tempDir(), 'mypack');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'pack.json'), '{"schemaVersion":1,"id":"mypack","name":"My Pack"}');
+    writeFileSync(
+      join(dir, 'stations.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        stations: [
+          { slug: 'my-station', displayName: 'My Station', order: 1 },
+          { slug: 'quiet', displayName: 'Quiet Station', order: 2 },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(dir, 'sources.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        sources: [
+          {
+            id: 'my-station-a',
+            station: 'my-station',
+            url: 'https://radio.example.org/a',
+            provenance: 'curated',
+            provenanceDetail: 'Listed on the station website.',
+          },
+        ],
+      }),
+    );
+    const r = run('validate-catalogue.ts', ['--pack', dir]);
+    expect(r.code).toBe(0);
+    expect(r.out).toBe(
+      'Pack "mypack" (My Pack) OK: 2 stations, 1 sources (1 enabled), 1 stations with at least one enabled source.\n' +
+        '  No enabled source: Quiet Station\n',
+    );
+  });
+
   it('refuses to probe without a target', () => {
     const r = run('validate-catalogue.ts', ['--probe']);
     expect(r.code).toBe(2);
@@ -72,6 +109,18 @@ describe('scripts/healthcheck', () => {
     const ok = run('healthcheck.ts', [], env);
     expect(ok.code).toBe(0);
     expect(ok.out).toBe('healthy: ok\n');
+  });
+});
+
+describe('scripts/register-commands', () => {
+  // Only the configuration check runs here: it fails before any request could reach Discord.
+  it('stops with the configuration errors when the token and application ID are missing', () => {
+    const r = run('register-commands.ts', ['123456789012345678']);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toBe('');
+    expect(r.err).toMatch(/Invalid configuration/);
+    expect(r.err).toMatch(/- DISCORD_TOKEN: /);
+    expect(r.err).toMatch(/- DISCORD_APPLICATION_ID: /);
   });
 });
 
