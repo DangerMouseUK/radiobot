@@ -29,6 +29,7 @@ pnpm typecheck      # tsc --noEmit (strict)
 pnpm lint           # biome check .
 pnpm test           # vitest run (unit + integration)
 pnpm build          # compile to dist/
+pnpm smoke          # check the build: database, worker threads, an encode, the healthcheck
 ```
 
 Other scripts:
@@ -43,9 +44,13 @@ Other scripts:
 | `pnpm validate-catalogue` | Validates every station pack (plus `EXTRA_PACKS_DIR`). Add `--pack <dir>` to check one pack folder, or `--probe <stationId…>` / `--probe --pack-id <id>` for live probes, `--compare` for audio comparisons and `--json <file>` for an evidence report. Runs from `dist/`, so run `pnpm build` first. CI runs `node scripts/validate-catalogue.ts` straight from source. |
 | `pnpm register-commands` | Force guild command registration (optionally pass guild IDs). Needs a build. |
 | `pnpm healthcheck` / `pnpm backup` | Check the heartbeat file / write a manual database backup. Need a build. |
-| `pnpm test:lifecycle` | Linux only: runs `install.sh` and `scripts/radio-bot.sh` (install, status, update, backup, restore, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it, plus `shellcheck`. |
+| `pnpm smoke` | After `pnpm build`: runs the compiled code with no network and no Discord. It opens a temporary database (migrations run), checkpoints it on the worker thread, parses a station list on the parse worker, encodes two seconds of a synthetic tone to Ogg Opus with the live encoder's arguments and checks a heartbeat with the healthcheck. Uses `FFMPEG_PATH` / `FFPROBE_PATH`, or `ffmpeg` / `ffprobe` on the `PATH`. CI also runs it inside the Docker image. |
+| `pnpm test:lifecycle` | Linux or macOS: runs `install.sh` and `scripts/radio-bot.sh` (install, status, update, backup, restore, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it on Linux, plus `shellcheck`, and on macOS with the system's bash 3.2. |
+| `docker build --target test -t radio-bot:test .` then `docker run --rm --network none radio-bot:test` | The integration tests on the Docker image's own Node and FFmpeg (the `test` stage shares the image's base; the published image is built without it). CI runs this. |
 
-Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`). Shared helpers are in `tests/helpers.ts`: `memoryDb()` gives an in-memory, migrated database and `makeSource()` a source fixture. Test files are named `*.test.ts`, import from `'../../src/….ts'` and use `describe`/`it` with plain `expect`.
+Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`). `tests/integration/main-thread-budget.test.ts` plays a stream through the real pipeline while the heaviest commands and a large catalogue sync run, and fails if the event loop stalls for 50 ms or more; if it fails, make the slow step cheaper rather than raising the bound.
+
+Beyond these, CI also runs the typecheck and tests on the oldest supported Node (24.17.0), checks the relative links and anchors in the docs offline, scans the Docker image for fixable high and critical vulnerabilities (with Trivy, also weekly), and Dependabot proposes dependency, action and base-image updates weekly. Shared helpers are in `tests/helpers.ts`: `memoryDb()` gives an in-memory, migrated database and `makeSource()` a source fixture. Test files are named `*.test.ts`, import from `'../../src/….ts'` and use `describe`/`it` with plain `expect`.
 
 ## Code style
 
@@ -59,7 +64,7 @@ Use a separate Discord application and a private test server for development. Ne
 
 ## Before opening a pull request
 
-- `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` succeeds. If you touched `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` pass too.
+- `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` and then `pnpm smoke` succeed. If you touched `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` pass too.
 - New behaviour has tests. Bug fixes have a test that failed before the fix.
 - If the change adds work to the bot's main thread, the description says what it costs and how you measured it (see [The stream comes first](#the-stream-comes-first)).
 - Documentation is updated where behaviour changed: `README.md`, `docs/` and `CHANGELOG.md` under *Unreleased*. The docs must describe what the code actually does; the table in [AGENTS.md](AGENTS.md#documentation-must-match-the-code) says which documents go with which kind of change.

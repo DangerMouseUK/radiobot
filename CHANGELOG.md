@@ -73,6 +73,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Docker builds reuse downloaded packages and earlier build steps, so they are faster. The image is the same.
 - The release workflow now runs every CI check, including the installer test and the image smoke test, before it publishes an image.
 - The tests can now report coverage: `pnpm test:coverage` shows how much of the bot's code they run, file by file.
+- CI now checks more of what ships, and releases repeat these checks before publishing:
+  - `pnpm smoke` runs the compiled build with no network and no Discord: database migrations, both worker threads (database checkpoints and station-list parsing), an encode to Ogg Opus with the live encoder's settings, and the Docker health check. CI runs it after the build and inside the Docker image, with the image's own Node and FFmpeg.
+  - The integration tests also run on the Docker image's own Node and FFmpeg, from a `test` stage of the Dockerfile that is never published. The published image's contents are unchanged.
+  - The typecheck and tests also run on Node 24.17.0, the oldest version `package.json` allows.
+  - A new test plays a stream through the real pipeline while `/radio stats`, browsing, source ranking and a sync of a 2,000-station list run, and fails if the event loop stalls for 50 ms or more.
+  - The installer and `radio-bot` test also runs on macOS, with its bash 3.2.
+  - Relative links in the README and docs are checked.
+- The Docker image is scanned for known high and critical vulnerabilities that have a fix (Trivy) on every change, weekly and before every release. Dependabot proposes updates to npm packages, GitHub Actions and the Node base image weekly.
 
 ## [1.0.5] - 2026-11-02
 

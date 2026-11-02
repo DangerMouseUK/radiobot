@@ -31,6 +31,31 @@ jobs:
           FFMPEG_PATH: /usr/bin/ffmpeg
           FFPROBE_PATH: /usr/bin/ffprobe
       - run: pnpm build
+      # The compiled code: migrations, both worker threads, the encoder and the healthcheck, from dist/.
+      - name: Smoke test the build
+        run: pnpm smoke
+        env:
+          FFMPEG_PATH: /usr/bin/ffmpeg
+          FFPROBE_PATH: /usr/bin/ffprobe
+
+  # The oldest Node that package.json's engines allows.
+  node-minimum:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: pnpm test
+        env:
+          FFMPEG_PATH: /usr/bin/ffmpeg
+          FFPROBE_PATH: /usr/bin/ffprobe
 
   lifecycle:
     runs-on: ubuntu-24.04
@@ -40,6 +65,31 @@ jobs:
         run: shellcheck -x install.sh scripts/radio-bot.sh tests/lifecycle/run.sh tests/lifecycle/fake-docker
       - name: Install, update, back up and uninstall against a fake Docker
         run: bash tests/lifecycle/run.sh
+
+  # macOS ships bash 3.2, which radio-bot.sh must keep working with.
+  lifecycle-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: The system bash is 3.2
+        run: /bin/bash --version | head -n 1 | grep -F 'version 3.2'
+      - name: Parse the scripts with bash 3.2
+        run: for f in install.sh scripts/radio-bot.sh tests/lifecycle/run.sh tests/lifecycle/fake-docker; do /bin/bash -n "$f"; done
+      - name: Install, update, back up and uninstall against a fake Docker, with bash 3.2
+        run: /bin/bash tests/lifecycle/run.sh
+
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # Relative links and their #anchors only; --offline never contacts the sites linked to.
+      - name: Check links in the docs
+        uses: lycheeverse/lychee-action@v2
+        with:
+          fail: true
+          args: >-
+            --offline --include-fragments --no-progress
+            README.md CONTRIBUTING.md AGENTS.md SECURITY.md docs catalog/README.md
 
   docker:
     runs-on: ubuntu-24.04
@@ -66,3 +116,19 @@ jobs:
           cat out.txt
           test "$code" = "78"
           grep -q "DISCORD_TOKEN" out.txt
+      - name: Smoke test the image's build with its own Node and FFmpeg, offline
+        run: docker run --rm --network none --entrypoint node radio-bot:ci dist/scripts/smoke.js
+      - name: Build the test stage (same base as the image)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          push: false
+          load: true
+          tags: radio-bot:test
+          cache-from: |
+            type=gha
+            type=gha,scope=test
+          cache-to: type=gha,mode=max,scope=test
+      - name: Integration tests on the image's Node and FFmpeg, offline
+        run: docker run --rm --network none radio-bot:test

@@ -25,6 +25,7 @@
     "register-commands": "node dist/scripts/register-commands.js",
     "validate-catalogue": "node dist/scripts/validate-catalogue.js",
     "healthcheck": "node dist/scripts/healthcheck.js",
+    "smoke": "node dist/scripts/smoke.js",
     "backup": "node dist/scripts/backup.js"
   },
   "dependencies": {

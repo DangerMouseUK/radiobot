@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end test of install.sh and scripts/radio-bot.sh against a throwaway Git "origin" and a
-# fake docker CLI. Linux only (uses util-linux `script` to give the prompts a terminal).
+# fake docker CLI. Runs on Linux and macOS (where CI runs it with the system's bash 3.2: every
+# `bash` below is the first one on PATH, so /bin/bash there). `script` gives the prompts a terminal.
 # Run from the repo root: bash tests/lifecycle/run.sh
 set -uo pipefail
 
@@ -19,7 +20,11 @@ check() { # check "description" command...
   if "$@" >/dev/null 2>&1; then pass "$what"; else fail "$what"; fi
 }
 has() { grep -qF -- "$2" <<<"$1"; }
-strip() { sed 's/\x1b\[[0-9;]*m//g'; }
+strip() { sed $'s/\033\\[[0-9;]*m//g; s/\r$//'; } # colours and the terminal's carriage returns
+mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; } # GNU, then BSD
+days_ago() { # touch -t time stamp for $1 days ago: GNU date, then BSD date
+  date -d "$1 days ago" +%Y%m%d%H%M 2>/dev/null || date -v-"$1"d +%Y%m%d%H%M
+}
 
 mkdir -p "$T/bin" "$T/state" "$T/home/.local/bin" "$T/origin"
 cp "$SRC/tests/lifecycle/fake-docker" "$T/bin/docker" && chmod +x "$T/bin/docker"
@@ -35,7 +40,13 @@ export HOME="$T/home" FAKE_STATE="$T/state" RADIO_BOT_REPO="$T/origin" RADIO_BOT
 export PATH="$T/home/.local/bin:$T/bin:/usr/bin:/bin"
 APP=123456789012345678
 TOKEN=$(head -c 54 /dev/zero | tr '\0' 'x').abcdef.ghijklmnopqrstuvwx
-tty_run() { script -qec "$1" /dev/null | strip; } # stdin is typed into the terminal
+tty_run() { # stdin is typed into the terminal
+  if script --version >/dev/null 2>&1; then
+    script -qec "$1" /dev/null # util-linux
+  else
+    script -q /dev/null bash -c "$1" # BSD (macOS)
+  fi | strip
+}
 
 echo "install"
 out=$(printf 'not-an-id\n%s\nshort\n%s\n' "$APP" "$TOKEN" | tty_run "bash $T/origin/install.sh")
@@ -47,7 +58,7 @@ check "prints the invite link" has "$out" "client_id=$APP&scope=bot%20applicatio
 check "checks out the release" test "$(git -C "$RADIO_BOT_DIR" describe --tags --exact-match)" = v1.0.0
 check "writes the application id" grep -qx "DISCORD_APPLICATION_ID=$APP" "$RADIO_BOT_DIR/.env"
 check "writes the token" grep -qxF "DISCORD_TOKEN=$TOKEN" "$RADIO_BOT_DIR/.env"
-check ".env is private" test "$(stat -c %a "$RADIO_BOT_DIR/.env")" = 600
+check ".env is private" test "$(mode "$RADIO_BOT_DIR/.env")" = 600
 check "adds the shortcut" test -x "$HOME/.local/bin/radio-bot"
 
 echo "status, invite, version"
@@ -92,7 +103,7 @@ out=$(FAKE_PLAYING=1 finish)
 check "warns when an older copy of the script started the update" has "$out" "Radio Bot is playing in 1 server."
 check "removes older images once healthy" test "$(wc -l <"$T/state/images")" -eq 1
 echo "ghcr.io/dangermouseuk/radio-bot:<none> sha256:dangling" >>"$T/state/images"
-for i in 1 2 3 4 5 6; do touch -d "$i days ago" "$RADIO_BOT_DIR/logs/radio-bot-v0.$i.0-old.log"; done
+for i in 1 2 3 4 5 6; do touch -t "$(days_ago "$i")" "$RADIO_BOT_DIR/logs/radio-bot-v0.$i.0-old.log"; done
 out=$(finish)
 check "removes a dangling image of the bot" test "$(wc -l <"$T/state/images")" -eq 1
 check "keeps only the newest 5 saved logs" test "$(find "$RADIO_BOT_DIR/logs" -name 'radio-bot-*.log' | wc -l)" -eq 5

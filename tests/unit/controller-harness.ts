@@ -1,6 +1,6 @@
 /**
  * A fake Discord and a fake set of voice sessions for driving RadioController in tests. Shared by
- * tests/unit/controller*.test.ts. Nothing here touches the network, Discord or real stations.
+ * tests/unit/controller*.test.ts and tests/integration/main-thread-budget.test.ts. Nothing here touches the network, Discord or real stations.
  */
 import { createHmac } from 'node:crypto';
 import {
@@ -12,7 +12,7 @@ import {
   PermissionFlagsBits,
 } from 'discord.js';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
-import { PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
+import { discoverPackDirs, loadPack, PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
 import type { SyncReport } from '../../src/catalogue/sync.ts';
 import type { Station } from '../../src/catalogue/types.ts';
 import { loadConfig } from '../../src/config/env.ts';
@@ -470,12 +470,16 @@ export interface SetupOptions {
   customOnly?: boolean;
   /** OPERATOR_USER_IDS for the installation. */
   operators?: string[];
+  /** A folder of extra station packs (EXTRA_PACKS_DIR), loaded and switched on alongside the bundled ones. */
+  extraPacksDir?: string;
 }
 
 export function setup(opts: SetupOptions = {}) {
   const repos = memoryDb();
   const bundled = opts.customOnly ? PackRegistry.load(null).packs.map((p) => p.meta.id) : [];
-  const packs = PackRegistry.load(null, { enabled: new Set(), disabled: new Set(bundled) });
+  const extra = opts.extraPacksDir ?? null;
+  const extraIds = extra ? discoverPackDirs(extra).map((d) => loadPack(d).meta.id) : [];
+  const packs = PackRegistry.load(extra, { enabled: new Set(extraIds), disabled: new Set(bundled) });
   seedPacks(repos.stations, packs);
   const metrics = new Metrics();
   const sources = new SourceService({
