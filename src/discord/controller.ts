@@ -703,13 +703,15 @@ export class RadioController {
     const canAuto = who.admin && sources.length > 0 && !!pref && pref.mode !== 'auto';
     // The admin buttons have short labels, so what they do (on this server only) is said here.
     const choice: string[] = [];
-    const id = `\`${pref?.sourceId ?? 'none'}\``;
+    // The source's name, as the list above shows it (its ID only when it has no name).
+    const chosen = sources.find((s) => s.id === pref?.sourceId);
+    const name = chosen?.label ? `**${truncate(chosen.label, 60)}**` : `\`${pref?.sourceId ?? 'none'}\``;
     if (pinned)
       choice.push(
-        `Pinned to ${id}: only admins can switch it. If it fails, another source plays and the station shows as degraded.`,
+        `Pinned to ${name}: only admins can switch it. If it fails, another source plays and the station shows as degraded.`,
       );
     else if (pref?.mode === 'prefer')
-      choice.push(`${id} is tried first. If it fails, the bot switches to another source.`);
+      choice.push(`${name} is tried first. If it fails, the bot switches to another source.`);
     if (canPrefer)
       choice.push(
         '**Use this source first**: try the source playing now first. If it fails, the bot still switches to another.',
@@ -726,15 +728,14 @@ export class RadioController {
         row(
           new StringSelectMenuBuilder()
             .setCustomId(ctx.ids.make(guildId, 'usesrc', st.id))
-            .setPlaceholder('Play from another source (until the station changes)')
+            .setPlaceholder('Switch source until the station changes')
             .addOptions(
+              // A short label a phone shows in full; the figures go in the description.
               selection.ordered.slice(0, 25).map((src, n) => ({
-                label: truncate(`#${n + 1} ${src.label ?? 'Source'} · ${sourceFormat(src)}`, 100),
+                label: truncate(`#${n + 1} ${src.label ?? 'Source'}`, 100),
                 value: src.id,
                 description: truncate(
-                  src.id === selection.selected?.id
-                    ? 'The best choice'
-                    : `Ranked ${n + 1} of ${selection.ordered.length}`,
+                  `${src.id === selection.selected?.id ? 'Best choice · ' : ''}${sourceFormat(src)}`,
                   100,
                 ),
                 default: src.id === live.playingId,
@@ -806,7 +807,7 @@ export class RadioController {
         r.ok
           ? infoEmbed(
               'Source changed',
-              `${st.displayName} now plays from ${source.label ?? 'another source'} (${sourceFormat(source)}). This lasts until the station changes. If this source fails, the bot goes back to the best one by itself.`,
+              `${st.displayName} now plays from **${source.label ?? 'another source'}** until the station changes. If it fails, the bot goes back to the best source.`,
               COLOR.ok,
             )
           : errorEmbed(r.message),
@@ -1357,7 +1358,8 @@ export class RadioController {
     const settings = this.#ctx.guilds.updateSettings(i.guildId, patch);
     const restarted = 'manualBitrateKbps' in patch && this.#ctx.sessions.get(i.guildId)?.refreshEncoder();
     await i.reply({
-      ...configView(this.#ctx, i.guildId, settings, 'access'),
+      // Both options are playback settings, so the page that shows them opens when one is given.
+      ...configView(this.#ctx, i.guildId, settings, Object.keys(patch).length ? 'playback' : 'access'),
       ...(restarted ? { content: REENCODE_NOTE } : {}),
       flags: EPHEMERAL,
     });
@@ -1693,9 +1695,9 @@ export class RadioController {
           await i.reply({
             embeds: [
               infoEmbed(
-                action === 'spref' ? 'Source tried first' : 'Automatic selection',
+                action === 'spref' ? 'Source tried first' : 'Choosing automatically',
                 action === 'spref'
-                  ? `On this server, ${st.displayName} now tries ${source!.label ?? 'that source'} (${sourceFormat(source!)}) first. Whenever that source can’t be used, the bot picks another one by itself.`
+                  ? `On this server, ${st.displayName} now tries **${source!.label ?? 'that source'}** first. If it fails, the bot switches to another source.`
                   : `The bot chooses the source for ${st.displayName} again, based on its own checks.`,
                 COLOR.ok,
               ),
@@ -1814,7 +1816,7 @@ export class RadioController {
                 ? `${st.displayName} is already one of this server’s favourites.`
                 : `${st.displayName} isn’t one of this server’s favourites, so nothing changed.`
               : want
-                ? `${st.displayName} is now one of this server’s favourites. Favourites come first in the \`/radio play\` suggestions, have their own list in \`/radio browse\` (the Favourites button), and once you have two or more, Next and Previous step through them while one is playing.`
+                ? `${st.displayName} is now one of this server’s favourites. They come first in \`/radio play\`, and **Show favourites** in Browse lists them.`
                 : `${st.displayName} is no longer one of this server’s favourites.`;
           await i.reply({
             embeds: [infoEmbed('Favourites', text, COLOR.ok)],
@@ -1932,7 +1934,7 @@ export class RadioController {
       const ids = [...i.values].filter((id) => id !== g);
       if (field === 'djs') patch = { djRoleIds: ids };
     } else if (i.isStringSelectMenu()) {
-      page = 'playback';
+      page = field === 'member' ? 'access' : 'playback';
       const v = i.values[0];
       if (field === 'idle' && (v === '24x7' || v === 'pause_when_empty' || v === 'leave_when_empty'))
         patch = { idleMode: v };

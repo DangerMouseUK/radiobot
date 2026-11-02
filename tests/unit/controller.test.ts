@@ -576,7 +576,9 @@ describe('favourites and the default station', () => {
     t.putInVoice(t.people.admin, V1);
     const station = t.stations.listStations(GUILD)[0]!;
     const fav = await t.click(t.people.admin, t.ids.make(GUILD, 'fav', station.id));
-    expect(fav.text).toMatch(/come first in the `\/radio play` suggestions/);
+    expect(fav.text).toMatch(
+      /come first in `\/radio play`, and \*\*Show favourites\*\* in Browse lists them/,
+    );
     const browse = await t.command(t.people.member, { sub: 'browse' });
     const toggle = browse.componentIds.find((id) => decode(t.ids, id)?.action === 'bfav')!;
     const filtered = await t.click(t.people.member, toggle);
@@ -686,7 +688,7 @@ describe('choosing another source while a station plays', () => {
     const pick = await t.click(t.people.member, picker!, 'string', [usable[1]!]);
     expect(pick.violations).toEqual([]);
     expect(session.usedSources).toEqual([usable[1]]);
-    expect(pick.text).toMatch(/lasts until the station changes/);
+    expect(pick.text).toMatch(/now plays from \*\*.+\*\* until the station changes\. If it fails/);
   });
 
   it('refuses a source that is not usable, or belongs to another station', async () => {

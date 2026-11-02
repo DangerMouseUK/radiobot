@@ -151,10 +151,10 @@ export function browseView(
         .setCustomId(ctx.ids.make(guildId, 'bfav', token))
         .setLabel(
           onlyFavourites
-            ? 'All stations'
+            ? 'Show all stations'
             : favourites
-              ? `Favourites (${favourites})`
-              : 'Favourites (none yet)',
+              ? `Show favourites (${favourites})`
+              : 'No favourites yet',
         )
         .setStyle(onlyFavourites ? ButtonStyle.Primary : ButtonStyle.Secondary)
         .setDisabled(!onlyFavourites && favourites === 0),
@@ -268,12 +268,12 @@ export function listView(
   const nav = row(
     new ButtonBuilder()
       .setCustomId(ctx.ids.make(guildId, 'list', listArg(scope, pack, p - 1)))
-      .setLabel('Previous')
+      .setLabel('Previous page')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(p === 0),
     new ButtonBuilder()
       .setCustomId(ctx.ids.make(guildId, 'list', listArg(scope, pack, p + 1)))
-      .setLabel('Next')
+      .setLabel('Next page')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(p >= pages - 1),
   );
@@ -293,28 +293,26 @@ export function controlRows(
       .setCustomId(ctx.ids.make(guildId, action, arg, ttl))
       .setLabel(label)
       .setStyle(style);
-  const rows: Row[] = [
-    row(
-      b('prev', 'Previous station', ButtonStyle.Secondary),
-      b('next', 'Next station', ButtonStyle.Secondary),
-      b('stop', 'Stop', ButtonStyle.Danger),
-      b('leave', 'Leave', ButtonStyle.Secondary),
-    ),
+  // Three short rows, so each wraps evenly on a phone: change station, this station, then the
+  // card itself and ending playback last. Blurple marks the main action of a row; nothing here
+  // deletes anything, so nothing is red.
+  const tune: ButtonBuilder[] = [
+    b('prev', 'Previous', ButtonStyle.Secondary),
+    b('next', 'Next', ButtonStyle.Secondary),
   ];
   const queued = ctx.guilds.listQueue(guildId).length;
   if (persistent || queued > 0) {
-    rows[0]!.addComponents(
-      b('skip', queued > 0 ? `Skip (${queued} queued)` : 'Skip (queue empty)', ButtonStyle.Primary),
+    tune.push(
+      queued > 0
+        ? b('skip', `Skip (${queued} queued)`, ButtonStyle.Primary)
+        : b('skip', 'Skip (queue empty)', ButtonStyle.Secondary),
     );
   }
-  const second: ButtonBuilder[] = [
-    b('obrowse', 'Browse stations', ButtonStyle.Success),
-    b('now', 'Refresh', ButtonStyle.Primary),
-  ];
+  const station: ButtonBuilder[] = [b('obrowse', 'Browse', ButtonStyle.Primary)];
   if (stationId) {
     // The button says what it does, so a second click or an old card can't undo it.
     const fav = ctx.guilds.isFavourite(guildId, stationId);
-    second.push(
+    station.push(
       fav
         ? b('unfav', 'Unfavourite', ButtonStyle.Secondary, stationId)
         : b('fav', 'Favourite', ButtonStyle.Secondary, stationId),
@@ -322,8 +320,15 @@ export function controlRows(
       b('insp', 'Inspect', ButtonStyle.Secondary, stationId),
     );
   }
-  rows.push(row(...second.slice(0, 5)));
-  return rows;
+  return [
+    row(...tune),
+    row(...station),
+    row(
+      b('now', 'Refresh', ButtonStyle.Secondary),
+      b('stop', 'Stop', ButtonStyle.Secondary),
+      b('leave', 'Leave', ButtonStyle.Secondary),
+    ),
+  ];
 }
 
 export type ConfigPage = 'access' | 'playback' | 'notify';
@@ -351,57 +356,59 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
           .slice(0, 6)
           .map((x) => `<${kind}${x}>`)
           .join(', ')}${ids.length > 6 ? ` and ${ids.length - 6} more` : ''}`;
+  // Only the page being edited is shown, so the message stays short on a phone; the page
+  // buttons switch between them.
+  const fields = {
+    access: {
+      name: 'Access',
+      value: truncate(
+        [
+          `Commands work in: ${fmtIds(s.allowedTextChannelIds, '#')}`,
+          `Radio can play in: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
+          `DJ roles: ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
+          `Listeners can control: ${s.memberControlMode === 'same_channel' ? 'from the bot’s voice channel' : s.memberControlMode === 'any' ? 'from anywhere' : 'no (DJs and admins only)'}`,
+          '-# Admins are the server owner and members with the Administrator permission.',
+        ].join('\n'),
+        1024,
+      ),
+    },
+    playback: {
+      name: 'Playback',
+      value: truncate(
+        [
+          `Default station: ${station?.displayName ?? 'none'}`,
+          `Preferred voice channel: ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>${s.voiceLock ? ' (locked: the bot always plays there)' : ''}` : 'none'}`,
+          `When the channel is empty: ${IDLE_LABEL[s.idleMode]}`,
+          `Quality: ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
+          `Autostart: ${s.autostart ? 'on' : 'off'} · Resume after restart: ${s.resumeOnRestart ? 'on' : 'off'}`,
+          ...(s.autostart && (!station || !s.preferredVoiceChannelId)
+            ? [
+                `⚠️ Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
+              ]
+            : []),
+          '-# The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
+          '-# Set it with `/radio config default_station`, and a manual bitrate with `manual_bitrate`.',
+        ].join('\n'),
+        1024,
+      ),
+    },
+    notify: {
+      name: 'Notifications',
+      value: truncate(
+        [
+          `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
+          `Voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`,
+          '-# The voice channel status shows what is playing, under the channel’s name.',
+        ].join('\n'),
+        1024,
+      ),
+    },
+  };
   const embed = new EmbedBuilder()
-    .setTitle('Radio Bot settings')
+    .setTitle(`Radio Bot settings: ${PAGE_LABEL[page]}`)
     .setColor(COLOR.info)
-    .setDescription(
-      'Change a setting with the menus and buttons below. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config` (choose "No default station" to clear the default).',
-    )
-    .addFields(
-      {
-        name: 'Access',
-        value: truncate(
-          [
-            `Commands work in: ${fmtIds(s.allowedTextChannelIds, '#')}`,
-            `Radio can play in: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
-            `DJ roles: ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
-            `Listeners can control: ${s.memberControlMode === 'same_channel' ? 'from the bot’s voice channel' : s.memberControlMode === 'any' ? 'from anywhere' : 'no (DJs and admins only)'}`,
-            '-# Admins are the server owner and members with the Administrator permission.',
-          ].join('\n'),
-          1024,
-        ),
-      },
-      {
-        name: 'Playback',
-        value: truncate(
-          [
-            `Default station: ${station?.displayName ?? 'none'}`,
-            `Preferred voice channel: ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>${s.voiceLock ? ' (locked)' : ''}` : 'none'}`,
-            `When the channel is empty: ${IDLE_LABEL[s.idleMode]}`,
-            `Quality: ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
-            `Autostart: ${s.autostart ? 'on' : 'off'} · Resume after restart: ${s.resumeOnRestart ? 'on' : 'off'}`,
-            ...(s.autostart && (!station || !s.preferredVoiceChannelId)
-              ? [
-                  `⚠️ Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
-                ]
-              : []),
-            '-# The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
-          ].join('\n'),
-          1024,
-        ),
-      },
-      {
-        name: 'Notifications',
-        value: truncate(
-          [
-            `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
-            `Voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`,
-          ].join('\n'),
-          1024,
-        ),
-      },
-    )
-    .setFooter({ text: `Page: ${PAGE_LABEL[page]}` });
+    .setDescription('Change a setting with the menus and buttons below.')
+    .addFields(fields[page]);
   const nav = row(
     ...(['access', 'playback', 'notify'] as ConfigPage[]).map((p) =>
       new ButtonBuilder()
@@ -411,13 +418,27 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
         .setDisabled(p === page),
     ),
   );
+  // Short option labels (a phone shows about 40 characters); the detail is in each description.
+  const opt = (value: string, label: string, description: string, current: string) => ({
+    value,
+    label,
+    description,
+    default: value === current,
+  });
+  // A setting that is on is green, so the row reads at a glance.
+  const toggle = (field: string, label: string, on: boolean) =>
+    new ButtonBuilder()
+      .setCustomId(id(field))
+      .setLabel(`${label}: ${on ? 'on' : 'off'}`)
+      .setStyle(on ? ButtonStyle.Success : ButtonStyle.Secondary);
+  // Each page has at most four menus or rows of switches, then the page buttons last.
   const components: Row[] = [];
   if (page === 'access') {
     components.push(
       row(
         new ChannelSelectMenuBuilder()
           .setCustomId(id('text'))
-          .setPlaceholder('Channels where radio commands work (empty = all)')
+          .setPlaceholder('Channels for radio commands (none = all)')
           .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildVoice)
           .setMinValues(0)
           .setMaxValues(25)
@@ -426,7 +447,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
       row(
         new ChannelSelectMenuBuilder()
           .setCustomId(id('voice'))
-          .setPlaceholder('Voice channels the bot may play in (empty = all)')
+          .setPlaceholder('Voice channels to play in (none = all)')
           .setChannelTypes(ChannelType.GuildVoice)
           .setMinValues(0)
           .setMaxValues(25)
@@ -440,37 +461,28 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
           .setMaxValues(25)
           .setDefaultRoles(s.djRoleIds.slice(0, 25)),
       ),
-      nav,
-    );
-  } else if (page === 'playback') {
-    const opt = (value: string, label: string, current: string) => ({
-      value,
-      label,
-      default: value === current,
-    });
-    components.push(
-      row(
-        new StringSelectMenuBuilder()
-          .setCustomId(id('idle'))
-          .setPlaceholder('What to do when the voice channel is empty')
-          .addOptions(
-            opt('leave_when_empty', 'Leave when the channel is empty', s.idleMode),
-            opt('pause_when_empty', 'Pause when the channel is empty, resume when someone joins', s.idleMode),
-            opt('24x7', '24/7: stay in the channel and keep playing', s.idleMode),
-          ),
-      ),
       row(
         new StringSelectMenuBuilder()
           .setCustomId(id('member'))
           .setPlaceholder('Who else can control the radio')
           .addOptions(
-            opt(
-              'same_channel',
-              'Listeners in the bot’s voice channel, plus DJs and admins',
-              s.memberControlMode,
-            ),
-            opt('none', 'Only DJs and admins', s.memberControlMode),
-            opt('any', 'Anyone who can use radio commands', s.memberControlMode),
+            opt('same_channel', 'Listeners in the bot’s channel', 'Plus DJs and admins', s.memberControlMode),
+            opt('none', 'Only DJs and admins', 'Listeners can only listen', s.memberControlMode),
+            opt('any', 'Anyone', 'Anyone who can use radio commands, from any channel', s.memberControlMode),
+          ),
+      ),
+      nav,
+    );
+  } else if (page === 'playback') {
+    components.push(
+      row(
+        new StringSelectMenuBuilder()
+          .setCustomId(id('idle'))
+          .setPlaceholder('When the voice channel is empty')
+          .addOptions(
+            opt('leave_when_empty', 'Leave', 'Leave the voice channel when everyone has gone', s.idleMode),
+            opt('pause_when_empty', 'Pause', 'Pause, and play again when someone joins', s.idleMode),
+            opt('24x7', 'Keep playing (24/7)', 'Stay in the channel and keep playing', s.idleMode),
           ),
       ),
       row(
@@ -478,57 +490,39 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
           .setCustomId(id('quality'))
           .setPlaceholder('Audio quality')
           .addOptions(
-            opt('maximum', 'Maximum: match the station’s own bitrate, up to the limit', s.qualityMode),
-            opt('balanced', 'Balanced: up to 128 kbps', s.qualityMode),
-            opt('manual', 'Manual: a fixed bitrate, set with manual_bitrate', s.qualityMode),
+            opt('maximum', 'Maximum', 'Match the station’s own bitrate, up to the limit', s.qualityMode),
+            opt('balanced', 'Balanced', 'Up to 128 kbps', s.qualityMode),
+            opt('manual', 'Manual', 'A fixed bitrate, set with /radio config manual_bitrate', s.qualityMode),
           ),
       ),
       row(
         new ChannelSelectMenuBuilder()
           .setCustomId(id('pvoice'))
-          .setPlaceholder('Preferred voice channel (used by autostart and the lock)')
+          .setPlaceholder('Preferred voice channel')
           .setChannelTypes(ChannelType.GuildVoice)
           .setMinValues(0)
           .setMaxValues(1)
           .setDefaultChannels(s.preferredVoiceChannelId ? [s.preferredVoiceChannelId] : []),
       ),
       row(
-        new ButtonBuilder()
-          .setCustomId(id('autostart'))
-          .setLabel(`Autostart: ${s.autostart ? 'on' : 'off'}`)
-          .setStyle(s.autostart ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(id('resume'))
-          .setLabel(`Resume after restart: ${s.resumeOnRestart ? 'on' : 'off'}`)
-          .setStyle(s.resumeOnRestart ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(id('lock'))
-          .setLabel(`Lock to preferred channel: ${s.voiceLock ? 'on' : 'off'}`)
-          .setStyle(s.voiceLock ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(id('page-access')).setLabel('Access').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(id('page-notify'))
-          .setLabel('Notifications')
-          .setStyle(ButtonStyle.Secondary),
+        toggle('autostart', 'Autostart', s.autostart),
+        toggle('resume', 'Resume after restart', s.resumeOnRestart),
+        toggle('lock', 'Channel lock', s.voiceLock),
       ),
+      nav,
     );
   } else {
     components.push(
       row(
         new ChannelSelectMenuBuilder()
           .setCustomId(id('notify'))
-          .setPlaceholder('Channel for problem and recovery notices (empty = off)')
+          .setPlaceholder('Channel for problem notices (none = off)')
           .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
           .setMinValues(0)
           .setMaxValues(1)
           .setDefaultChannels(s.notificationChannelId ? [s.notificationChannelId] : []),
       ),
-      row(
-        new ButtonBuilder()
-          .setCustomId(id('vstatus'))
-          .setLabel(`Show what's playing as the voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`)
-          .setStyle(s.voiceChannelStatus ? ButtonStyle.Success : ButtonStyle.Secondary),
-      ),
+      row(toggle('vstatus', 'Voice channel status', s.voiceChannelStatus)),
       nav,
     );
   }

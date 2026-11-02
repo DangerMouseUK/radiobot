@@ -124,13 +124,12 @@ Commands are registered as **server** (guild) commands, so `/radio` appears stra
 As a bot admin (the server owner, or a member with Discord's **Administrator** permission; Manage Server alone is not enough):
 
 1. Run **`/radio config`**. Only you see its replies.
-   - **Access page:** command channels, approved voice channels and *DJ roles*. Leaving a list empty means no restriction. There is no admin-role setting.
+   - **Access page:** command channels, approved voice channels, *DJ roles*, and who else can play or stop (listeners in the same channel by default, only DJs and admins, or anyone). Leaving a list empty means no restriction. There is no admin-role setting.
    - **Playback page:**
-     - idle mode (`leave_when_empty` is the default, `pause_when_empty`, or `24x7`);
-     - who can play or stop (listeners in the same channel by default, only DJs and admins, or anyone);
-     - quality mode (`maximum`, `balanced` or `manual`);
-     - the preferred voice channel, plus *Autostart*, *Resume after restart* and *Lock to preferred channel*.
-   - **Notifications page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and a switch for showing what's playing as the voice channel status (on by default; needs the optional Set Voice Channel Status permission).
+     - idle mode (*Leave* is the default, *Pause*, or *Keep playing (24/7)*);
+     - quality mode (*Maximum*, *Balanced* or *Manual*);
+     - the preferred voice channel, plus the *Autostart*, *Resume after restart* and *Channel lock* switches.
+   - **Notifications page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and the *Voice channel status* switch, which shows what's playing as the voice channel's status (on by default; needs the optional Set Voice Channel Status permission).
    - Set a default station with `/radio config default_station:` and a manual Opus target with `/radio config manual_bitrate:`.
 2. Join a voice channel and run **`/radio play`**, then start typing a station's name and pick it from the list, or use **`/radio browse`**.
 3. Run **`/radio quality`** to see the source, the Discord output and the processing report.

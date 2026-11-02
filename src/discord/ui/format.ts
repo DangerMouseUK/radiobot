@@ -80,24 +80,28 @@ export function transportLabel(t: string | null | undefined): string {
   return 'Unknown transport';
 }
 
-/** "MP3 · ≈128 kbps (measured) · 44.1 kHz · stereo" with explicit unknowns (NFR-12). */
-export function sourceFormat(s: StationSource): string {
+/** "≈128 kbps (measured)": the bitrate with its evidence, written the same way in every view (NFR-12). */
+export function bitrateText(s: StationSource): string {
   const br = effectiveBitrate(s);
+  if (br.kbps === null) return 'bitrate unknown';
   const evidence =
     s.measuredBitrateKbps !== null
       ? 'measured'
       : s.codecBitrateKbps !== null
         ? 'codec metadata'
-        : s.advertisedBitrateKbps !== null
-          ? s.transport === 'hls'
-            ? 'manifest, unverified'
-            : 'advertised, unverified'
-          : '';
+        : s.transport === 'hls'
+          ? 'manifest, unverified'
+          : 'advertised, unverified';
+  return `≈${Math.round(br.kbps)} kbps (${evidence})`;
+}
+
+/** "MP3 · ≈128 kbps (measured) · 44.1 kHz · stereo" with explicit unknowns (NFR-12). */
+export function sourceFormat(s: StationSource): string {
   const parts = [
     codecLabel(s.codec, s.profile) === 'unknown'
       ? `codec not measured${s.codecHint ? ` (hint: ${s.codecHint})` : ''}`
       : codecLabel(s.codec, s.profile),
-    br.kbps !== null ? `≈${Math.round(br.kbps)} kbps (${evidence})` : 'bitrate unknown',
+    bitrateText(s),
     s.sampleRateHz ? `${(s.sampleRateHz / 1000).toFixed(1)} kHz` : 'sample rate unknown',
     s.channels
       ? s.channels === 1
@@ -134,16 +138,10 @@ export function stationLine(st: Station, a: StationAvailability, current = false
   return `${current ? '▶ ' : ''}**${st.displayName}** — ${availabilityBadge(a)}${st.provider === 'custom' ? ' · custom' : ''}`;
 }
 
-/** "Direct MP3 · ≈128 kbps": what the station sends, at a glance (the full figures are in Sources). */
+/** "Direct MP3 · ≈128 kbps (measured)": what the station sends, at a glance (the rest is in Sources). */
 function streamSummary(s: StationSource): string {
-  const br = effectiveBitrate(s);
   const how = s.transport === 'hls' ? 'HLS' : s.transport === 'http-continuous' ? 'Direct' : '';
-  return [
-    `${how} ${codecLabel(s.codec, s.profile)}`.trim(),
-    br.kbps !== null ? `≈${Math.round(br.kbps)} kbps` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  return [`${how} ${codecLabel(s.codec, s.profile)}`.trim(), bitrateText(s)].join(' · ');
 }
 
 /** Why this source plays, in one plain sentence (the full reasoning is under Sources). */
@@ -367,6 +365,7 @@ export function sourcesEmbed(
     else if (nextCheck !== null) lines.push(failingLine(s, nextCheck));
     if (detailed) {
       lines.push(
+        `ID: \`${s.id}\``,
         `Stream URL: \`${truncate(redactUrl(s.url), 120)}\`${s.effectiveHost ? ` → ${s.effectiveHost}` : ''}`,
         `Bitrates: advertised ${s.advertisedBitrateKbps ?? '—'} · codec ${s.codecBitrateKbps ?? '—'} · measured ${s.measuredBitrateKbps ?? '—'} kbps`,
         `Last checked ${ts(s.lastProbeAt)} · last worked ${ts(s.lastSuccessAt)} · last failed ${ts(s.lastFailureAt)}${s.lastFailureCode ? ` (${s.lastFailureCode})` : ''}`,
@@ -374,7 +373,8 @@ export function sourcesEmbed(
         `Where it came from: ${PROVENANCE_LABEL[s.provenance]}${s.rightsStatus !== 'unreviewed' ? ` · rights: ${s.rightsStatus}` : ''}`,
       );
     }
-    const name = truncate(`${place}${s.label ?? 'Source'} \`${s.id}\`${role}`, 256);
+    // No ID in the heading: a long code span overflows on a phone. Inspect shows it in the details.
+    const name = truncate(`${place}${s.label ?? s.id}${role}`, 256);
     const value = truncate(lines.join('\n'), 1024);
     if (name.length + value.length > budget - 80) {
       omitted += shown.length - index;

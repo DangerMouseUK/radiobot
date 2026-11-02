@@ -265,7 +265,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 ### FR-010 — Station browser and controls (P0/P1)
 
 - `/radio browse`: paged, filterable, ephemeral station picker.
-- Controls: Previous/Next station (within the current station's pack, in pack order, or through favourites), Stop, Leave, Browse stations, Refresh, Favourite or Unfavourite, Sources, Inspect. **Skip (n queued)** appears when stations are queued, and always on the persistent panel. **Favourite** only adds and **Unfavourite** only removes, so a second click or an older message never undoes the first; each says so when nothing needed to change.
+- Controls, in three rows: Previous and Next (the next station within the current station's pack, in pack order, or through favourites); Browse, Favourite or Unfavourite, Sources, Inspect; Refresh, Stop, Leave. **Skip (n queued)** appears when stations are queued, and always on the persistent panel. **Favourite** only adds and **Unfavourite** only removes, so a second click or an older message never undoes the first; each says so when nothing needed to change.
 - **Station queue.** Radio never ends, so the queue advances only on skip.
   - `/radio queue add <station>` plays the station at once if nothing is playing; otherwise it appends it, up to 25 stations.
   - `/radio queue list`, `/radio queue remove <position>` and `/radio queue clear` manage the queue.

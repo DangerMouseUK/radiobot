@@ -73,7 +73,7 @@ Separately, the bot **operator** is the person running the bot: a Discord user l
 Each command, button and menu needs one of three kinds of access (*capabilities*): **read** to look, **control** to change what is playing, and **admin** for settings, custom stations and the other admin tools.
 
 - **read**: `/radio browse`, `list` (including `scope:favourites`), `now`, `quality`, `sources`, `inspect`, `status`, `help` and `queue list`. Also the buttons that browse, page through lists, refresh the now-playing card and open Sources or Inspect, including the Favourites filter in a browse list.
-- **control**: `/radio play`, `stop`, `join`, `leave`, `skip`, `queue add`, `queue remove` and `queue clear`. Also choosing a station from a browse list or a "which station did you mean?" menu, the Previous station, Next station, Stop, Leave and Skip buttons, and the **Favourite** and **Unfavourite** buttons. The source menu under `/radio sources` needs *control* too: it switches the source of the station that is playing, until the station changes. When an admin has pinned the station to one source, only admins can use that menu.
+- **control**: `/radio play`, `stop`, `join`, `leave`, `skip`, `queue add`, `queue remove` and `queue clear`. Also choosing a station from a browse list or a "which station did you mean?" menu, the Previous, Next, Skip, Stop and Leave buttons, and the **Favourite** and **Unfavourite** buttons. The source menu under `/radio sources` needs *control* too: it switches the source of the station that is playing, until the station changes. When an admin has pinned the station to one source, only admins can use that menu.
 - **admin**: `/radio stats` (and its Refresh button), `add`, `edit`, `remove`, `rescan` (and the **Check sources again** button), `sync`, `config` (and every settings control), `export`, `import` (and its Apply and Cancel buttons), `panel`, and `source pin`, `prefer`, `auto` and `verify`. Also the **Use this source first** and **Choose automatically** buttons under `/radio sources`. The Close button of `/radio stats` needs only *read*: it deletes the clicker's own private reply.
 
 ### Capability matrix
@@ -91,7 +91,7 @@ Each command, button and menu needs one of three kinds of access (*capabilities*
 
 ### Listener control mode
 
-The **Who else can control the radio** menu in `/radio config` → Playback decides what listeners (not DJs or admins) may do with *control* actions:
+The **Who else can control the radio** menu in `/radio config` → Access decides what listeners (not DJs or admins) may do with *control* actions:
 
 | Mode | Shown as | Listeners can control playback… |
 |---|---|---|
@@ -105,7 +105,7 @@ All three settings are in `/radio config`. An empty list means "no restriction".
 
 - **Command channels** (Access): when the list isn't empty, commands and clicks from **listeners and DJs** are refused outside those channels, with a private message naming the allowed channels. The text chat inside an *approved voice channel* also counts as an allowed command channel. **Admins are never restricted by this list**, so an admin can't lock themselves out.
 - **Approved voice channels** (Access): when the list isn't empty, the bot joins only those channels. This applies to everyone, admins included, because it is checked when the bot connects. If someone moves the bot into a channel that isn't approved, it leaves and posts a notice in the notice channel, if one is set.
-- **Preferred voice channel and lock** (Playback): with **Lock to preferred channel** on, playback always goes to the preferred channel. `/radio play` and `/radio join` refuse a `channel` option that names any other channel, and without one they go to the preferred channel. If someone moves the bot away from the preferred channel, it leaves in the same way.
+- **Preferred voice channel and lock** (Playback): with **Channel lock** on, playback always goes to the preferred channel. `/radio play` and `/radio join` refuse a `channel` option that names any other channel, and without one they go to the preferred channel. If someone moves the bot away from the preferred channel, it leaves in the same way.
 
 ### Voice channel choice
 

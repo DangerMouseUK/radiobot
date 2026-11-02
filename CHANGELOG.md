@@ -8,7 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Plainer English across the bot, the `radio-bot` command and the docs, for people who are new to Discord bots or to running a server. Buttons, menus, replies and error messages now say what happens rather than how it works inside. No command or option was renamed, and nothing works differently. The most visible changes:
+- Plainer English across the bot, the `radio-bot` command and the docs, for people who are new to Discord bots or to running a server. Buttons, menus, replies and error messages now say what happens rather than how it works inside. No command or option was renamed. The most visible changes:
+  - The control panel and now-playing buttons are in three short rows that wrap evenly on a phone: **Previous**, **Next** and **Skip**; **Browse**, **Favourite**, **Sources** and **Inspect**; then **Refresh**, **Stop** and **Leave**. **Stop** is no longer red, because it deletes nothing.
+  - `/radio config` shows only the page you're on, and each page ends with the page buttons. **Who else can control the radio** moved to the Access page, next to the other access settings. **Lock to preferred channel** is now called **Channel lock**. Menu options have short names, with the detail underneath. `/radio config default_station:` or `manual_bitrate:` opens the Playback page, where the change shows.
+  - Browse's favourites button says what it does: **Show favourites (n)** or **Show all stations**.
+  - The source menu under `/radio sources` lists each source by name, with its codec and bitrate underneath, so a phone doesn't cut it off. Source IDs moved out of the headings into Inspect. `/radio now` shows the bitrate with its evidence, such as "(measured)", as `/radio sources` does.
   - On `/radio sources`, **Prefer the playing source on this server** is now **Use this source first**, and **Back to automatic choice** is now **Choose automatically**. A new "On this server" line above the buttons says what they do, and which source this server tries first or is pinned to. If that source fails, the bot still switches to another one.
   - `/radio source prefer` and `pin` replies say what changes on the server, and `/radio help` explains the `source` commands.
   - Source reasons and states use everyday words: "resting after repeated failures" instead of "cooling down" or "paused", "blocked by the bot's safety rules" instead of "rejected by URL safety policy", and "Why this source" instead of "Source decision".

@@ -246,8 +246,11 @@ describe('now-playing buttons', () => {
     for (const i of [sources, inspect]) {
       expect(i.calls[0]).toMatchObject({ method: 'reply', payload: { flags: EPHEMERAL } });
       expect(i.text).toMatch(/My Station/);
-      expect(i.text).toMatch(/custom-my-station-1/);
+      expect(i.text).toMatch(/\nMain stream\n/);
     }
+    // The source's ID is detail: only Inspect shows it, on a line of its own.
+    expect(sources.text).not.toMatch(/custom-my-station-1/);
+    expect(inspect.text).toMatch(/ID: `custom-my-station-1`/);
     // Inspect has the detail that Sources leaves out.
     expect(inspect.text.length).toBeGreaterThan(sources.text.length);
     const gone = await t.click(t.people.member, t.ids.make(GUILD, 'insp', 'custom:gone'));
@@ -286,7 +289,7 @@ describe('preferring the playing source', () => {
     const { t, st } = twoSources();
     const i = await t.click(t.people.admin, t.ids.make(GUILD, 'spref', st.id));
     expect(i.text).toMatch(
-      /Source tried first\nOn this server, My Station now tries Main stream \(.+\) first\./,
+      /Source tried first\nOn this server, My Station now tries \*\*Main stream\*\* first\. If it fails, the bot switches to another source\.$/,
     );
     expect(i.ephemeral).toBe(true);
   });
@@ -347,7 +350,7 @@ describe('choosing another source', () => {
 
 describe('settings menus and buttons', () => {
   const cfg = (t: Harness, field: string) => t.ids.make(GUILD, 'cfg', field, 30 * 60_000);
-  const page = (i: FakeInteraction) => firstEmbed(i).footer?.text;
+  const page = (i: FakeInteraction) => firstEmbed(i).title?.replace('Radio Bot settings: ', 'Page: ');
 
   it('the page buttons switch pages without changing anything', async () => {
     const t = setup();

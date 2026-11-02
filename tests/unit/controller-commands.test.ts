@@ -146,7 +146,7 @@ describe('/radio play', () => {
     expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: st.id, channelId: V1 }]);
     expect(t.sessions.requestedBy).toEqual([MEMBER]);
     const actions = i.componentIds.map((id) => decode(t.ids, id)?.action);
-    expect(actions).toEqual(['prev', 'next', 'stop', 'leave', 'obrowse', 'now', 'fav', 'srcs', 'insp']);
+    expect(actions).toEqual(['prev', 'next', 'obrowse', 'fav', 'srcs', 'insp', 'now', 'stop', 'leave']);
   });
 
   it('says it is switching when the bot is already playing', async () => {
@@ -1131,8 +1131,9 @@ describe('/radio config', () => {
     expect(t.guilds.getSettings(GUILD)).toMatchObject({ defaultStationId: st.id, manualBitrateKbps: 256 });
     expect(s.encoderRefreshes).toBe(1);
     expect(i.text).toMatch(/The station restarts for a moment to use the new quality\./);
+    // The options are playback settings, so the Playback page opens and shows them.
     expect(i.text).toMatch(/Default station: My Station/);
-    expect(i.text).toMatch(/Page: Access/);
+    expect(i.text).toMatch(/Radio Bot settings: Playback/);
   });
 
   it('clears the default station when "none" is typed, in any case', async () => {
@@ -1454,7 +1455,7 @@ describe('/radio list, sources and inspect', () => {
     t.guilds.setPreference(GUILD, st.id, 'prefer', 'custom-my-station-1', OWNER);
     const i = await t.command(t.people.admin, { sub: 'inspect', strings: { station: st.id } });
     expect(i.text).toMatch(
-      /On this server\n`custom-my-station-1` is tried first\. If it fails, the bot switches to another source\.\n\*\*Choose automatically\*\*: go back/,
+      /On this server\n\*\*Main stream\*\* is tried first\. If it fails, the bot switches to another source\.\n\*\*Choose automatically\*\*: go back/,
     );
     // It already tries the playing source first, so only Check again and Choose automatically are offered.
     expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(['rescan', 'sauto']);

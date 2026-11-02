@@ -183,7 +183,7 @@ export function previewImport(
   diff('Autostart', cur.autostart, s.autostart);
   diff('Resume after restart', cur.resumeOnRestart, s.resumeOnRestart);
   diff('Voice channel status', cur.voiceChannelStatus, s.voiceChannelStatus);
-  diff('Lock to preferred channel', cur.voiceLock, s.voiceLock);
+  diff('Channel lock', cur.voiceLock, s.voiceLock);
   const unknownChannels = [
     ...s.allowedTextChannelIds,
     ...s.allowedVoiceChannelIds,

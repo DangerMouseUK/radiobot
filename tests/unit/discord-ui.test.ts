@@ -1,4 +1,4 @@
-import type { APIEmbed, EmbedBuilder } from 'discord.js';
+import { type APIEmbed, ButtonStyle, type EmbedBuilder } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import { planEncoder } from '../../src/audio/encoder.ts';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
@@ -145,11 +145,36 @@ describe('control buttons', () => {
     expect(parseAll(ids, comps).map((p) => p && 'action' in p && p.action)).toEqual([
       'prev',
       'next',
-      'stop',
-      'leave',
       'obrowse',
       'now',
+      'stop',
+      'leave',
     ]);
+  });
+
+  it('lays the buttons out in three short rows, one blurple button at most per row and nothing red', () => {
+    const { ctx, ids, guilds } = context();
+    guilds.enqueue(GUILD, 'fg:fg-chic', null);
+    const rows = controlRows(ctx, GUILD, 'fg:fg-dj-radio', true).map((r) => r.toJSON().components);
+    const actions = rows.map((r) =>
+      r.map(
+        (c) =>
+          (ids.parse(GUILD, String((c as { custom_id: string }).custom_id)) as { action: string }).action,
+      ),
+    );
+    // Change station; this station; then the card itself, with ending playback last.
+    expect(actions).toEqual([
+      ['prev', 'next', 'skip'],
+      ['obrowse', 'fav', 'srcs', 'insp'],
+      ['now', 'stop', 'leave'],
+    ]);
+    const styles = rows.map((r) => r.map((c) => (c as { style: ButtonStyle }).style));
+    for (const r of styles) expect(r.filter((s) => s === ButtonStyle.Primary).length).toBeLessThanOrEqual(1);
+    expect(styles.flat()).not.toContain(ButtonStyle.Danger);
+    // An empty queue doesn't call for attention.
+    guilds.clearQueue(GUILD);
+    const empty = controlRows(ctx, GUILD, null, true)[0]!.toJSON().components;
+    expect(empty.at(-1)).toMatchObject({ label: 'Skip (queue empty)', style: ButtonStyle.Secondary });
   });
 
   it('adds station buttons carrying the station id, and a queue-aware skip', () => {
@@ -175,9 +200,7 @@ describe('control buttons', () => {
     const panel = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic', true) });
     const temporary = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic') });
     expect(panel).toHaveLength(10);
-    expect(panel.map((c) => c.label)).toEqual(
-      expect.arrayContaining(['Skip (queue empty)', 'Browse stations']),
-    );
+    expect(panel.map((c) => c.label)).toEqual(expect.arrayContaining(['Skip (queue empty)', 'Browse']));
     now += 16 * 60_000;
     expect(parseAll(ids, panel).every((p) => p && !p.expired)).toBe(true);
     expect(parseAll(ids, temporary).every((p) => p?.expired)).toBe(true);
@@ -213,13 +236,13 @@ describe('browse and list views', () => {
           ids.parse(GUILD, String(c.custom_id))?.expired === false &&
           (ids.parse(GUILD, String(c.custom_id)) as { action: string }).action === 'bfav',
       )!;
-    expect(view(null)).toMatchObject({ label: 'Favourites (none yet)', disabled: true });
+    expect(view(null)).toMatchObject({ label: 'No favourites yet', disabled: true });
     const [a, b] = ctx.stations.listStations(GUILD);
     guilds.toggleFavourite(GUILD, a!.id);
     guilds.toggleFavourite(GUILD, b!.id);
-    expect(view(null)).toMatchObject({ label: 'Favourites (2)', disabled: false });
+    expect(view(null)).toMatchObject({ label: 'Show favourites (2)', disabled: false });
     expect(ids.parse(GUILD, String(view(null).custom_id))).toMatchObject({ action: 'bfav', arg: 'tok123' });
-    expect(view('favourites')).toMatchObject({ label: 'All stations', disabled: false });
+    expect(view('favourites')).toMatchObject({ label: 'Show all stations', disabled: false });
     const empty = browseView(ctx, GUILD, { pack: null, category: 'favourites', search: 'zzzz' }, 't', 0);
     expect(empty.embeds[0]!.toJSON().description).toMatch(/No favourites yet|No stations match/);
   });
@@ -315,23 +338,36 @@ describe('settings view', () => {
     const comps = checkComponents(v);
     for (const p of parseAll(ids, comps)) expect(p).toMatchObject({ action: 'cfg', expired: false });
     const e = v.embeds[0]!.toJSON();
-    const fields = Object.fromEntries((e.fields ?? []).map((f) => [f.name, f.value]));
-    expect(Object.keys(fields)).toEqual(['Access', 'Playback', 'Notifications']);
-    const d = Object.values(fields).join('\n');
-    expect(d).toContain('<@&223456789012345678>');
-    expect(d).toContain('FG CHIC');
-    expect(d).toContain('manual (256 kbps)');
+    // Only the page being edited is shown, so the message stays short on a phone.
+    const name = { access: 'Access', playback: 'Playback', notify: 'Notifications' }[page];
+    expect(e.title).toBe(`Radio Bot settings: ${name}`);
+    expect((e.fields ?? []).map((f) => f.name)).toEqual([name]);
+    const d = e.fields![0]!.value;
+    if (page === 'access') expect(d).toContain('<@&223456789012345678>');
+    if (page === 'playback') {
+      expect(d).toContain('FG CHIC');
+      expect(d).toContain('manual (256 kbps)');
+    }
+    // Every page ends with the page buttons, and has room to spare under Discord's five rows.
+    expect(v.components.length).toBeLessThanOrEqual(5);
+    const last = v.components.at(-1)!.toJSON().components;
+    expect(last.map((c) => (c as { label?: string }).label)).toEqual(['Access', 'Playback', 'Notifications']);
+    // Option labels are short enough for a phone; the detail is in the description.
+    for (const c of comps)
+      for (const o of (Array.isArray(c.options) ? c.options : []) as { label: string }[])
+        expect(o.label.length).toBeLessThanOrEqual(40);
   });
 
-  it('marks the current choices in the playback selects', () => {
+  it('marks the current choices in the access and playback selects', () => {
     const { ctx, guilds } = context();
     const s = guilds.updateSettings(GUILD, { idleMode: '24x7', memberControlMode: 'any' });
-    const comps = checkComponents(configView(ctx, GUILD, s, 'playback'));
-    const defaults = comps
-      .flatMap((c) => (Array.isArray(c.options) ? c.options : []))
-      .filter((o: { default?: boolean }) => o.default)
-      .map((o: { value: string }) => o.value);
-    expect(defaults).toEqual(['24x7', 'any', 'maximum']);
+    const chosen = (page: 'access' | 'playback') =>
+      checkComponents(configView(ctx, GUILD, s, page))
+        .flatMap((c) => (Array.isArray(c.options) ? c.options : []))
+        .filter((o: { default?: boolean }) => o.default)
+        .map((o: { value: string }) => o.value);
+    expect(chosen('access')).toEqual(['any']);
+    expect(chosen('playback')).toEqual(['24x7', 'maximum']);
   });
 });
 
@@ -455,7 +491,11 @@ describe('status embeds', () => {
     expect(e.description).toBe('-# The station isn’t sending a song or show title right now.');
     const fields = Object.fromEntries((e.fields ?? []).map((f) => [f.name, f]));
     expect(fields.Channel).toMatchObject({ value: '<#999>', inline: true });
-    expect(fields['Station stream']).toMatchObject({ value: 'Direct MP3 · ≈128 kbps', inline: true });
+    // The bitrate carries its evidence here too, as in Sources.
+    expect(fields['Station stream']).toMatchObject({
+      value: 'Direct MP3 · ≈128 kbps (measured)',
+      inline: true,
+    });
     expect(fields['To Discord']?.value).toMatch(/^Opus · \d+ kbps$/);
     expect(fields.Source?.value).toMatch(/Verified as this station · checked/);
     const titled = nowEmbed(
