@@ -2,7 +2,7 @@
 
 Radio Bot ships a standard `Dockerfile`, so any platform that can build or run a container image *and* keep it running can host it. This page lists what such a platform must provide and how the common options compare. For your own machine, use [install-docker.md](install-docker.md) (Docker Compose) or [install-linux.md](install-linux.md) (no containers).
 
-> Status: none of the platforms named here have been tested with v1.0.0. The requirements below come from how the bot works, and the platform notes describe each platform's documented model. Check the current documentation of the platform you choose.
+> Status: none of the platforms named here have been tested with Radio Bot. The requirements below come from how the bot works, and the platform notes describe each platform's documented model. Check the current documentation of the platform you choose.
 
 ## What the platform must provide
 
@@ -40,7 +40,7 @@ Deploy the repository as a **Worker** component built from the `Dockerfile`; a w
 2. Create a **worker/background** service from this repository's `Dockerfile`, or from a published image (`ghcr.io/dangermouseuk/radio-bot:<version>`).
 3. Attach a **persistent volume at `/app/data`** (if the platform has them).
 4. Set `DISCORD_TOKEN` (as a secret) and `DISCORD_APPLICATION_ID`. Leave `DATABASE_PATH`, `FFMPEG_PATH` and `FFPROBE_PATH` unset; the image's defaults are correct.
-5. Do **not** expose a port or configure an HTTP health check. The image has its own `HEALTHCHECK` (`node dist/scripts/healthcheck.js`) for platforms that honour Docker health checks.
+5. Do **not** expose a port or configure an HTTP health check. The image has its own `HEALTHCHECK` (`nice -n 19 node dist/scripts/healthcheck.js`, at the lowest CPU priority) for platforms that honour Docker health checks.
 6. Deploy, then run `/radio config` in your Discord server.
 
 Logs are JSON lines on stdout; read them in the platform's log viewer.

@@ -156,22 +156,26 @@ Run these in a terminal on the computer where you installed Radio Bot. On Window
 
 | Command | What it does |
 |---|---|
-| `radio-bot status` | Shows the version, whether the bot is running and connected, and whether an update is available |
+| `radio-bot status` | Shows the version, whether the bot is running and connected, and whether an update is available (or one didn't finish) |
 | `radio-bot logs` | Shows what the bot is doing right now. Press **Ctrl+C** to stop watching (the bot keeps running) |
 | `radio-bot stop` · `radio-bot start` · `radio-bot restart` | Stop, start or restart the bot. A restart also applies any changes to the settings file |
 | `radio-bot config` | Opens the settings file in a text editor (usually **nano**: save with **Ctrl+O** then **Enter**, and close with **Ctrl+X**). When you close it, it offers to restart the bot to apply your changes |
 | `radio-bot invite` | Prints the link that adds the bot to a server |
-| `radio-bot backup` | Saves a copy of the bot's database (settings, favourites, custom stations) into the `backups` folder in `~/radio-bot` |
-| `radio-bot restore <file>` | Puts a backup back, replacing the current data. The file can be named from the folder you're in, or from `~/radio-bot` (for example `backups/radio-bot-manual-….sqlite`) |
-| `radio-bot update` | Updates to the newest release. If the bot is playing somewhere, it tells you first and asks whether to go ahead: playback stops during the update and only starts again by itself in servers where **Resume after restart** is on in `/radio config`. It then backs up the database, keeps the last 500 lines of the old version's log in the `logs` folder in `~/radio-bot` (the newest 5 are kept) and, once the new version is running, deletes the old Docker image to free disk space |
+| `radio-bot backup` | Saves a copy of the bot's database (settings, favourites, custom stations) into the `backups` folder in `~/radio-bot`, along with the backups the bot made earlier. If the bot isn't running, it can't make a new copy, but it still copies the earlier ones into that folder |
+| `radio-bot restore <file>` | Puts a backup back, replacing the current data. The file can be named from the folder you're in, or from `~/radio-bot` (for example `backups/radio-bot-manual-….sqlite`). It only accepts a backup file, and if anything goes wrong it starts the bot again on the data it had |
+| `radio-bot update` | Updates to the newest release. If the bot is playing somewhere, it tells you first and asks whether to go ahead: playback stops during the update and only starts again by itself in servers where **Resume after restart** is on in `/radio config`. It then backs up the database into the `backups` folder in `~/radio-bot`, keeps the last 500 lines of the old version's log in the `logs` folder there (the newest 5 are kept) and, once the new version is running, deletes the old Docker image to free disk space. If an update stops halfway (for example your internet connection drops), run `radio-bot update` again and it finishes the job |
 | `radio-bot uninstall` | Removes Radio Bot and the `~/radio-bot` folder. While the bot is running it offers to save a copy of its data first; backups already in `~/radio-bot/backups` are moved to a `radio-bot-backup-…` folder in your home folder. It asks separately before deleting the bot's data |
 | `radio-bot help` | Lists these commands |
 
 **The bot starts by itself** when the computer starts (as long as Docker does; on a Mac or Windows PC, set Docker Desktop to start when you sign in). If it crashes, Docker restarts it.
 
-**Updating.** Run `radio-bot update` now and then; `radio-bot status` tells you when there's something new. Read [CHANGELOG.md](../CHANGELOG.md) to see what changed. If an update ever goes wrong, `radio-bot update v1.0.0` (with the version you were on) downloads that version again and takes you back, but only if the newer version didn't change the database. If it did, the bot refuses to start on the older version rather than risk your data. In that case, put back the backup the update made, using `radio-bot restore`.
+**Updating.** Run `radio-bot update` now and then; `radio-bot status` tells you when there's something new. Read [CHANGELOG.md](../CHANGELOG.md) to see what changed. If an update ever goes wrong, `radio-bot update v1.0.0` (with the version you were on) downloads that version again and takes you back, but only if the newer version didn't change the database. If it did, the bot refuses to start on the older version rather than risk your data. In that case, put back a backup from before the update:
 
-**Backups.** The update command backs up automatically, but run `radio-bot backup` before making big changes, and copy the `~/radio-bot/backups` folder somewhere else now and then. Backups hold your server's settings and IDs, never your bot token.
+1. Run `radio-bot backup`. While the bot can't start, this can't make a new backup, but it still copies all the backups the bot already has into the `backups` folder in `~/radio-bot`.
+2. Run `ls -t ~/radio-bot/backups` to list them, newest first. The date and time are part of each name. The best one to use is the newest file whose name starts with `radio-bot-pre-`: the new version made it just before it changed the database. If there isn't one, use the newest `radio-bot-manual-…` file from before you updated (the update made one just before it started).
+3. Run `radio-bot restore backups/` followed by that file's name, and type `y` when it asks.
+
+**Backups.** The update command backs up automatically and puts the copy in `~/radio-bot/backups`, but run `radio-bot backup` before making big changes, and copy the `~/radio-bot/backups` folder somewhere else now and then. Backups hold your server's settings and IDs, never your bot token.
 
 **Changing settings.** Most settings are per-server and live in Discord (`/radio config`). A few apply to the whole installation and live in the settings file that `radio-bot config` opens. Each one is explained in the file itself, and in the [README's configuration table](../README.md#configuration). If you change the settings file by hand, run `radio-bot restart` afterwards.
 
@@ -196,7 +200,7 @@ Start with `radio-bot status`, then `radio-bot logs`. The log is technical, but 
 | **"Files … were edited"** when updating | Something changed a file in `~/radio-bot`. Move your changes into `compose.override.yaml`, then run the `git … checkout` command the message shows, and update again |
 | `radio-bot: command not found` | Open a new terminal window. If it still isn't found, use `bash ~/radio-bot/scripts/radio-bot.sh` instead of `radio-bot` |
 
-The full troubleshooting guide is [troubleshooting.md](troubleshooting.md). If you're still stuck, open an issue on GitHub. Include what you did, what you expected, and the last 50 lines of `radio-bot logs`, but **never your token or the settings file**.
+The full troubleshooting guide is [troubleshooting.md](troubleshooting.md). If you're still stuck, open an issue on GitHub. Include what you did, what you expected, and the last lines of `radio-bot logs` (it shows the last 200, then keeps watching; press **Ctrl+C** to stop), but **never your token or the settings file**.
 
 ## Other ways to install
 

@@ -13,6 +13,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - A detailed sources view of a station with many sources and a server override could go over Discord's 6000-character message limit and fail to send.
 - **Previous station** with nothing playing now starts from the last station, not the one before it, and **Next** or **Previous** says there is no other station instead of restarting the one that plays.
 - `/radio join` with a default station used two play tokens instead of one, so the per-user limit ran out after three joins rather than six.
+- An update that stopped halfway (for example, the image download failed) left the old version running, and running `radio-bot update` again only said "Already on the newest version". It now finishes the update, and `radio-bot status` says when one didn't finish.
+- `radio-bot update` carried on when switching a branch install to the new version failed. It now stops and says so.
+- `radio-bot restore` now refuses a file that isn't a database backup before it stops anything, and if copying the backup in fails or is interrupted, it starts the bot again on the data it had instead of leaving it stopped.
+- The installer and `radio-bot` now also wait for FFmpeg to be reported working before saying the bot is online, as Docker's health check does.
+- Going back to an older version after an update couldn't be done as the install guide described: the update's backup stayed inside the bot's data, and `radio-bot backup` refused to run while the bot couldn't start. `radio-bot update` now copies its backup to the `backups` folder, `radio-bot backup` copies the existing backups out even when the bot isn't running, and the guide explains which backup to put back.
+- Docs: removed "v1.0.0" from status notes that apply to every release, and the install guide now says that `radio-bot logs` shows the last 200 lines.
+
+### Changed
+
+- Docker's health check, the backups that `radio-bot` takes and its own health checks now run at the lowest CPU priority, so they can't hold up the stream on a one-core host.
+- Docker builds reuse downloaded packages and earlier build steps, so they are faster. The image is the same.
+- The release workflow now runs every CI check, including the installer test and the image smoke test, before it publishes an image.
 
 ## [1.0.5] - 2026-11-02
 

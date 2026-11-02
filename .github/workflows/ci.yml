@@ -54,6 +54,8 @@ jobs:
           push: false
           load: true
           tags: radio-bot:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Smoke test image (FFmpeg with libopus, config validation)
         run: |
           docker run --rm --entrypoint ffmpeg radio-bot:ci -hide_banner -encoders | grep -q libopus

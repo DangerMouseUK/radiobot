@@ -18,13 +18,13 @@ The [MIT licence](../LICENSE) applies **only to the original code and documentat
 - the radio programmes, music, sound recordings or any audio the bot relays;
 - station names, brands, trademarks, logos or artwork;
 - the streams themselves or the servers that host them, which are subject to their operators' terms;
-- third-party dependencies and binaries, which keep their own licences. In particular, the Docker image includes Debian's **FFmpeg** build, which is LGPL- or GPL-licensed depending on its configuration. Anyone redistributing the image is responsible for those licences' obligations, such as notices and source availability. A full dependency and binary licence review for the published image (PRD §14) **has not been completed** for v1.0.0.
+- third-party dependencies and binaries, which keep their own licences. In particular, the Docker image includes Debian's **FFmpeg** build, which is LGPL- or GPL-licensed depending on its configuration. Anyone redistributing the image is responsible for those licences' obligations, such as notices and source availability. A full dependency and binary licence review for the published image (PRD §14) **has not been completed** for any release so far.
 
 ## The release gate is not resolved by this software
 
 The PRD (§14) sets a release gate: a broadcaster's stream being freely listenable on its website **does not automatically grant permission** to retransmit its programmes to third parties on Discord. Music rights, sound-recording rights, the station's own streaming terms, territorial restrictions and brand rights can all matter.
 
-**As of v1.0.0 this gate is open:**
+**For every release so far, this gate is open:**
 
 - No permission has been requested from, or given by, the starter pack's broadcaster for third-party Discord rebroadcast or integration.
 - No review of the stations' streaming terms is recorded.
