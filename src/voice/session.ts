@@ -911,7 +911,7 @@ export class GuildSession {
    */
   #streamLimitReached(gen: number): StartResult {
     const message =
-      'This bot is already playing in as many servers as its operator allows. I will try again in a couple of minutes.';
+      'This bot is already playing in as many servers as its owner allows. I will try again in a couple of minutes.';
     const first = this.#lastError?.code !== 'STREAM_LIMIT';
     this.#teardownAudio();
     this.#lastError = { code: 'STREAM_LIMIT', message, at: new Date().toISOString() };

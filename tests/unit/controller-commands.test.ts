@@ -1600,7 +1600,7 @@ describe('/radio source', () => {
       sub: 'verify',
       strings: { station: src.stationId, source: src.id, verdict: 'mismatch' },
     });
-    expect(i.text).toMatch(/only the bot’s operator can record it/);
+    expect(i.text).toMatch(/only the bot owner can record it\.$/m);
     expect(t.stations.getSource(src.id)?.identityOverride).toBeNull();
   });
 
@@ -1633,7 +1633,7 @@ describe('/radio source', () => {
       });
     (t.ctx.client as unknown as { application: unknown }).application = { owner: { id: OWNER } };
     expect((await verify(t.people.owner)).text).toMatch(/Source review recorded/);
-    expect((await verify(t.people.admin)).text).toMatch(/only the bot’s operator/);
+    expect((await verify(t.people.admin)).text).toMatch(/only the bot owner can record it/);
     (t.ctx.client as unknown as { application: unknown }).application = {
       owner: { members: new Map([[ADMIN, {}]]) },
     };

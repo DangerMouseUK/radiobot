@@ -217,7 +217,7 @@ export class RadioController {
     }
     const message = isRadioError(err)
       ? err.userMessage
-      : 'Something went wrong. Try again in a moment, and if it keeps happening, tell the person who runs this bot (the details are in its log).';
+      : 'Something went wrong. Try again in a moment. If it keeps happening, let the bot owner know.';
     if (!isRadioError(err) || err.code === 'INTERNAL') {
       this.#ctx.logger.error({ err: safeErr(err), guildId: i.guildId, type: i.type }, 'interaction failed');
       this.#ctx.metrics.incident(i.guildId, 'INTERNAL', 'bot', 'interaction failed');
@@ -1796,7 +1796,7 @@ export class RadioController {
       if (st.provider !== 'custom' && !isOperator(this.#ctx, i.user.id)) {
         return this.#deny(
           i,
-          'A review of a station-pack source applies to every server that uses this bot, so only the bot’s operator can record it (listed in OPERATOR_USER_IDS, or the owner or team of the bot’s Discord application).',
+          'A review of a station-pack source applies to every server that uses this bot, so only the bot owner can record it.',
         );
       }
       if (st.provider === 'custom' && st.guildId !== i.guildId)

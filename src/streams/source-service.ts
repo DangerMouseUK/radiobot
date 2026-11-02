@@ -184,7 +184,7 @@ export class SourceService {
       .listSources(stationId)
       .map((s) =>
         disabledStation || this.#d.disabledSourceIds?.has(s.id)
-          ? { ...s, enabled: false, disabledReason: 'disabled by the operator (takedown/disable list)' }
+          ? { ...s, enabled: false, disabledReason: 'switched off by the bot owner' }
           : s,
       );
   }

@@ -145,7 +145,7 @@ export class SessionManager {
     if (!existing?.isStreaming && this.activeStreams() >= this.#d.maxActiveStreams) {
       throw new RadioError(
         'STREAM_LIMIT',
-        `This bot is already playing in ${this.#d.maxActiveStreams} server(s), the most its operator allows. Try again later.`,
+        `This bot is already playing in ${this.#d.maxActiveStreams} ${this.#d.maxActiveStreams === 1 ? 'server' : 'servers'}, the most its owner allows. Try again later.`,
       );
     }
     const session = this.ensure(guildId);
