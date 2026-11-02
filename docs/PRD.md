@@ -225,7 +225,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - FFmpeg decodes the source and encodes **once** with libopus: 48 kHz, stereo, 20 ms frames, VBR, music mode, compression level 10, in Ogg pages of 100 ms.
 - The Ogg Opus stream is handed to `@discordjs/voice` as `StreamType.OggOpus`, which only demuxes it: no second encode, no inline volume.
 - Target bitrate:
-  - `maximum` (default) = the source's own bitrate (codec metadata, then measured, then manifest or advertised), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
+  - `maximum` (default) = the source's own bitrate (measured, then codec metadata, then manifest or advertised, rounded up to a whole kbps so it is never below the source), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
   - `balanced` = 128 kbps, or the source's bitrate when lower;
   - `manual` = an admin-set value from 32 kbps up to `MAX_OPUS_BITRATE_KBPS`.
 - The voice channel's bitrate setting is **reported but not used as a cap**. The setting applies to members' voices, not to a bot's stream, and the plan notes when the target is above it. What a listener receives has **not been measured** (§18).

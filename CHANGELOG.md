@@ -38,6 +38,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- In `maximum` mode the Opus target now follows the bitrate the bot measured for a source before the one its codec metadata reports, and is rounded up rather than to the nearest whole number. For AAC, the metadata is only an estimate: streams that measure 128 kbps reported 114 to 176 kbps, so they were encoded below or above what the station sends. They are now encoded at 129 kbps. MP3 streams are unchanged.
 - Database migration 4 adds indexes, so deleting a station or source no longer reads every server's favourites, queue and source preferences. It is applied automatically at the next start, after a backup.
 - Adding, editing or removing a custom station re-reads only that server's custom stations, not the whole catalogue.
 - Manual backups (`backup.js`, and the backups `radio-bot` takes) run at the lowest process priority, so they give way to the stream's encoder.

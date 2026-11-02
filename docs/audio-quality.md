@@ -69,7 +69,7 @@ A source that is already Opus is still decoded and encoded again at the target b
 
 - the server's quality mode, and the manual bitrate if one is set;
 - the installation's ceiling, `MAX_OPUS_BITRATE_KBPS` (default 510, allowed range 32–510);
-- the source's own bitrate: the figure from its codec metadata, else the measured figure, else the figure declared in its HLS playlist or advertised in its HTTP headers;
+- the source's own bitrate: the measured figure, else the figure from its codec metadata, else the figure declared in its HLS playlist or advertised in its HTTP headers. The measured figure comes first because it is what the station really sends. For MP3 the two always agree, but for AAC the codec metadata is only an estimate: in the starter pack's checks, AAC streams that measured 128 kbps reported anything from 114 to 176 kbps;
 - the source's sample rate and channel count;
 - the voice channel's bitrate setting. This is **for reporting only**. It is never used as a cap.
 
@@ -83,10 +83,11 @@ New servers start in the mode set by `DEFAULT_QUALITY_MODE` (default `maximum`).
 
 Some details:
 
+- **The target is rounded up, never down,** so it is never below the source's rate: a stream that measures 128.1 kbps is encoded at 129.
 - **The target is never below 32 kbps,** even for a source with a lower bitrate.
 - **The voice channel's bitrate setting is not a cap.** That setting (up to 96 kbps without boosts, then 128, 256 and 384 kbps at boost levels 1–3) applies to members' voices. The bot encodes its stream at its own target. `/radio quality` shows the setting, and when the target is higher the plan says so: "Encoding above the voice channel's N kbps setting; the channel setting does not cap a bot's stream." What bitrate a listener's Discord app actually receives **has not been measured**.
 - **Bandwidth follows the station.** Per server that is streaming, before overhead, a 128 kbps station uses about 58 MB per hour, a 320 kbps one about 144 MB, and the 510 kbps limit (reached only by very high-bitrate or unknown-bitrate sources) about 230 MB. On a slow upload connection, lower `MAX_OPUS_BITRATE_KBPS` or use `balanced`.
-- **The plan says where its target came from,** for example "The encoder follows the source's 128 kbps (codec metadata).", "The source's bitrate is unknown, so the encoder uses 510 kbps.", or that `balanced` or the installation's limit applies. `/radio quality` shows it.
+- **The plan says where its target came from,** for example "The encoder follows the source's 128 kbps (measured).", "The source's bitrate is unknown, so the encoder uses 510 kbps.", or that `balanced` or the installation's limit applies. `/radio quality` shows it.
 - **Quality changes apply while playing.** If an admin changes the quality mode in `/radio config`, sets a new `manual_bitrate`, or imports settings, and the target changes, the bot rebuilds the encoder at the new target. That causes a brief re-buffer on the same source. A change to the channel's own bitrate setting doesn't change the target.
 
 Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20 ms frames, variable bitrate (VBR) on, and `compression_level 10` (the encoder's most thorough setting).

@@ -121,12 +121,12 @@ describe('encoder policy (§8.3, FR-007)', () => {
         makeSource({ codecBitrateKbps: null, measuredBitrateKbps: null, advertisedBitrateKbps: null, ...o }),
       );
     expect(src({ codecBitrateKbps: 128, measuredBitrateKbps: 131, advertisedBitrateKbps: 192 })).toEqual({
-      kbps: 128,
-      evidence: 'codec metadata',
-    });
-    expect(src({ measuredBitrateKbps: 131, advertisedBitrateKbps: 192 })).toEqual({
       kbps: 131,
       evidence: 'measured',
+    });
+    expect(src({ codecBitrateKbps: 128, advertisedBitrateKbps: 192 })).toEqual({
+      kbps: 128,
+      evidence: 'codec metadata',
     });
     expect(src({ advertisedBitrateKbps: 192 })).toEqual({ kbps: 192, evidence: 'advertised' });
     expect(src({ advertisedBitrateKbps: 136, bitrateConfidence: 'manifest' })).toEqual({
@@ -134,6 +134,38 @@ describe('encoder policy (§8.3, FR-007)', () => {
       evidence: 'manifest',
     });
     expect(src({})).toBeNull();
+  });
+
+  it('follows the measured AAC rate, not its estimated metadata, and never encodes below it', () => {
+    // Real probe figures: AAC metadata read 176.4 and 113.7 kbps where the audio measured 128.1.
+    const plan = (codecBitrateKbps: number) =>
+      planEncoder({
+        ...base,
+        channelBitrateBps: null,
+        sourceBitrate: sourceBitrate(
+          makeSource({
+            codec: 'aac',
+            codecBitrateKbps,
+            measuredBitrateKbps: 128.1,
+            advertisedBitrateKbps: null,
+          }),
+        ),
+      });
+    expect(plan(176.4).targetKbps).toBe(129);
+    expect(plan(113.7).targetKbps).toBe(129);
+    expect(plan(176.4).notes.join(' ')).toContain("follows the source's 128.1 kbps (measured)");
+    const exact = (kbps: number) =>
+      planEncoder({ ...base, channelBitrateBps: null, sourceBitrate: { kbps, evidence: 'measured' } });
+    expect(exact(128).targetKbps).toBe(128);
+    expect(exact(128.4).targetKbps).toBe(129);
+    expect(
+      planEncoder({
+        ...base,
+        qualityMode: 'balanced',
+        channelBitrateBps: null,
+        sourceBitrate: { kbps: 96.2, evidence: 'measured' },
+      }).targetKbps,
+    ).toBe(97);
   });
 
   it('reports resampling and mono honestly', () => {
