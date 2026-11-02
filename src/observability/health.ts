@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { dirname, join } from 'node:path';
+import { type Logger, safeErr } from './logger.ts';
 
 export interface HealthSnapshot {
   at: string;
@@ -42,9 +43,15 @@ export function checkHeartbeat(path: string, maxAgeMs = 90_000): { healthy: bool
 
 /**
  * Optional local-only diagnostics endpoint (PRD FR-014). Binds to 127.0.0.1 only and is not
- * published by the default Compose file.
+ * published by the default Compose file. If it can't listen (say, the port is already in use),
+ * it logs a warning and the bot carries on without it: an unhandled server error would otherwise
+ * stop the bot, and a restart would only hit the same error again.
  */
-export function startDiagnosticsServer(port: number, snapshot: () => Record<string, unknown>): Server {
+export function startDiagnosticsServer(
+  port: number,
+  logger: Logger,
+  snapshot: () => Record<string, unknown>,
+): Server {
   const server = createServer((req, res) => {
     if (req.method !== 'GET' || (req.url !== '/healthz' && req.url !== '/diagnostics')) {
       res.writeHead(404).end();
@@ -55,6 +62,9 @@ export function startDiagnosticsServer(port: number, snapshot: () => Record<stri
       .writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(body));
   });
+  server.on('error', (err) =>
+    logger.warn({ port, err: safeErr(err) }, 'diagnostics endpoint unavailable; carrying on without it'),
+  );
   server.listen(port, '127.0.0.1');
   return server;
 }

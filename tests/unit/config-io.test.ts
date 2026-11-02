@@ -202,6 +202,27 @@ describe('guild settings import', () => {
     expect(t.guilds.listPreferences(DST).map((p) => p.stationId)).not.toContain('custom:plain');
   });
 
+  it('keeps this server’s custom-station favourites and custom default when importing its own export', () => {
+    const t = configured();
+    t.guilds.updateSettings(SRC, { defaultStationId: 'custom:plain' });
+    t.guilds.toggleFavourite(SRC, 'custom:secret');
+    const data = parseImport(JSON.stringify(exportGuild(SRC, t.guilds, t.stations)));
+    // The export leaves custom stations out, so the file has neither of them.
+    expect(data.settings.defaultStationId).toBeNull();
+    expect(data.favourites.some((id) => id.startsWith('custom:'))).toBe(false);
+    const preview = previewImport(SRC, data, t.guilds, t.stations, existingChannels, existingRoles);
+    expect(preview.lines.join('\n')).not.toMatch(/Default station/);
+    expect(preview.lines).toContain(
+      `• Favourites: ${data.favourites.length} (this server’s 2 custom-station favourite(s) are kept)`,
+    );
+    applyImport(SRC, data, t.guilds, t.stations, existingChannels, existingRoles, (fn) =>
+      t.db.transaction(fn),
+    );
+    expect(t.guilds.getSettings(SRC).defaultStationId).toBe('custom:plain');
+    // The file's favourites first, then the custom ones in their order.
+    expect(t.guilds.listFavourites(SRC)).toEqual([...data.favourites, 'custom:plain', 'custom:secret']);
+  });
+
   it('is atomic: a failure leaves the target untouched', () => {
     const t = configured();
     const data = exportGuild(SRC, t.guilds, t.stations);

@@ -13,6 +13,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - A detailed sources view of a station with many sources and a server override could go over Discord's 6000-character message limit and fail to send.
 - **Previous station** with nothing playing now starts from the last station, not the one before it, and **Next** or **Previous** says there is no other station instead of restarting the one that plays.
 - `/radio join` with a default station used two play tokens instead of one, so the per-user limit ran out after three joins rather than six.
+- If `DIAGNOSTICS_PORT` was already in use, the bot stopped at start-up, and Docker restarted it into the same error again and again. It now logs a warning and runs without the diagnostics endpoint.
+- `/radio import` deleted the server's favourite custom stations and its custom default station, because exports leave those out. An import now keeps them: custom-station favourites come after the file's favourites, and a custom default station stays when the file has none.
+- When the bot is removed from a server, its settings and its custom stations are now deleted together, so a failure part-way can't delete one and keep the other.
+- Some error messages in logs, and the error stored in catalogue sync reports, could include a full stream or list URL with a token in it. They are now redacted like other logged errors.
+
+### Changed
+
+- Database migration 4 (applied automatically after a backup at the next start) adds indexes, so deleting a station or source no longer reads every server's favourites, queue and source preferences.
+- Adding, editing or removing a custom station re-reads only that server's custom stations, not the whole catalogue.
+- Manual backups (`backup.js`, and the backups `radio-bot` takes) run at the lowest process priority, so they yield to the stream's encoder.
 
 ## [1.0.5] - 2026-11-02
 

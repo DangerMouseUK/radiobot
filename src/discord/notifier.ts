@@ -1,5 +1,5 @@
 import { type Client, PermissionFlagsBits } from 'discord.js';
-import type { Logger } from '../observability/logger.ts';
+import { type Logger, safeErr } from '../observability/logger.ts';
 import type { GuildRepository } from '../persistence/repositories/guilds.ts';
 import { truncate } from '../shared/text.ts';
 import type { SessionNotice } from '../voice/session.ts';
@@ -75,7 +75,8 @@ export class Notifier {
         return;
       await ch.send({ content: truncate(`📻 ${message}`, 1900), allowedMentions: { parse: [] } });
     } catch (err) {
-      this.#log.debug({ guildId, err: (err as Error).message }, 'notice not delivered');
+      if (this.#log.isLevelEnabled('debug'))
+        this.#log.debug({ guildId, err: safeErr(err) }, 'notice not delivered');
     }
   }
 

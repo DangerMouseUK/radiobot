@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Db, loadMigrations, type Migration, matchOwner } from '../../src/persistence/db.ts';
 import { GuildRepository } from '../../src/persistence/repositories/guilds.ts';
+import { StationRepository } from '../../src/persistence/repositories/stations.ts';
 import { bootDecision } from '../../src/voice/session-manager.ts';
 import { memoryDb } from '../helpers.ts';
 
@@ -454,6 +455,81 @@ describe('station and source cache', () => {
     expect(stations.listStations(null, { includeRetired: true }).map((x) => x.id)).toEqual(['mypack:a']);
   });
 
+  it("re-reads only that server's custom stations after a custom-station write", () => {
+    const { db, stations } = memoryDb();
+    const [g1, g2] = ['111111111111111111', '222222222222222222'];
+    const custom = (guildId: string, slug: string, displayName: string) => ({
+      id: `custom:${slug}`,
+      guildId,
+      slug,
+      displayName,
+      description: null,
+      category: null,
+      websiteUrl: null,
+      language: null,
+      createdById: '333333333333333333',
+    });
+    stations.upsertProviderStation(station('mypack:a'));
+    stations.upsertProviderStation(station('mypack:b'));
+    stations.insertCustomStation(custom(g2, 'other', 'Other'));
+    stations.insertCustomStation(custom(g1, 'mine-b', 'Mine B'));
+    const builtin = stations.listBuiltinStations();
+    const other = stations.listStations(g2);
+    const all = vi.spyOn(db, 'all');
+    stations.insertCustomStation(custom(g1, 'mine-a', 'Mine A'));
+    stations.updateCustomStation(g1, 'custom:mine-b', { displayName: 'Mine C' });
+    expect(stations.listStations(g1).map((x) => x.displayName)).toEqual([
+      'mypack:a',
+      'mypack:b',
+      'Mine A',
+      'Mine C',
+    ]);
+    stations.deleteCustomStation(g1, 'custom:mine-a');
+    expect(stations.listStations(g1).map((x) => x.id)).toEqual(['mypack:a', 'mypack:b', 'custom:mine-b']);
+    expect(stations.getStation('custom:mine-a')).toBeNull();
+    // Each write read just that server's custom stations; the whole list was never read again.
+    expect(all).toHaveBeenCalledTimes(3);
+    for (const [sql, params] of all.mock.calls) {
+      expect(sql).toMatch(/guild_id = \?/);
+      expect(params).toEqual([g1]);
+    }
+    // Another server's stations and the pack stations are the very same cached rows.
+    expect(stations.listStations(g2)).toEqual(other);
+    for (const [i, st] of stations.listStations(g2).entries()) expect(st).toBe(other[i]);
+    for (const [i, st] of stations.listBuiltinStations().entries()) expect(st).toBe(builtin[i]);
+    expect(stations.getStation('custom:other')).toBe(other.at(-1));
+    // The cache matches a fresh read.
+    expect(new StationRepository(db).listStations(g1)).toEqual(stations.listStations(g1));
+    stations.deleteGuildCustomStations(g1);
+    expect(stations.listStations(g1).map((x) => x.id)).toEqual(['mypack:a', 'mypack:b']);
+    expect(stations.listStations(g2).map((x) => x.id)).toEqual(['mypack:a', 'mypack:b', 'custom:other']);
+  });
+
+  it('forgets a custom-station write that rolled back', () => {
+    const { stations } = memoryDb();
+    stations.upsertProviderStation(station('mypack:a'));
+    stations.listStations(null);
+    expect(() =>
+      stations.transaction(() => {
+        stations.insertCustomStation({
+          id: 'custom:mine',
+          guildId: '111111111111111111',
+          slug: 'mine',
+          displayName: 'Mine',
+          description: null,
+          category: null,
+          websiteUrl: null,
+          language: null,
+          createdById: '333333333333333333',
+        });
+        expect(stations.listStations('111111111111111111')).toHaveLength(2);
+        throw new Error('roll back');
+      }),
+    ).toThrow('roll back');
+    expect(stations.listStations('111111111111111111').map((x) => x.id)).toEqual(['mypack:a']);
+    expect(stations.getStation('custom:mine')).toBeNull();
+  });
+
   it('reads once, and reads again after a station or source write (only)', () => {
     const { db, stations, guilds } = memoryDb();
     stations.upsertProviderStation(station('mypack:a'));
@@ -705,5 +781,22 @@ describe('probe history index', () => {
       .map((r) => r.detail)
       .join(' ');
     expect(plan).toMatch(/USING (COVERING )?INDEX ix_probe_results_started/);
+  });
+});
+
+describe('foreign key indexes', () => {
+  it.each([
+    ['guild_favourites', 'station_id', 'ix_guild_favourites_station'],
+    ['guild_queue', 'station_id', 'ix_guild_queue_station'],
+    ['guild_source_preferences', 'station_id', 'ix_guild_source_preferences_station'],
+    ['guild_source_preferences', 'preferred_source_id', 'ix_guild_source_preferences_source'],
+  ])('finds %s rows by %s without reading the whole table', (table, column, index) => {
+    const { db } = memoryDb();
+    // The lookup a cascading delete of a station or source makes.
+    const plan = db
+      .all<{ detail: string }>(`EXPLAIN QUERY PLAN SELECT 1 FROM ${table} WHERE ${column} = 'x'`)
+      .map((r) => r.detail)
+      .join(' ');
+    expect(plan).toMatch(new RegExp(`USING (COVERING )?INDEX ${index}`));
   });
 });

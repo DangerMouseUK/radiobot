@@ -2,6 +2,7 @@ import type { Logger } from '../observability/logger.ts';
 import type { MetaRepository } from '../persistence/repositories/guilds.ts';
 import type { StationRepository } from '../persistence/repositories/stations.ts';
 import { errorMessage, RadioError } from '../shared/errors.ts';
+import { redactText } from '../shared/redact.ts';
 import { normalizedSimilarity, normalizeName, slugify } from '../shared/text.ts';
 import type { SafeHttpClient } from '../streams/safe-fetch.ts';
 import type { PackRegistry, StationPack } from './packs.ts';
@@ -138,7 +139,8 @@ export class CatalogueSync {
         .map((st) => st.displayName);
       report.ok = true;
     } catch (err) {
-      report.error = err instanceof RadioError ? err.userMessage : errorMessage(err);
+      // Redacted before it is logged or stored: an error can quote a URL with a token in it.
+      report.error = redactText(err instanceof RadioError ? err.userMessage : errorMessage(err));
       this.#log.warn({ packId, error: report.error }, 'catalogue sync failed; keeping existing entries');
     }
     this.#repo.insertSyncReport({

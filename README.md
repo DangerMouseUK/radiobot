@@ -182,7 +182,7 @@ Radio never ends, so the queue moves only when you skip.
 | `/radio rescan <station> [compare]` | Admin | Re-probes a station's sources (rate-limited). `compare:true` also runs an audio comparison of about 40 s against the verified source. |
 | `/radio sync [pack]` | Admin | Reconciles station names with each pack's official list (or just `pack`). Reports added, renamed, missing and unreachable stations. |
 | `/radio export` | Admin | Downloads this server's settings as JSON. No secrets are included, and custom URLs with query strings are redacted. |
-| `/radio import <file>` | Admin | Validates an export and previews the changes. Nothing is applied until you confirm. |
+| `/radio import <file>` | Admin | Validates an export and previews the changes. Nothing is applied until you confirm. This server's custom-station favourites and custom default station are kept. |
 | `/radio panel [channel]` | Admin | Posts a persistent control panel that survives restarts. Its buttons still check permissions on every click. |
 | `/radio source pin <station> <source>` | Admin | Always uses this source. If it becomes ineligible, playback is marked Degraded and uses a fallback. |
 | `/radio source prefer <station> <source>` | Admin | Uses this source whenever it is eligible, and automatic selection otherwise. |
@@ -258,7 +258,7 @@ Settings come from environment variables, usually through `.env`; [`.env.example
 | `OPERATOR_USER_IDS` | empty | Discord user IDs, separated by commas or spaces, allowed to record identity reviews for pack sources. The application owner (or its team) is always allowed. |
 | `PROBE_HISTORY_LIMIT` | `30` | Probe results kept per source (1–1000). |
 | `PROBE_HISTORY_DAYS` | `30` | Maximum age of stored probe results, in days (1–365). |
-| `DIAGNOSTICS_PORT` | empty (off) | Optional JSON endpoint (`/healthz`, `/diagnostics`), bound to `127.0.0.1` only. |
+| `DIAGNOSTICS_PORT` | empty (off) | Optional JSON endpoint (`/healthz`, `/diagnostics`), bound to `127.0.0.1` only. If the port is in use, the bot logs a warning and runs without it. |
 | `TELEMETRY_ENABLED` | `false` | Must stay `false`. Radio Bot has no telemetry, and `true` is refused at start-up. |
 
 ## How it works
