@@ -271,35 +271,36 @@ function* correlate(
   const maxLag = Math.round(maxLagSeconds * ENVELOPE_RATE_HZ);
   const minOverlap = 15 * ENVELOPE_RATE_HZ;
   const scores: number[] = [];
-  const byLag = new Map<number, number>();
+  // Score per lag (index lag + maxLag); NaN where the overlap was too short to score.
+  const byLag = new Float64Array(2 * maxLag + 1).fill(Number.NaN);
+  // Energy of any window is a difference of prefix sums, so only the products are summed per lag.
+  const pa = prefixEnergy(a);
+  const pb = prefixEnergy(b);
   let best = { score: -1, lag: 0, overlap: 0 };
   for (let lag = -maxLag; lag <= maxLag; lag++) {
     if ((lag + maxLag) % LAGS_PER_SLICE === LAGS_PER_SLICE - 1) yield;
+    const start = Math.max(0, -lag);
+    const end = Math.min(a.length, b.length - lag);
+    const count = end - start;
     // Lags whose overlap is too short are skipped anyway; don't add them up first.
-    if (Math.min(a.length, b.length - lag) - Math.max(0, -lag) < minOverlap) continue;
-    let sum = 0;
-    let sa = 0;
-    let sb = 0;
-    let count = 0;
-    for (let i = Math.max(0, -lag); i < a.length && i + lag < b.length; i++) {
-      const x = a[i]!;
-      const y = b[i + lag]!;
-      sum += x * y;
-      sa += x * x;
-      sb += y * y;
-      count++;
-    }
     if (count < minOverlap) continue;
+    let sum = 0;
+    for (let i = start; i < end; i++) sum += a[i]! * b[i + lag]!;
+    const sa = pa[end]! - pa[start]!;
+    const sb = pb[end + lag]! - pb[start + lag]!;
     const score = sa > 0 && sb > 0 ? sum / Math.sqrt(sa * sb) : 0;
     scores.push(score);
-    byLag.set(lag, score);
+    byLag[lag + maxLag] = score;
     if (score > best.score) best = { score, lag, overlap: count };
   }
   if (scores.length === 0)
     return { score: 0, lagSeconds: 0, prominence: 0, uniqueness: 0, overlapSeconds: 0 };
   const exclusion = Math.round(0.5 * ENVELOPE_RATE_HZ);
   let second = 0;
-  for (const [lag, sc] of byLag) if (Math.abs(lag - best.lag) > exclusion && sc > second) second = sc;
+  for (let i = 0; i < byLag.length; i++) {
+    const sc = byLag[i]!;
+    if (Math.abs(i - maxLag - best.lag) > exclusion && sc > second) second = sc; // NaN never wins
+  }
   const mean = scores.reduce((s, v) => s + v, 0) / scores.length;
   const sd = Math.sqrt(scores.reduce((s, v) => s + (v - mean) ** 2, 0) / scores.length) || 1e-9;
   return {
@@ -309,6 +310,13 @@ function* correlate(
     uniqueness: Math.round((Math.max(0, best.score) / Math.max(second, 0.05)) * 100) / 100,
     overlapSeconds: best.overlap / ENVELOPE_RATE_HZ,
   };
+}
+
+/** out[i] is the sum of x[0..i-1]²: the energy of x[s..e-1] is out[e] - out[s]. */
+function prefixEnergy(x: Float64Array): Float64Array {
+  const out = new Float64Array(x.length + 1);
+  for (let i = 0; i < x.length; i++) out[i + 1] = out[i]! + x[i]! * x[i]!;
+  return out;
 }
 
 export const CORRELATION_THRESHOLD = 0.3;

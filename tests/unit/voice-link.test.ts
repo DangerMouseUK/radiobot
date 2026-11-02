@@ -100,6 +100,22 @@ describe('DiscordVoiceLink', () => {
     await vi.waitFor(() => expect(reconnected).toBe(2));
   });
 
+  it('does not rejoin after being detached while it waits for a reconnect', async () => {
+    const { connection, link } = await connect();
+    vi.useFakeTimers();
+    try {
+      connection.setState({ status: 'disconnected', reason: 0 });
+      // Reconnecting by itself: the link waits for Ready rather than rejoining at once.
+      connection.setState({ status: 'connecting' });
+      await vi.advanceTimersByTimeAsync(0);
+      link.detach();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(connection.rejoins).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('tolerates output gaps longer than the watchdog stall threshold', async () => {
     await connect();
     const { behaviors } = voice.playerOptions as { behaviors: { maxMissedFrames: number } };

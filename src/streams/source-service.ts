@@ -479,9 +479,9 @@ export class SourceService {
       return this.select(guildId, stationId, opts.exclude);
     }
     let selection = this.select(guildId, stationId, opts.exclude);
+    if (selection.selected) return selection;
     const sources = this.sourcesFor(stationId).filter((s) => !opts.exclude?.has(s.id));
     const stale = sources.filter((s) => this.needsProbe(s, Date.now(), 'foreground'));
-    if (selection.selected) return selection;
     const pref = this.#d.guilds.getPreference(guildId, stationId);
     const order = [...stale].sort((a, b) => {
       if (pref?.sourceId === a.id) return -1;
