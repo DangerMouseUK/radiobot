@@ -13,7 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - A detailed sources view of a station with many sources and a server override could go over Discord's 6000-character message limit and fail to send.
 - **Previous station** with nothing playing now starts from the last station, not the one before it, and **Next** or **Previous** says there is no other station instead of restarting the one that plays.
 - `/radio join` with a default station used two play tokens instead of one, so the per-user limit ran out after three joins rather than six.
-
+- Pressing **Favourite** twice, or on an older card, could undo it. **Favourite** now only adds and **Unfavourite** only removes, and each says so if nothing needed to change.
+- A new `/radio import` now replaces the server's previous import preview, whose buttons then say it has expired, and imports are limited to five per server in ten minutes.
+- The `channel` option of `/radio play` said it was for DJs and admins only. Listeners can use it too: with the default listener control, only for the channel they are in.
+- `/radio join` after `/radio stop`, with the bot still in the channel, said "Already here" instead of starting the default station.
+- The voice channel status could be set again just after the bot left a channel.
+- A browse list now stays open for 15 minutes after its last use, not 15 minutes after it was opened.
+- Station suggestions that Discord gave up waiting for were logged as errors and counted as internal faults.
 ## [1.0.5] - 2026-11-02
 
 ### Added

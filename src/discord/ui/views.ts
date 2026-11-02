@@ -312,9 +312,12 @@ export function controlRows(
     b('now', 'Refresh', ButtonStyle.Primary),
   ];
   if (stationId) {
+    // The button says what it does, so a second click or an old card can't undo it.
     const fav = ctx.guilds.isFavourite(guildId, stationId);
     second.push(
-      b('fav', fav ? 'Unfavourite' : 'Favourite', ButtonStyle.Secondary, stationId),
+      fav
+        ? b('unfav', 'Unfavourite', ButtonStyle.Secondary, stationId)
+        : b('fav', 'Favourite', ButtonStyle.Secondary, stationId),
       b('srcs', 'Sources', ButtonStyle.Secondary, stationId),
       b('insp', 'Inspect', ButtonStyle.Secondary, stationId),
     );

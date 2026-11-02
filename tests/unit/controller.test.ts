@@ -1,6 +1,12 @@
-import { type APIEmbed, type Interaction, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import {
+  type APIEmbed,
+  DiscordAPIError,
+  type Interaction,
+  MessageFlags,
+  PermissionFlagsBits,
+} from 'discord.js';
 import pino from 'pino';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
 import { PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
 import type { Station } from '../../src/catalogue/types.ts';
@@ -679,6 +685,28 @@ describe('/radio join', () => {
     expect(left.slice(0, 5)).toEqual([0, 0, 0, 0, 0]);
     expect(left[5]).toBeGreaterThan(0);
   });
+
+  it('plays the default station when it is still in the channel after a stop', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const station = t.stations.listStations(GUILD)[0]!;
+    const s = t.sessions.ensure(GUILD);
+    Object.assign(s, { connected: true, channelId: V1, stationId: station.id });
+    t.guilds.setIntent(GUILD, { desiredState: 'stopped' });
+    // Without a default station there is nothing to start.
+    const bare = await t.command(t.people.admin, { sub: 'join' });
+    expect(bare.text).toMatch(/Already here/);
+    expect(t.sessions.plays).toEqual([]);
+    t.guilds.updateSettings(GUILD, { defaultStationId: station.id });
+    const i = await t.command(t.people.admin, { sub: 'join' });
+    expect(i.violations).toEqual([]);
+    expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: station.id, channelId: V1 }]);
+    // While it plays, joining again leaves the station alone.
+    t.guilds.setIntent(GUILD, { desiredState: 'playing' });
+    const again = await t.command(t.people.admin, { sub: 'join' });
+    expect(again.text).toMatch(/Already here/);
+    expect(t.sessions.plays).toHaveLength(1);
+  });
 });
 
 describe('/radio import', () => {
@@ -733,6 +761,31 @@ describe('/radio import', () => {
     expect(cancel.text).toMatch(/Import cancelled/);
     const late = await t.click(t.people.admin, apply);
     expect(late.text).toMatch(/import preview expired/);
+  });
+
+  it('keeps one preview per server: a newer one replaces the older', async () => {
+    const t = setup();
+    t.setImport(JSON.stringify(exportGuild(GUILD, t.guilds, t.stations)));
+    const older = await preview(t);
+    const newer = await preview(t);
+    expect((await t.click(t.people.admin, older)).text).toMatch(/import preview expired/);
+    expect((await t.click(t.people.admin, newer)).text).toMatch(/Import applied/);
+  });
+
+  it('allows five imports per server in ten minutes, refused before the file is read', async () => {
+    const t = setup();
+    const text = JSON.stringify(exportGuild(GUILD, t.guilds, t.stations));
+    let reads = 0;
+    (t.ctx.http as unknown as { fetchText: () => Promise<{ text: string }> }).fetchText = async () => {
+      reads++;
+      return { text };
+    };
+    for (let n = 0; n < 5; n++) await preview(t);
+    const sixth = await t.command(t.people.admin, { sub: 'import', attachment: ATTACHMENT });
+    expect(sixth.violations).toEqual([]);
+    expect(sixth.ephemeral).toBe(true);
+    expect(sixth.text).toMatch(/Too many imports/);
+    expect(reads).toBe(5);
   });
 });
 
@@ -960,6 +1013,69 @@ describe('favourites and the default station', () => {
     expect(embed.footer?.text).toMatch(/· 1 station\./);
     expect(embed.description).toContain(station.displayName);
   });
+
+  it('never undoes itself: Favourite only adds and Unfavourite only removes', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const station = t.stations.listStations(GUILD)[0]!;
+    // Two clicks on the same card (a double click, or a card drawn before the first click).
+    const add = t.ids.make(GUILD, 'fav', station.id);
+    await t.click(t.people.admin, add);
+    const again = await t.click(t.people.admin, add);
+    expect(again.violations).toEqual([]);
+    expect(again.text).toMatch(/already one of this server’s favourites/);
+    expect(t.guilds.isFavourite(GUILD, station.id)).toBe(true);
+    const remove = t.ids.make(GUILD, 'unfav', station.id);
+    const removed = await t.click(t.people.admin, remove);
+    expect(removed.text).toMatch(/no longer one of this server’s favourites/);
+    const twice = await t.click(t.people.admin, remove);
+    expect(twice.text).toMatch(/isn’t one of this server’s favourites/);
+    expect(t.guilds.isFavourite(GUILD, station.id)).toBe(false);
+  });
+});
+
+describe('suggestions that expire before they are sent', () => {
+  const suggest = async (t: ReturnType<typeof setup>, err: Error) => {
+    const i = {
+      guildId: GUILD,
+      user: { id: OWNER, bot: false },
+      type: 4,
+      inCachedGuild: () => true,
+      isRepliable: () => false,
+      isAutocomplete: () => true,
+      isChatInputCommand: () => false,
+      isMessageComponent: () => false,
+      isButton: () => false,
+      commandName: 'radio',
+      options: {
+        getFocused: () => ({ name: 'station', value: '' }),
+        getSubcommand: () => 'play',
+        getSubcommandGroup: () => null,
+        getString: () => null,
+      },
+      respond: async () => {
+        throw err;
+      },
+    };
+    await new RadioController(t.ctx).handle(i as unknown as Interaction);
+  };
+
+  it('are logged at debug level, not as an internal fault', async () => {
+    const t = setup();
+    const lines: Array<Record<string, unknown>> = [];
+    (t.ctx as { logger: unknown }).logger = pino(
+      { level: 'debug' },
+      { write: (s: string) => lines.push(JSON.parse(s)) },
+    );
+    const unknown = { code: 10062, message: 'Unknown interaction' };
+    await suggest(t, new DiscordAPIError(unknown, 10062, 404, 'POST', '/interactions/x/callback', {}));
+    expect(lines.filter((l) => Number(l.level) >= 50)).toEqual([]);
+    expect(internalIncidents(t.metrics)).toEqual([]);
+    expect(lines.some((l) => l.level === 20 && /expired/.test(String(l.msg)))).toBe(true);
+    // Any other failure is still a fault.
+    await suggest(t, new Error('boom'));
+    expect(internalIncidents(t.metrics)).toHaveLength(1);
+  });
 });
 
 describe('choosing another source while a station plays', () => {
@@ -1098,6 +1214,26 @@ describe('open browse lists', () => {
     const latest = await t.command(t.people.member, { sub: 'browse' });
     const fresh = latest.componentIds.find((id) => decode(t.ids, id)?.action === 'browse')!;
     expect((await t.click(t.people.member, fresh)).text).not.toMatch(/expired/);
+  });
+
+  it('stay open for 15 minutes after their last use, not after they were opened', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const t = setup();
+      const pageButton = (i: { componentIds: string[] }) =>
+        i.componentIds.find((id) => decode(t.ids, id)?.action === 'browse')!;
+      const first = await t.command(t.people.member, { sub: 'browse' });
+      vi.setSystemTime(Date.now() + 10 * 60_000);
+      const second = await t.click(t.people.member, pageButton(first));
+      expect(second.text).not.toMatch(/expired/);
+      // 20 minutes after it was opened, 10 after it was last used.
+      vi.setSystemTime(Date.now() + 10 * 60_000);
+      const third = await t.click(t.people.member, pageButton(second));
+      expect(third.violations).toEqual([]);
+      expect(third.text).not.toMatch(/expired/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

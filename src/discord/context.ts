@@ -60,6 +60,8 @@ export class RateLimits {
   readonly syncGuild = RateLimiter.perWindow(2, 60 * 60_000);
   readonly syncGlobal = RateLimiter.perWindow(1, 10 * 60_000);
   readonly componentUser = RateLimiter.perWindow(20, 20_000);
+  /** `/radio import` downloads and parses a file, so it is limited before either. */
+  readonly importGuild = RateLimiter.perWindow(5, 10 * 60_000);
 
   sweep(): void {
     for (const l of [
@@ -70,6 +72,7 @@ export class RateLimits {
       this.syncGuild,
       this.syncGlobal,
       this.componentUser,
+      this.importGuild,
     ]) {
       l.sweep();
     }

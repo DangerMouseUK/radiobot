@@ -41,6 +41,7 @@ export const COMPONENT_ACTIONS = [
   'srcs',
   'stats',
   'stop',
+  'unfav',
   'usesrc',
 ] as const;
 export type ComponentAction = (typeof COMPONENT_ACTIONS)[number];
