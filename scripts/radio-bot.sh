@@ -134,10 +134,6 @@ container_state() { # running | restarting | exited | missing
   "${DOCKER[@]}" inspect -f '{{.State.Status}}' "$SERVICE" 2>/dev/null || echo missing
 }
 
-require_running() {
-  [ "$(container_state)" = running ] || die "Radio Bot is not running. Start it with: radio-bot start"
-}
-
 # Runs a command in the bot's container at the lowest CPU priority, so it can't hold up the stream.
 exec_low() { compose exec -T "$SERVICE" nice -n 19 "$@"; }
 
