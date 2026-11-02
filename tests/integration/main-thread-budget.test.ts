@@ -184,6 +184,9 @@ describe('main-thread budget while a stream plays', () => {
     const delay = monitorEventLoopDelay({ resolution: 5 });
     delay.enable();
     const playedBefore = resource.playbackDuration;
+    const startedAt = performance.now();
+    let played = 0;
+    let elapsed = 0;
     const timings: Record<string, number> = {};
     const time = async (name: string, fn: () => Promise<unknown> | unknown) => {
       const started = performance.now();
@@ -214,6 +217,8 @@ describe('main-thread budget while a stream plays', () => {
       });
     } finally {
       delay.disable();
+      played = resource.playbackDuration - playedBefore;
+      elapsed = performance.now() - startedAt;
       player.stop(true);
       pipeline.stop();
     }
@@ -222,14 +227,14 @@ describe('main-thread budget while a stream plays', () => {
     const p99Ms = delay.percentile(99) / 1e6;
     // Shown with the test output, so a slow step can be found without a profiler.
     console.info(
-      `event-loop delay: max ${maxMs.toFixed(1)} ms, p99 ${p99Ms.toFixed(1)} ms; longest runs: ${Object.entries(
+      `event-loop delay: max ${maxMs.toFixed(1)} ms, p99 ${p99Ms.toFixed(1)} ms; ${played} ms played in ${elapsed.toFixed(0)} ms; longest runs: ${Object.entries(
         timings,
       )
         .map(([k, v]) => `${k} ${v.toFixed(0)} ms`)
         .join(', ')}`,
     );
-    // The audio kept flowing the whole time.
-    expect(resource.playbackDuration - playedBefore).toBeGreaterThan(500);
+    // The audio kept flowing the whole time: the player sent (nearly) a packet per 20 ms throughout.
+    expect(played).toBeGreaterThan(0.8 * elapsed);
     expect(maxMs).toBeLessThan(MAX_DELAY_MS);
   }, 120_000);
 });

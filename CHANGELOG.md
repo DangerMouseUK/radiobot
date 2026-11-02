@@ -80,7 +80,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - A new test plays a stream through the real pipeline while `/radio stats`, browsing, source ranking and a sync of a 2,000-station list run, and fails if the event loop stalls for 50 ms or more.
   - The installer and `radio-bot` test also runs on macOS, with its bash 3.2.
   - Relative links in the README and docs are checked.
-- The Docker image is scanned for known high and critical vulnerabilities that have a fix (Trivy) on every change, weekly and before every release. Dependabot proposes updates to npm packages, GitHub Actions and the Node base image weekly.
+- The Docker image is scanned for known high and critical vulnerabilities that have a fix (Trivy) on every change, weekly and before every release. The image no longer includes npm, which the bot never used and which carried vulnerable dependencies of its own. Dependabot proposes updates to npm packages, GitHub Actions and the Node base image weekly.
 
 ## [1.0.5] - 2026-11-02
 

@@ -56,7 +56,10 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY migrations ./migrations
 COPY catalog ./catalog
-RUN mkdir -p /app/data && chown node:node /app/data
+# The bot runs only `node`. npm comes with the base image, unused, and carries its own dependencies
+# (with their own security advisories), so it is removed.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+  && mkdir -p /app/data && chown node:node /app/data
 USER node
 VOLUME ["/app/data"]
 LABEL org.opencontainers.image.title="Radio Bot" \
