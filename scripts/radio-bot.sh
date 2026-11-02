@@ -368,7 +368,7 @@ cmd_install() {
   install_shortcut
   if wait_until_healthy; then
     step "Last step: invite the bot to your Discord server"
-    say "Open this link, pick your server and click Authorise:"
+    say "Open this link, pick your server and click Authorize:"
     say ''
     say "  $(invite_url)"
     say ''
