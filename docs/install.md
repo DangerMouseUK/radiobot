@@ -252,7 +252,7 @@ Run `radio-bot update` now and then. `radio-bot status` tells you when there's s
 
 `radio-bot update` does this:
 
-1. If the bot is playing in any server, it tells you, and asks `Update now?`. Press **Enter** to go ahead, or type `n` to cancel. Playback stops during the update, and afterwards only starts again by itself in servers where **Resume after restart** is on in `/radio config`.
+1. If the bot is playing in any server, it tells you, and asks `Update now?`. Press **Enter** to go ahead, or type `n` to cancel. Playback stops during the update, and afterwards only starts again by itself in servers where **Resume after restart** is on in `/radio config`. The station keeps playing while the new version downloads, and on a small server the download can cause small cuts in the audio, so a quiet moment is the best time to update.
 2. If the bot is running, it backs up the database and copies the backup into the `backups` folder in `~/radio-bot`.
 3. It switches to the new version and downloads it.
 4. It keeps the last 500 lines of the old version's log in the `logs` folder in `~/radio-bot`. The newest 5 of these files are kept.

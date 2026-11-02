@@ -64,7 +64,13 @@ If the configuration is invalid, the bot exits with code 78, and the unit doesn'
 What the unit does:
 
 - It runs the bot as an unprivileged, throwaway user (`DynamicUser=yes`) with a read-only view of the system, and systemd creates the data folder for it.
-- It gives the bot a slightly higher CPU priority than ordinary jobs (`Nice=-5`). Voice packets go out every 20 ms, and a busy moment on a small host can make a few leave late. Stream checks still run their FFmpeg processes at the lowest priority.
+- It puts the stream first. Voice packets go out every 20 ms, and a busy moment on a small host can make a few leave late, which listeners hear as a small cut. So:
+  - `CPUWeight=1000` gives the bot ten times the usual share of the processor whenever other services want it at the same time (the default is 100). It is a share, not a limit: when nothing else is busy, other programs still get the whole processor.
+  - `Nice=-5` puts the bot and its FFmpeg encoder slightly ahead of the other processes in the service. On systems that don't share the processor out by service, it also puts them ahead of ordinary programs.
+  - `IOWeight=1000` does the same for disk access, on systems whose disk set-up supports it.
+  - `OOMScoreAdjust=-500` tells the kernel that if the machine runs out of memory, it should stop other programs before the bot.
+  - Stream checks still run their FFmpeg processes at the lowest priority, and mark them as the first to stop if memory runs out, so they never take the processor or memory from the stream.
+- Don't add `CPUQuota=` or `MemoryMax=` to the unit: when the bot reaches a limit, the kernel makes it wait, and listeners hear a cut.
 
 Then invite the bot with the link in [install.md, step 3](install.md#3-invite-the-bot-to-your-server), using your own Application ID.
 

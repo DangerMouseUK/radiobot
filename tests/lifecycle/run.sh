@@ -66,10 +66,14 @@ git -C "$T/origin" tag v1.0.1
 git -C "$T/origin" tag v1.1.0-rc.1
 out=$(printf 'n\n' | tty_run "FAKE_PLAYING=2 radio-bot update")
 check "warns that playback stops" has "$out" "Radio Bot is playing in 2 servers."
+check "warns that the download may cause cuts" has "$out" "listeners may hear small cuts"
 check "can be cancelled at the warning" has "$out" "Cancelled; nothing was changed."
 check "cancelling leaves the version alone" test "$(radio-bot version)" = v1.0.0
 out=$(printf 'y\n' | tty_run "FAKE_PULL_OK=1 FAKE_PLAYING=2 radio-bot update")
 check "backs up before updating" has "$out" "Backing up the database first"
+check "backs up at the lowest CPU and disk priority" \
+  grep -qF "ionice -c 3 -t nice -n 19 \"\$@\"; fi; exec nice -n 19 \"\$@\" exec_low node dist/scripts/backup.js" \
+  "$T/state/calls.log"
 check "downloads the published image" has "$out" "Image downloaded."
 check "skips pre-releases" test "$(radio-bot version)" = v1.0.1
 check "reports the update" has "$out" "Updated v1.0.0 → v1.0.1"

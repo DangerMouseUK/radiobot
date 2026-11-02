@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   checkFfmpeg,
@@ -159,6 +160,37 @@ describe('lowerPriority', () => {
   it('does nothing for a process without a pid, or one it may not change', () => {
     expect(() => lowerPriority({ pid: undefined } as ChildProcess)).not.toThrow();
     expect(() => lowerPriority({ pid: 2_147_483_000 } as ChildProcess)).not.toThrow();
+  });
+
+  it('on Linux, makes the process the first one the kernel kills when memory runs out', () => {
+    const write = vi.fn(async () => undefined);
+    lowerPriority({ pid: 2_147_483_000 } as ChildProcess, { platform: 'linux', write });
+    expect(write).toHaveBeenCalledExactlyOnceWith('/proc/2147483000/oom_score_adj', '1000');
+    write.mockClear();
+    lowerPriority({ pid: 2_147_483_000 } as ChildProcess, { platform: 'win32', write });
+    lowerPriority({ pid: undefined } as ChildProcess, { platform: 'linux', write });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('ignores a kernel that refuses the score', async () => {
+    const write = vi.fn(() => Promise.reject(new Error('EACCES')));
+    lowerPriority({ pid: 2_147_483_000 } as ChildProcess, { platform: 'linux', write });
+    expect(write).toHaveBeenCalledOnce();
+    // An unhandled rejection would fail the run once the event loop turns.
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  it.runIf(process.platform === 'linux')('sets the score of a real child process', async () => {
+    const r = new ProcessRegistry();
+    const child = spawnTracked(r, NODE, ['-e', 'setTimeout(() => {}, 30_000)'], 'probe:oom', 'probe');
+    try {
+      lowerPriority(child);
+      const score = () => readFileSync(`/proc/${child.pid}/oom_score_adj`, 'utf8').trim();
+      await until(() => score() === '1000');
+      expect(score()).toBe('1000');
+    } finally {
+      r.killAll();
+    }
   });
 });
 

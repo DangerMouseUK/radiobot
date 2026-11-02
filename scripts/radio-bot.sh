@@ -134,8 +134,15 @@ container_state() { # running | restarting | exited | missing
   "${DOCKER[@]}" inspect -f '{{.State.Status}}' "$SERVICE" 2>/dev/null || echo missing
 }
 
-# Runs a command in the bot's container at the lowest CPU priority, so it can't hold up the stream.
-exec_low() { compose exec -T "$SERVICE" nice -n 19 "$@"; }
+# Runs a command in the bot's container at the lowest CPU priority and, where the image has ionice
+# (Debian's util-linux, which it does), the idle disk priority, so it can't hold up the stream.
+# ionice -t still runs the command if the host won't set the disk priority.
+exec_low() {
+  # shellcheck disable=SC2016 # "$@" is expanded by the container's shell
+  compose exec -T "$SERVICE" sh -c \
+    'if command -v ionice >/dev/null 2>&1; then exec ionice -c 3 -t nice -n 19 "$@"; fi; exec nice -n 19 "$@"' \
+    exec_low "$@"
+}
 
 # Copies the backups in the bot's data to backups/. docker cp also works while the container is
 # stopped or restarting, so backups can be fetched from a bot that won't start.
@@ -460,6 +467,7 @@ warn_if_playing() { # warn_if_playing [no-ask]; fails if the user decides not to
   if [ -z "$n" ] || [ "$n" -eq 0 ]; then return 0; fi
   if [ "$n" -eq 1 ]; then servers=server; fi
   warn "Radio Bot is playing in $n $servers. Updating restarts it, and a server only starts playing again by itself if an admin turned on \"Resume after restart\" in /radio config."
+  warn "Before the restart, the update is downloaded (or built on this machine) while the station plays. That uses the processor and network, so on a small server listeners may hear small cuts."
   if [ -n "${1:-}" ] || ! has_tty; then return 0; fi
   confirm "Update now?" y
 }

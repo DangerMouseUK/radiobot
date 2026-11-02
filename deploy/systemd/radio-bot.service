@@ -22,9 +22,16 @@ RestartSec=5
 RestartPreventExitStatus=78
 TimeoutStopSec=20
 # Voice packets go out every 20 ms, so the bot (and the FFmpeg encoder it starts) gets the CPU ahead
-# of ordinary jobs on a small host. systemd sets this before dropping privileges; stream checks
-# still lower their own FFmpeg processes to the lowest priority.
+# of everything else on a small host. systemd sets these before dropping privileges; stream checks
+# still lower their own FFmpeg processes to the lowest priority, and raise their own OOM score.
+# Nice ranks processes within one cgroup; CPUWeight ranks this service against other services
+# (default 100). It is a share, never a limit: no CPUQuota= or MemoryMax=, which would stall the audio.
 Nice=-5
+CPUWeight=1000
+# Disk access ahead of other services, where the kernel's I/O controller and disk scheduler support it.
+IOWeight=1000
+# If the host runs out of memory, the kernel stops other processes before the bot and its encoder.
+OOMScoreAdjust=-500
 
 # Runs as a throwaway system user; systemd creates /var/lib/radio-bot for its data.
 DynamicUser=yes

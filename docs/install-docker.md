@@ -199,13 +199,34 @@ docker compose exec radio-bot node -e "fetch('http://127.0.0.1:9464/diagnostics'
 
 ## Customising `compose.yaml`
 
-Don't edit `compose.yaml` itself. Put your changes (a bind mount instead of the named volume, resource limits, a different image) in a `compose.override.yaml` next to it. Compose merges that file automatically and Git ignores it. `radio-bot update` refuses to run over edited tracked files, so an override is the only kind of change that survives updates.
+Don't edit `compose.yaml` itself. Put your changes (a bind mount instead of the named volume, a different image) in a `compose.override.yaml` next to it. Compose merges that file automatically and Git ignores it. `radio-bot update` refuses to run over edited tracked files, so an override is the only kind of change that survives updates.
+
+Don't add CPU or memory limits (`cpus:`, `mem_limit:` or `deploy.resources.limits`). When the bot reaches a limit, the kernel makes it wait, and listeners hear a cut.
+
+## How the stream gets priority
+
+The bot sends a small piece of audio to Discord every 20 milliseconds, so on a busy machine it has to come first. `compose.yaml` sets two things for that:
+
+- **`cpu_shares: 26214`** gives the bot's container a much bigger share of the processor than other containers and services whenever they all want it at once: ten times the usual share or more. Docker turns the number into a "CPU weight" of about 1,000 to 1,400, depending on its version, against a default of 100. It is a share, not a limit: when nothing else is busy, other programs still get the whole processor, and the bot is never held back.
+- **`oom_score_adj: -500`** tells the kernel that if the machine ever runs out of memory, it should stop other programs before the bot. The bot's stream checks mark themselves as the first to stop, so a check always goes before the stream does.
+
+Inside the container, stream checks, backups and health checks run at the lowest CPU priority, and `radio-bot` runs backups at the lowest disk priority as well.
+
+**Rootless Docker:** the container still starts, but the two settings do less. Docker can't give the container a lower memory score than Docker's own, so it uses its own score instead, and the CPU share only counts if your system lets rootless Docker manage the processor (cgroup v2 with CPU delegation); otherwise Docker ignores it.
+
+If your Docker refuses to start the container with an error that mentions `oom_score_adj` (this can happen with user-namespace remapping), turn that setting off in `compose.override.yaml` and run `radio-bot restart`:
+
+```yaml
+services:
+  radio-bot:
+    oom_score_adj: 0
+```
 
 ## Upgrades
 
 If you installed with the installer, run `radio-bot update`. It:
 
-1. warns you if the bot is playing anywhere, and asks whether to go ahead (playback only resumes by itself where **Resume after restart** is on);
+1. warns you if the bot is playing anywhere, and asks whether to go ahead (playback only resumes by itself where **Resume after restart** is on, and the download in step 4 happens while the station still plays, which can cause small cuts on a small server);
 2. if the bot is running, backs up the database and copies the backups to `backups/` (if the backup fails, it stops and changes nothing);
 3. switches to the newest release (or the one you name, as in `radio-bot update v1.0.4`);
 4. downloads that release's image, or builds it if none is published;
@@ -256,7 +277,7 @@ docker cp radio-bot:/app/data/backups ./radio-bot-backups
 
 With the installer, `radio-bot backup` does both (if the bot isn't running, it only copies the backups already there), and `radio-bot restore FILE` puts a backup back. `restore` checks that the file is a SQLite database before stopping anything, backs up the current database first if the bot is running, and starts the bot again on its current data if copying the file in fails or is interrupted.
 
-`radio-bot` runs the backup and the health check at the lowest CPU priority, as the image's own healthcheck does, and `backup.js` also lowers its own priority, so a backup is safe to run while the bot plays.
+`radio-bot` runs the backup and the health check at the lowest CPU priority, as the image's own healthcheck does, and at the lowest disk priority (`ionice -c 3`) where the disk supports it. `backup.js` also lowers its own CPU priority, so a backup is safe to run while the bot plays.
 
 Backups contain Discord server, channel and role IDs, settings, custom station URLs (which may include tokens you added yourself), and the last requester's user ID. Store them as carefully as `.env`. They never contain the Discord token, which lives only in the environment.
 
