@@ -164,6 +164,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 - The `UrlPolicy` `testAllowedAddresses` option lets tests reach loopback fixtures. It must **never** be wired to configuration.
 - Use `memoryDb()` from `tests/helpers.ts` for an in-memory, migrated database, and `makeSource()` for source fixtures. Match the existing style: import from `'../../src/…ts'`, with `describe`/`it` and plain `expect`.
 - New behaviour needs a test. A bug fix needs a test that failed before the fix. Avoid timing-sensitive assertions; inject clocks (for example `RateMeter`'s `now`) instead of sleeping.
+- CI runs `pnpm test:coverage`, which fails if coverage falls below the thresholds in `vitest.config.ts`. Add tests rather than lowering them.
 
 ## Documentation must match the code
 

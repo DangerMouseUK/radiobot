@@ -12,6 +12,8 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.ts', 'scripts/**/*.ts'],
       reporter: ['text-summary', 'text'],
+      // CI fails if coverage drops below these (just under what the tests reach today).
+      thresholds: { lines: 98, statements: 97, functions: 97, branches: 92 },
     },
   },
 });

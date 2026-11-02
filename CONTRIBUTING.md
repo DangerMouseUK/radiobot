@@ -37,7 +37,7 @@ Other scripts:
 |---|---|
 | `pnpm test:unit` / `pnpm test:integration` | Run one test suite only |
 | `pnpm vitest run tests/unit/session.test.ts` | Run a single test file |
-| `pnpm test:coverage` | Run every test and report how much of `src/` and `scripts/` they run, file by file (V8 coverage; settings in `vitest.config.ts`) |
+| `pnpm test:coverage` | Run every test and report how much of `src/` and `scripts/` they run, file by file (V8 coverage; settings in `vitest.config.ts`). CI runs this, and fails if coverage drops below the minimums set there |
 | `pnpm format` | Apply Biome formatting (run it after editing anything Biome checks: `src/`, `scripts/`, `tests/`, `catalog/` and the root JSON and TS files) |
 | `pnpm dev` | Run from source with `node --watch src/index.ts`. Needs the variables from a `.env` with a **test** bot token exported into your shell; the bot does not read `.env` itself. |
 | `pnpm validate-catalogue` | Validates every station pack (plus `EXTRA_PACKS_DIR`). Add `--pack <dir>` to check one pack folder, or `--probe <stationId…>` / `--probe --pack-id <id>` for live probes, `--compare` for audio comparisons and `--json <file>` for an evidence report. Runs from `dist/`, so run `pnpm build` first. CI runs `node scripts/validate-catalogue.ts` straight from source. |
