@@ -1,6 +1,6 @@
 # Running on a container platform
 
-Radio Bot ships a standard `Dockerfile`, so any platform that can build or run a container image *and* keep it running can host it. This page lists what such a platform must provide and how the common options compare. For your own machine, use [install-docker.md](install-docker.md) (Docker Compose) or [install-linux.md](install-linux.md) (no containers).
+Radio Bot ships a standard `Dockerfile`, and every release publishes a ready-made image. Any hosting platform that can run a container *and* keep it running all the time can host it. This page lists what such a platform must provide, and how the common kinds of platform compare. For your own machine, use [install.md](install.md) (the beginner's installer), [install-docker.md](install-docker.md) (Docker Compose by hand) or [install-linux.md](install-linux.md) (no containers).
 
 > Status: none of the platforms named here have been tested with Radio Bot. The requirements below come from how the bot works, and the platform notes describe each platform's documented model. Check the current documentation of the platform you choose.
 
@@ -8,12 +8,13 @@ Radio Bot ships a standard `Dockerfile`, so any platform that can build or run a
 
 | Requirement | Why |
 |---|---|
-| **A long-running process ("worker" / "background service")** | The bot holds a permanent WebSocket connection to Discord and streams audio continuously. It cannot run as a request-driven or serverless function. |
+| **A long-running process** (often called a "worker" or "background service") | The bot keeps a permanent connection to Discord and streams audio continuously. It can't run as a function that starts per request. |
 | **Outbound TCP and UDP** | Discord voice audio is sent over **UDP**. Outbound HTTPS is needed for Discord's API and the radio streams. |
-| **No inbound port** | The bot serves nothing. Choose a worker/background type that does not require an HTTP port or health-check URL. |
-| **A persistent volume mounted at `/app/data`** | SQLite holds server settings, favourites and custom stations. Without a persistent volume, all of that resets on every redeploy or restart. |
-| **Secret environment variables** | At least `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`. See `.env.example` for the rest. |
-| **Enough CPU for FFmpeg** | One FFmpeg encode per active voice channel. Benchmark on your plan before relying on it. |
+| **No inbound port** | The bot serves nothing. Choose a worker or background type that doesn't require an HTTP port or a health-check URL. |
+| **A persistent volume mounted at `/app/data`** | The bot's SQLite database there holds server settings, favourites and custom stations. Without a persistent volume, all of that resets on every redeploy or restart. The image runs as the `node` user (UID 1000), so the volume must be writable by that user. |
+| **Secret environment variables** | At least `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`. See `.env.example` and the [README's configuration table](../README.md#configuration) for the rest. |
+| **Enough CPU and memory** | One FFmpeg encoder runs per Discord server that is playing. One stream used about 8% of one CPU core and about 200 MB of memory in total; plan for 1 GB of memory. Check on your plan before relying on it. |
+| **A 64-bit x86 or ARM machine** | Images are published for `linux/amd64` and `linux/arm64`. |
 
 The image runs as a non-root user and writes only to `/app/data` and `/tmp`.
 
@@ -21,26 +22,27 @@ The image runs as a non-root user and writes only to `/app/data` and `/tmp`.
 
 ### Platforms with persistent volumes
 
-Any platform that runs a long-lived container **and** attaches a persistent volume meets every requirement. Deploy from the repository's `Dockerfile` (or the published image), mount a volume at `/app/data`, set the environment variables, and don't configure an HTTP port or HTTP health check.
+Any platform that runs a long-lived container **and** attaches a persistent volume meets every requirement. Deploy from the published image (or the repository's `Dockerfile`), mount a volume at `/app/data`, set the environment variables, and don't configure an HTTP port or HTTP health check.
 
 ### DigitalOcean App Platform
 
-Deploy the repository as a **Worker** component built from the `Dockerfile`; a worker does not need an HTTP port. Two limits to know:
+Deploy the repository as a **Worker** component built from the `Dockerfile`; a worker doesn't need an HTTP port. Two limits to know:
 
-- **No persistent volumes.** App Platform's filesystem is ephemeral, so the SQLite database is lost whenever the app redeploys or restarts. Per-server settings made with `/radio config`, favourites and custom stations would all reset. That is fine for evaluation but not for a server people rely on. For lasting settings, run the container on a Droplet with Docker ([install-docker.md](install-docker.md)) or directly on Linux ([install-linux.md](install-linux.md)).
+- **No persistent volumes.** App Platform's filesystem is temporary, so the SQLite database is lost whenever the app redeploys or restarts. Per-server settings made with `/radio config`, favourites and custom stations would all reset. That is fine for trying it out, but not for a server people rely on. For lasting settings, run the container on a Droplet with Docker ([install-docker.md](install-docker.md)) or directly on Linux ([install-linux.md](install-linux.md)).
 - **Confirm outbound UDP** for Discord voice on your plan before committing.
 
-### Vercel and other serverless/function platforms
+### Vercel and other serverless or function platforms
 
-**Not supported.** Vercel runs request-driven serverless functions with execution time limits. It cannot keep a Discord gateway connection open, keep a voice connection, or run FFmpeg continuously, and it has no persistent disk. The same applies to other function-as-a-service platforms (for example AWS Lambda or Cloudflare Workers).
+**Not supported.** Vercel runs serverless functions that start per request and have time limits. They can't keep a Discord connection or a voice connection open, or run FFmpeg continuously, and they have no persistent disk. The same applies to other function-as-a-service platforms, for example AWS Lambda or Cloudflare Workers.
 
 ## Generic deployment steps
 
 1. Create your Discord application and bot token ([install.md → Create your Discord bot](install.md#1-create-your-discord-bot)).
-2. Create a **worker/background** service from this repository's `Dockerfile`, or from a published image (`ghcr.io/dangermouseuk/radio-bot:<version>`).
-3. Attach a **persistent volume at `/app/data`** (if the platform has them).
+2. Create a **worker** or **background** service from the published image, `ghcr.io/dangermouseuk/radio-bot:<version>` (for example `1.0.5`), or from this repository's `Dockerfile`.
+3. Attach a **persistent volume at `/app/data`**, if the platform has them.
 4. Set `DISCORD_TOKEN` (as a secret) and `DISCORD_APPLICATION_ID`. Leave `DATABASE_PATH`, `FFMPEG_PATH` and `FFPROBE_PATH` unset; the image's defaults are correct.
-5. Do **not** expose a port or configure an HTTP health check. The image has its own `HEALTHCHECK` (`nice -n 19 node dist/scripts/healthcheck.js`, at the lowest CPU priority) for platforms that honour Docker health checks.
-6. Deploy, then run `/radio config` in your Discord server.
+5. Do **not** expose a port or configure an HTTP health check. The image has its own `HEALTHCHECK` (`nice -n 19 node dist/scripts/healthcheck.js`, run at the lowest CPU priority so it can't delay the audio) for platforms that use Docker health checks.
+6. Deploy. In the platform's log viewer you should see `connected to Discord` within a minute. If the settings are invalid, the bot exits with code 78 and the log names the variable that is wrong.
+7. Invite the bot with the link in [install.md, step 3](install.md#3-invite-the-bot-to-your-server), using your own Application ID, then run `/radio config` in your Discord server.
 
-Logs are JSON lines on stdout; read them in the platform's log viewer.
+Logs are JSON lines on standard output; read them in the platform's log viewer.

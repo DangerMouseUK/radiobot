@@ -2,14 +2,14 @@
 
 > **New to this?** Use the [beginner's guide](install.md) instead. Its installer sets up exactly what this page describes and gives you a `radio-bot` command for updates, backups and removal. This page is the manual reference.
 
-This guide runs Radio Bot with Docker Engine and the Compose plugin on any Linux machine, on 64-bit x86 or ARM, as long as an image exists for its CPU architecture. To run without containers, see [install-linux.md](install-linux.md); for hosted platforms, see [install-container-platforms.md](install-container-platforms.md). The bot needs **outbound** internet access to Discord and to the radio stream hosts. It needs **no inbound port, domain or reverse proxy**.
+This guide runs Radio Bot with Docker Engine and the Compose plugin on any Linux machine with a 64-bit x86 or ARM processor; published images cover both (`linux/amd64` and `linux/arm64`). To run without containers, see [install-linux.md](install-linux.md); for hosted platforms, see [install-container-platforms.md](install-container-platforms.md). The bot needs **outbound** internet access to Discord and to the radio stream hosts. It needs **no inbound port, domain or reverse proxy**.
 
 You will run your own Discord application, with your own token. Radio Bot is unofficial and is not affiliated with or endorsed by any broadcaster. Before running it for anyone other than yourself, read [rights-and-disclaimer.md](rights-and-disclaimer.md).
 
 ## Requirements
 
 - Docker Engine 24 or newer, with Docker Compose **2.24 or newer** (`docker compose version`). `compose.yaml` uses an optional `env_file`, which older Compose releases reject; the `radio-bot` manager checks this.
-- Disk space for the image (a Node.js runtime plus FFmpeg) and a few MB for the database and its backups. For CPU and memory, see the [README's requirements](../README.md#requirements) and [Resource notes](#resource-notes).
+- About 3 GB of free disk space: the image (a Node.js runtime plus FFmpeg) is about 1 GB and is briefly there twice during an upgrade, and the database and its backups take a few MB. For CPU and memory, see the [README's requirements](../README.md#requirements) and [Resource notes](#resource-notes).
 - A Discord account that can create applications, and a server where you have **Manage Server**, which Discord requires to invite a bot. To configure Radio Bot afterwards, you must be the server owner or have the **Administrator** permission.
 
 ## 1. Create the Discord application
@@ -44,9 +44,12 @@ Open it, choose your server and authorise. You can do this before or after start
 ```sh
 git clone https://github.com/DangerMouseUK/radiobot.git
 cd radiobot
+git checkout v1.0.5          # the newest release; the default branch may hold unreleased changes
 cp .env.example .env
 chmod 600 .env
 ```
+
+Each release's `compose.yaml` names the published image of that same release, so the checkout and the image match. `git tag -l 'v*' --sort=-v:refname | head -n 1` prints the newest release tag.
 
 Edit `.env`. Only two values are required:
 
@@ -97,9 +100,9 @@ docker compose up -d
 
 The image is a multi-stage build on a pinned `node:24` Debian slim base. It uses Debian's `ffmpeg` package, which includes `libopus`, runs under `tini`, and runs as the unprivileged `node` user.
 
-On first start, the JSON log should include these messages: `database migrated`, `station packs loaded` (with the loaded and enabled pack IDs), `ffmpeg detected` (with `"libopus":true`), `connected to Discord`, and `slash commands registered`.
+On first start, the JSON log should include these messages: `database migrated`, `station packs loaded` (with the loaded and enabled pack IDs), `ffmpeg detected` (with `"libopus":true`) and `connected to Discord`. `slash commands registered` follows once the bot is in at least one server and the command needed registering there; it is not logged when nothing changed.
 
-If the configuration is invalid, the container exits with code 78 and prints which variable is wrong. Secret values are never printed.
+If the configuration is invalid, the container exits with code 78 and prints which variable is wrong. Secret values are never printed. Because of `restart: unless-stopped`, Docker keeps restarting it until you fix `.env` and run `docker compose up -d` again.
 
 What the shipped `compose.yaml` sets up:
 
@@ -200,24 +203,39 @@ Don't edit `compose.yaml` itself. Put your changes (a bind mount instead of the 
 
 ## Upgrades
 
-If you installed with the installer, run `radio-bot update`. It warns you if the bot is playing anywhere (playback only resumes by itself where **Resume after restart** is on), backs up the database and copies the backups to `backups/`, switches to the newest release, saves the last 500 log lines of the old container to `logs/` (newest 5 kept), restarts, and once the new version is healthy removes the older `radio-bot` images. If an update stops after switching versions but before the restart (a failed download, Ctrl+C), `radio-bot update` notices that the container still runs the old image and finishes the job, and `radio-bot status` says so. By hand:
+If you installed with the installer, run `radio-bot update`. It:
+
+1. warns you if the bot is playing anywhere, and asks whether to go ahead (playback only resumes by itself where **Resume after restart** is on);
+2. if the bot is running, backs up the database and copies the backups to `backups/` (if the backup fails, it stops and changes nothing);
+3. switches to the newest release (or the one you name, as in `radio-bot update v1.0.4`);
+4. downloads that release's image, or builds it if none is published;
+5. saves the last 500 log lines of the old container to `logs/` (the newest 5 files are kept);
+6. restarts the bot and waits until it is healthy;
+7. removes the older `radio-bot` images.
+
+If an update stops after switching versions but before the bot is running on the new one (a failed download, Ctrl+C), `radio-bot status` says that the last update didn't finish, and running `radio-bot update` again finishes it. It tells an unfinished update apart by a marker the update leaves until the new version is healthy, and by the running container's image differing from the one `compose.yaml` names.
+
+By hand, in the folder you cloned into:
 
 ```sh
 docker compose logs --tail=500 radio-bot > radio-bot-before-update.log   # replacing the container deletes its logs
-docker compose pull           # or: git pull && docker compose build
+docker compose exec radio-bot nice -n 19 node dist/scripts/backup.js     # see Backups
+git fetch --tags
+git checkout vX.Y.Z           # the release you want; its compose.yaml names its image
+docker compose pull           # or, if no image is published for it: docker compose build
 docker compose up -d
 docker compose logs -f radio-bot
 docker image ls ghcr.io/dangermouseuk/radio-bot   # remove old versions with: docker image rm <name:tag>
 ```
 
-Each image is about 1 GB, so remove old ones, or a small disk fills up over a few updates.
+`docker compose pull` on its own doesn't upgrade anything: the image tag is fixed in `compose.yaml`, so you need the new release's `compose.yaml` (or a new `RADIO_BOT_IMAGE`). Each image is about 1 GB, so remove old ones, or a small disk fills up over a few updates.
 
 On start-up, pending database migrations are applied automatically:
 
 - **A backup is taken first.** If the database already has a schema and a migration is pending, a consistent copy is written to `/app/data/backups/radio-bot-pre-v<N>-<timestamp>.sqlite` (using `VACUUM INTO`) before anything changes. The newest 5 pre-migration backups are kept. Manual backups are rotated separately (newest 10).
 - **Each migration runs in a transaction,** and its checksum is recorded.
 - **Edited migrations are refused.** If an already-applied migration file has changed, start-up stops with a checksum error rather than letting the schema drift.
-- **Downgrades are refused.** If the database is newer than the image (you rolled back), start-up stops with "Database has migrations newer than this build". Restore the matching backup, or run the newer image again.
+- **Downgrades are refused.** If the database is newer than the image (you rolled back), start-up stops with "Database has migrations newer than this build". Restore the `radio-bot-pre-v<N>-…` backup the newer version took just before it migrated (see [Backups](#backups)), or run the newer image again.
 
 Read [CHANGELOG.md](../CHANGELOG.md) before upgrading.
 
@@ -236,15 +254,18 @@ docker compose exec radio-bot nice -n 19 node dist/scripts/backup.js
 docker cp radio-bot:/app/data/backups ./radio-bot-backups
 ```
 
-With the installer, `radio-bot backup` does both, and `radio-bot restore FILE` puts a backup back: it checks that the file is a SQLite database before stopping anything, and starts the bot again on its current data if copying the file in fails.
+With the installer, `radio-bot backup` does both (if the bot isn't running, it only copies the backups already there), and `radio-bot restore FILE` puts a backup back. `restore` checks that the file is a SQLite database before stopping anything, backs up the current database first if the bot is running, and starts the bot again on its current data if copying the file in fails or is interrupted.
+
+`radio-bot` runs the backup and the health check at the lowest CPU priority, as the image's own healthcheck does, and `backup.js` also lowers its own priority, so a backup is safe to run while the bot plays.
 
 Backups contain Discord server, channel and role IDs, settings, custom station URLs (which may include tokens you added yourself), and the last requester's user ID. Store them as carefully as `.env`. They never contain the Discord token, which lives only in the environment.
 
 **Restore:**
 
-1. Stop the bot with `docker compose down`. This keeps the volume.
-2. Copy the backup file over `radio-bot.sqlite` in the volume, and delete any `radio-bot.sqlite-wal` and `radio-bot.sqlite-shm` files.
-3. Start the bot again.
+1. Check that the file is a SQLite database: `head -c 15 <file>.sqlite` should print `SQLite format 3`.
+2. Stop the bot with `docker compose down`. This keeps the volume.
+3. Copy the backup file over `radio-bot.sqlite` in the volume, and delete any `radio-bot.sqlite-wal` and `radio-bot.sqlite-shm` files.
+4. Start the bot again.
 
 For example, using a temporary container:
 
@@ -257,7 +278,7 @@ docker compose up -d
 
 `docker volume ls` lists the volumes if yours is named differently. The `chown` makes the file owned by the image's `node` user (UID 1000).
 
-**Settings only:** `/radio export` in Discord downloads a server's settings as JSON, with no secrets. `/radio import` restores them after showing a preview. Custom stations' URLs may hold secrets, so custom-station favourites and a custom default station aren't exported; an import keeps the ones the server already has.
+**Settings only:** `/radio export` in Discord downloads one server's settings as JSON, with no secrets. `/radio import` shows a preview and applies it only when you press **Apply import** (the preview lasts 10 minutes, and a new import replaces it). The file holds the settings, favourites, source preferences and custom stations. A custom station whose URL has a query string or a user name is exported with its URL redacted and has to be added again with `/radio add`; the others are added again on import, each after a probe. Favourites and a default station that point at custom stations aren't exported, because a re-added custom station gets a new ID; an import keeps the ones the server already has.
 
 ## Registering commands manually
 
