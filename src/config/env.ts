@@ -7,13 +7,13 @@ const bool = z
   .transform((v, ctx) => {
     if (['1', 'true', 'yes', 'on'].includes(v)) return true;
     if (['0', 'false', 'no', 'off', ''].includes(v)) return false;
-    ctx.addIssue({ code: 'custom', message: `expected a boolean, got "${v}"` });
+    ctx.addIssue({ code: 'custom', message: `must be true or false, not "${v}"` });
     return z.NEVER;
   });
 
 const int = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
 
-const snowflake = z.string().regex(/^\d{17,20}$/, 'must be a Discord snowflake ID');
+const snowflake = z.string().regex(/^\d{17,20}$/, 'must be a Discord ID (17 to 20 digits)');
 
 export const QUALITY_MODES = ['maximum', 'balanced', 'manual'] as const;
 export const IDLE_MODES = ['24x7', 'pause_when_empty', 'leave_when_empty'] as const;
@@ -23,7 +23,7 @@ export const PRESENCE_MODES = ['track', 'station', 'off'] as const;
 export type PresenceMode = (typeof PRESENCE_MODES)[number];
 
 const envSchema = z.object({
-  DISCORD_TOKEN: z.string().min(20, 'DISCORD_TOKEN is required'),
+  DISCORD_TOKEN: z.string().min(20, 'is missing or not long enough to be a bot token'),
   DISCORD_APPLICATION_ID: snowflake,
   DISCORD_DEV_GUILD_ID: z.union([snowflake, z.literal('')]).optional(),
   REGISTER_COMMANDS_ON_START: bool.default(true),

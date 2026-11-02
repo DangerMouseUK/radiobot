@@ -25,4 +25,4 @@ const n = await registerGuildCommands(
   logger,
   true,
 );
-process.stdout.write(`Registered /radio in ${n} of ${guildIds.length} guild(s).\n`);
+process.stdout.write(`Registered /radio in ${n} of ${guildIds.length} server(s).\n`);

@@ -42,7 +42,7 @@ Other scripts:
 | `pnpm format` | Apply Biome formatting (run it after editing anything Biome checks: `src/`, `scripts/`, `tests/`, `catalog/` and the root JSON and TS files) |
 | `pnpm dev` | Run from source with `node --watch src/index.ts`. Needs the variables from a `.env` with a **test** bot token exported into your shell; the bot does not read `.env` itself. |
 | `pnpm validate-catalogue` | Validates every station pack (plus `EXTRA_PACKS_DIR`). Add `--pack <dir>` to check one pack folder, or `--probe <stationId…>` / `--probe --pack-id <id>` for live probes, `--compare` for audio comparisons and `--json <file>` for an evidence report. Runs from `dist/`, so run `pnpm build` first. CI runs `node scripts/validate-catalogue.ts` straight from source. |
-| `pnpm register-commands` | Force guild command registration (optionally pass guild IDs). Needs a build. |
+| `pnpm register-commands` | Register `/radio` now, even if nothing has changed, without starting the bot: in the servers whose IDs you pass, or else in `DISCORD_DEV_GUILD_ID` or every server the bot is in. Needs a build. |
 | `pnpm healthcheck` / `pnpm backup` | Check the heartbeat file / write a manual database backup. Need a build. |
 | `pnpm smoke` | After `pnpm build`: runs the compiled code with no network and no Discord. It opens a temporary database (migrations run), checkpoints it on the worker thread, parses a station list on the parse worker, encodes two seconds of a synthetic tone to Ogg Opus with the live encoder's arguments and checks a heartbeat with the healthcheck. Uses `FFMPEG_PATH` / `FFPROBE_PATH`, or `ffmpeg` / `ffprobe` on the `PATH`. CI also runs it inside the Docker image. |
 | `pnpm test:lifecycle` | Linux or macOS (where it needs `python3`): runs `install.sh` and `scripts/radio-bot.sh` (install, status, update, backup, restore, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it on Linux, plus `shellcheck`, and on macOS with the system's bash 3.2. |
@@ -50,7 +50,9 @@ Other scripts:
 
 Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`). `tests/integration/main-thread-budget.test.ts` plays a stream through the real pipeline while the heaviest commands and a large catalogue sync run, and fails if the event loop stalls for 50 ms or more; if it fails, make the slow step cheaper rather than raising the bound.
 
-Beyond these, CI also runs the typecheck and tests on the oldest supported Node (24.17.0), checks the relative links and anchors in the docs offline, scans the Docker image for fixable high and critical vulnerabilities (with Trivy, also weekly), and Dependabot proposes dependency, action and base-image updates weekly. Shared helpers are in `tests/helpers.ts`: `memoryDb()` gives an in-memory, migrated database and `makeSource()` a source fixture. Test files are named `*.test.ts`, import from `'../../src/….ts'` and use `describe`/`it` with plain `expect`.
+CI also runs the typecheck and tests on the oldest supported Node (24.17.0), checks the relative links and anchors in the docs without going online, and scans the Docker image for high and critical vulnerabilities that have a fix (with Trivy, also weekly). Dependabot proposes dependency, action and base-image updates weekly.
+
+Shared test helpers are in `tests/helpers.ts`: `memoryDb()` gives an in-memory, migrated database and `makeSource()` a source fixture. Test files are named `*.test.ts`, import from `'../../src/….ts'` and use `describe`/`it` with plain `expect`.
 
 ## Code style
 
@@ -64,7 +66,7 @@ Use a separate Discord application and a private test server for development. Ne
 
 ## Before opening a pull request
 
-- `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` and then `pnpm smoke` succeed. If you touched `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` pass too.
+- `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` and then `pnpm smoke` succeed. If you touched `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` pass too. If you touched the `Dockerfile`, the Docker `test` stage (in the table above) passes too.
 - New behaviour has tests. Bug fixes have a test that failed before the fix.
 - If the change adds work to the bot's main thread, the description says what it costs and how you measured it (see [The stream comes first](#the-stream-comes-first)).
 - Documentation is updated where behaviour changed: `README.md`, `docs/` and `CHANGELOG.md` under *Unreleased*. The docs must describe what the code actually does; the table in [AGENTS.md](AGENTS.md#documentation-must-match-the-code) says which documents go with which kind of change.
@@ -84,8 +86,9 @@ Voice packets go out every 20 ms from Node's main thread. That's the same thread
    - Don't start them during a stream's first 30 s.
    - Back off when they fail.
    - Let anything a listener is waiting for interrupt them.
+   - When in doubt, do less and do it later.
 4. **Keep the audio path minimal.** Per-packet code is constant-time, with no logging, I/O, `await` or per-packet allocation of its own. Add no buffering, no extra latency, no second encode and no processing.
-5. **Bound memory.** Every cache, history and queue has a limit.
+5. **Bound memory.** Every cache, history and queue has a limit. The bot and one FFmpeg encoder must fit comfortably in 1 GB alongside the operating system.
 6. **Measure, don't guess.** Say in the pull request what new main-thread work costs and how you measured it. On a running bot, the event-loop delay and the late-packet count in `/radio stats` show the effect.
 7. **Logging costs nothing when it's off.** Never log per packet, and guard costly debug entries with `logger.isLevelEnabled('debug')`.
 
@@ -101,7 +104,7 @@ Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sour
 - **Use only `official-player` or `curated` provenance.** Automatically discovered URLs don't belong in the manifest.
 - **Pack URLs should be HTTPS.** The schema accepts `http://`, but such sources are refused when `ALLOW_INSECURE_HTTP_STREAMS=false`. They must not contain signatures, tokens, session or tracking parameters. Short-lived signed URLs must never be committed.
 - **Never bypass access controls.** That covers DRM, authentication, geo-blocking and private or mobile-only APIs. A source that refuses access stays out.
-- **Don't delete broken sources silently.** Set `enabled: false` with a `disabledReason`, and record why in the pack's `SOURCE_PROVENANCE.md`. Seeding already disables any source that disappears from the manifest, but an explicit record is clearer.
+- **Don't delete broken sources silently.** Set `enabled: false` with a `disabledReason`, and record why in the pack's `SOURCE_PROVENANCE.md`. At start-up the bot already disables any source that has been removed from `sources.json`, but an explicit record is clearer.
 - **Station IDs (`<pack-id>:<slug>`) are permanent,** and so are pack IDs. They are what favourites and preferences point to. A rename changes `displayName` and adds the old name as an alias. Within a pack, no two stations may share a name or alias, and source IDs must be unique across all packs; start-up checks both. `custom` is reserved for each server's own stations and can't be a pack ID.
 - **Declare brand labels.** Publisher or network names that appear in several stations' stream metadata belong in `brandLabels`, so they are never treated as identity evidence.
 - **Run `pnpm validate-catalogue`** (after `pnpm build`, or `node scripts/validate-catalogue.ts` from source) before pushing.
@@ -126,7 +129,7 @@ In the description, explain the effect on:
 In particular:
 
 - **No second lossy encode, and no default EQ, AGC, normalisation or limiting.** FFmpeg reads **stdin only** (`-protocol_whitelist pipe`). Never pass a URL, a user string or a new protocol to FFmpeg arguments.
-- **Follow the source's bitrate, not the channel's.** In `maximum` mode the Opus target is the source's own bitrate (the measured figure first, then codec metadata, then the manifest or advertised one), rounded up to a whole kbps and capped at `MAX_OPUS_BITRATE_KBPS`. Never encode a stream below its source's rate, and never pad it above, and never cap it at the voice channel's bitrate setting (see `planEncoder()` and [docs/audio-quality.md](docs/audio-quality.md)).
+- **Follow the source's bitrate, not the channel's.** In `maximum` mode the Opus target is the source's own bitrate (the measured figure first, then codec metadata, then the manifest or advertised one), rounded up to a whole kbps and capped at `MAX_OPUS_BITRATE_KBPS`; the cap is the target only when the source's bitrate is unknown. Never encode below the source's rate, never pad above it, and never cap it at the voice channel's bitrate setting (see `planEncoder()` and [docs/audio-quality.md](docs/audio-quality.md)).
 - **All network access goes through `SafeHttpClient`.** Don't add `fetch()`, `http.get()` or `net.connect()` calls that bypass the URL policy. The one exception is `tcpPing()` in `src/observability/netstats.ts`, which only connects to an address the policy has already checked.
 - **Identify truthfully.** Stream requests use FFmpeg's `Lavf/<version>` User-Agent. Don't add a browser User-Agent, a `Referer`, cookies or anything else meant to get past a host's access control; HTTP 401, 403 and 451 are reported as `ACCESS_DENIED`.
 - **Don't relax the identity or eligibility gates** without a discussion in an issue first. The correct station beats the best bitrate, and direct streams come before HLS whatever their bitrate. Bitrates of different codecs are never compared, except the one narrow case of measured AAC-LC (at least 96 kbps, and at least twice the rate) against HE-AAC; don't widen it without an issue first.

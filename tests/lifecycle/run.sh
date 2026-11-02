@@ -190,7 +190,7 @@ check "keeps existing settings" has "$out" "Using your existing settings"
 echo "uninstall"
 out=$(printf 'y\ny\nn\n' | tty_run "radio-bot uninstall")
 check "uninstalls" has "$out" "Radio Bot is uninstalled."
-check "keeps the data volume when asked" has "$out" "Keeping the data volume"
+check "keeps the data volume when asked" has "$out" "Keeping the bot's data"
 # shellcheck disable=SC2016
 check "saves a data copy" bash -c 'ls "$1"/radio-bot-backup-*/radio-bot-manual-x.sqlite' _ "$HOME"
 # shellcheck disable=SC2016

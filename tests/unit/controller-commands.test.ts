@@ -552,7 +552,7 @@ describe('/radio stats', () => {
       'Connected to: `127.0.0.1:443`',
       'Transport: direct HTTP stream',
       'Live input rate: 128 kbps (10 s) · — (60 s) · 2.0 MB received',
-      'Endpoint round trip (TCP): not measured yet',
+      'Round trip to the stream server (TCP): not measured yet',
       'Opus target: 128 kbps (maximum) · voice channel setting 64 kbps (not a cap)',
       'Sent to Discord: 130 kbps (10 s) · 129 kbps (60 s)',
       'Packets to Discord: 50 per second (expect ~50) · 3000 sent on this connection',
@@ -560,7 +560,7 @@ describe('/radio stats', () => {
       'Voice WebSocket ping: 20 ms (avg 21, min 19, max 25, jitter 2 ms, 5 samples)',
       'Gateway ping: 42 ms',
       'Encryption: aead_aes256_gcm_rtpsize · dave',
-      'Source failovers: 2 · voice reconnects: 1 · encoder PID: 4321',
+      'Source switches after a failure: 2 · voice reconnects: 1 · encoder PID: 4321',
     ]) {
       expect(text).toContain(line);
     }
@@ -1330,9 +1330,11 @@ describe('/radio source', () => {
       strings: { station: st.id, source: 'custom-my-station-1' },
     });
     const e = lastEmbed(i);
-    expect(e.title).toBe('Source preferred');
+    expect(e.title).toBe('Source tried first');
     expect(e.color).toBe(COLOR.ok);
-    expect(e.description).toMatch(/^My Station → `custom-my-station-1` \(.*\)\.$/);
+    expect(e.description).toMatch(
+      /^On this server, My Station now tries `custom-my-station-1` \(.*\) first\. Whenever it can’t be used, the bot picks another source by itself\.$/,
+    );
     expect(t.guilds.getPreference(GUILD, st.id)).toMatchObject({
       mode: 'prefer',
       sourceId: 'custom-my-station-1',
@@ -1349,7 +1351,8 @@ describe('/radio source', () => {
     const e = lastEmbed(i);
     expect(e.title).toBe('Source pinned');
     expect(e.color).toBe(COLOR.warn);
-    expect(e.description).toMatch(/⚠ That source can’t be used right now \(.+\)\. Until it recovers/);
+    expect(e.description).toMatch(/only admins can switch it to another source\./);
+    expect(e.description).toMatch(/⚠ That source can’t be used right now \(.+\)\. Until it works again/);
     expect(t.guilds.getPreference(GUILD, st.id)?.mode).toBe('pin');
   });
 
@@ -1376,7 +1379,7 @@ describe('/radio source', () => {
       });
     const i = await verify('mismatch');
     expect(i.text).toMatch(
-      new RegExp(`Identity review recorded\\n\`${src.id}\`: .*kept in the source’s evidence`),
+      new RegExp(`Source review recorded\\n\`${src.id}\`: .*kept in the source’s evidence`),
     );
     expect(t.stations.getSource(src.id)?.identityOverride).toBe('mismatch');
     await verify('clear');
@@ -1393,12 +1396,12 @@ describe('/radio source', () => {
         strings: { station: src.stationId, source: src.id, verdict: 'verified' },
       });
     (t.ctx.client as unknown as { application: unknown }).application = { owner: { id: OWNER } };
-    expect((await verify(t.people.owner)).text).toMatch(/Identity review recorded/);
+    expect((await verify(t.people.owner)).text).toMatch(/Source review recorded/);
     expect((await verify(t.people.admin)).text).toMatch(/only the bot’s operator/);
     (t.ctx.client as unknown as { application: unknown }).application = {
       owner: { members: new Map([[ADMIN, {}]]) },
     };
-    expect((await verify(t.people.admin)).text).toMatch(/Identity review recorded/);
+    expect((await verify(t.people.admin)).text).toMatch(/Source review recorded/);
   });
 
   it('verify of this server’s own custom station needs no operator', async () => {
@@ -1408,7 +1411,7 @@ describe('/radio source', () => {
       sub: 'verify',
       strings: { station: st.id, source: 'custom-my-station-1', verdict: 'verified' },
     });
-    expect(i.text).toMatch(/Identity review recorded/);
+    expect(i.text).toMatch(/Source review recorded/);
     expect(t.stations.getSource('custom-my-station-1')?.identityOverride).toBe('verified');
   });
 
@@ -1450,8 +1453,8 @@ describe('/radio list, sources and inspect', () => {
     s.playingSourceId = 'custom-my-station-1';
     t.guilds.setPreference(GUILD, st.id, 'prefer', 'custom-my-station-1', OWNER);
     const i = await t.command(t.people.admin, { sub: 'inspect', strings: { station: st.id } });
-    expect(i.text).toMatch(/Server override\nprefer → `custom-my-station-1`/);
-    // It already prefers the playing source, so only Check again and Back to automatic are offered.
+    expect(i.text).toMatch(/Source chosen on this server\n`custom-my-station-1` is tried first\./);
+    // It already tries the playing source first, so only Check again and Let the bot choose are offered.
     expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(['rescan', 'sauto']);
   });
 

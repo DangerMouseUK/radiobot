@@ -246,7 +246,7 @@ export function listView(
       truncate(
         lines.join('\n') ||
           (scope === 'favourites'
-            ? 'No favourites yet. Use the Favourite button under /radio now to add one.'
+            ? 'No favourites yet. Press Favourite under a playing station to add one.'
             : 'No stations.'),
         4000,
       ),
@@ -355,7 +355,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
     .setTitle('Radio Bot settings')
     .setColor(COLOR.info)
     .setDescription(
-      'Change a setting with the menus and buttons below; the pages switch between Access, Playback and Notifications. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config` (choose "No default station" to clear the default).',
+      'Change a setting with the menus and buttons below. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config` (choose "No default station" to clear the default).',
     )
     .addFields(
       {
@@ -363,7 +363,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
         value: truncate(
           [
             `Commands work in: ${fmtIds(s.allowedTextChannelIds, '#')}`,
-            `Voice channels: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
+            `Voice channels the bot can play in: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
             `DJ roles: ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
             `Listeners can control: ${s.memberControlMode === 'same_channel' ? 'from the bot’s voice channel' : s.memberControlMode === 'any' ? 'from anywhere' : 'no (DJs and admins only)'}`,
             '-# Admins are the server owner and members with the Administrator permission.',

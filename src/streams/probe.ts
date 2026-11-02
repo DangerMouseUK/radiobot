@@ -336,7 +336,7 @@ export async function probeSource(
     } catch {
       throw new RadioError(
         'PROBE_FAILED',
-        `ffprobe could not analyse the stream. ${probeRes.stderr.slice(0, 200)}`,
+        `The stream’s audio format could not be read (ffprobe failed). ${probeRes.stderr.slice(0, 200)}`,
       );
     }
     const parsed = parseFfprobeOutput(json);

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Plainer English across the bot, the `radio-bot` command and the docs, for people who are new to Discord bots or to running a server. Buttons, menus, replies and error messages now say what happens rather than how it works inside. No command or option was renamed, and nothing works differently. The most visible changes:
+  - On `/radio sources`, **Prefer the playing source on this server** is now **Make the source playing now this server's first choice**, and **Back to automatic choice** is now **Let the bot choose the source again**. The source an admin chose for the server is explained in a sentence: tried first, or pinned so that only admins can switch it.
+  - `/radio source prefer` and `pin` replies say what changes on the server, and `/radio help` explains the `source` commands.
+  - Source reasons and states use everyday words: "resting after repeated failures" instead of "cooling down" or "paused", "blocked by the bot's safety rules" instead of "rejected by URL safety policy", and "Why this source" instead of "Source decision".
+  - Error messages for custom stations, imports and start-up settings say what went wrong and what to do, for example "must be a Discord ID (17 to 20 digits)" instead of "must be a Discord snowflake ID".
+  - The `radio-bot` command's messages are plainer and say what to do next. For example, the pull step says it downloads about 1 GB, and "hasn't reported in" is now "still isn't ready after 90 seconds".
+  - The README, the install guides, troubleshooting, permissions and the other docs explain the terms they use and are easier to follow.
+
 ## [1.1.0] - 2026-11-02
 
 ### Fixed

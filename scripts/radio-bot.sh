@@ -30,7 +30,7 @@ has_tty() { { : </dev/tty; } 2>/dev/null; }
 # The reply variable has an unusual name so it can't shadow the caller's VAR.
 ask() { # ask VAR "Question" [default]
   local __reply=''
-  has_tty || die "No terminal to ask \"$2\" on. Run this command in an interactive terminal."
+  has_tty || die "There is no terminal to ask \"$2\" in. Run this command yourself, in a terminal window."
   printf '%s%s%s ' "$BOLD" "$2" "$RESET" >/dev/tty
   IFS= read -r __reply </dev/tty || true
   printf -v "$1" '%s' "${__reply:-${3:-}}"
@@ -38,7 +38,7 @@ ask() { # ask VAR "Question" [default]
 
 ask_secret() { # ask_secret VAR "Question"
   local __reply=''
-  has_tty || die "No terminal to ask \"$2\" on. Run this command in an interactive terminal."
+  has_tty || die "There is no terminal to ask \"$2\" in. Run this command yourself, in a terminal window."
   printf '%s%s%s ' "$BOLD" "$2" "$RESET" >/dev/tty
   IFS= read -rs __reply </dev/tty || true
   printf '\n' >/dev/tty
@@ -67,7 +67,7 @@ resolve() { # follows symlinks without relying on GNU readlink -f
 SELF=$(resolve "${BASH_SOURCE[0]}")
 DIR=$(dirname "$(dirname "$SELF")")
 if [ ! -f "$DIR/compose.yaml" ] || [ ! -f "$DIR/.env.example" ]; then
-  die "This script must stay in the scripts/ folder of a Radio Bot checkout ($DIR looks wrong)."
+  die "This script must stay in the scripts/ folder inside the Radio Bot folder ($DIR isn't one)."
 fi
 START_DIR=$PWD # where the user ran the command, for file names they type
 cd "$DIR"
@@ -81,7 +81,7 @@ is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
 docker_install_hint() {
   if is_wsl; then
     say "On Windows, install Docker Desktop, then turn on Settings → Resources → WSL integration → Ubuntu."
-    say "Guide: docs/install.md (On Windows). Then open a new Ubuntu window and run this again."
+    say "The guide is docs/install.md, \"On Windows\". Then open a new Ubuntu window and run this again."
     return
   fi
   case "$(uname -s)" in
@@ -95,11 +95,12 @@ ensure_docker() {
   if ! command -v docker >/dev/null 2>&1; then
     warn "Docker is not installed."
     if [ "$(uname -s)" = Linux ] && ! is_wsl && command -v curl >/dev/null 2>&1 &&
-      confirm "Install Docker now with Docker's official script (get.docker.com)? It needs your sudo password." n; then
+      confirm "Install Docker now with Docker's official script (get.docker.com)? It may ask for your password." n; then
       local tmp
       tmp=$(mktemp)
-      curl -fsSL https://get.docker.com -o "$tmp" || die "Could not download Docker's installer."
-      sudo sh "$tmp" || die "Docker's installer failed; see its output above."
+      curl -fsSL https://get.docker.com -o "$tmp" ||
+        die "Couldn't download Docker's installer. Check this computer's internet connection, then try again."
+      sudo sh "$tmp" || die "Docker's installer failed. Its messages above say why."
       rm -f "$tmp"
       sudo systemctl enable --now docker >/dev/null 2>&1 || true
     else
@@ -197,12 +198,12 @@ pending_from() { # the version an unfinished update started from, as far as it i
 # Pulls the published image for a release, or builds it here when there is none (or on a branch).
 get_image() {
   if on_release; then
-    step "Downloading the Radio Bot image for $(current_version)"
+    step "Downloading the Radio Bot image for $(current_version) (about 1 GB, so this can take a few minutes)"
     if compose pull --quiet "$SERVICE" 2>/dev/null; then
       ok "Image downloaded."
       return
     fi
-    say "No published image for this version; building it on this machine instead."
+    say "There is no ready-made image for this version, so building it on this machine instead."
   fi
   step "Building the Radio Bot image (this takes a few minutes the first time)"
   compose build "$SERVICE"
@@ -302,14 +303,14 @@ wait_until_healthy() {
         compose logs --no-log-prefix --tail=20 "$SERVICE" >&2 || true
         say ''
         warn "Radio Bot stopped while starting. The lines above say why."
-        say "Common causes: a wrong bot token or Application ID (fix with: radio-bot config)."
+        say "Usually this means the bot token or Application ID is wrong. Fix them with: radio-bot config"
         say "More help: docs/troubleshooting.md"
         return 1
         ;;
     esac
     sleep 2
   done
-  warn "Radio Bot hasn't reported in after 90 seconds. Check the logs with: radio-bot logs"
+  warn "Radio Bot still isn't ready after 90 seconds. To see why, run: radio-bot logs"
   return 1
 }
 
@@ -344,7 +345,7 @@ install_shortcut() {
     ok "Added the radio-bot command."
     return
   fi
-  warn "Couldn't add the radio-bot command; use: bash $SELF"
+  warn "Couldn't add the radio-bot command. Type bash $SELF instead of radio-bot."
 }
 
 remove_shortcut() {
@@ -359,7 +360,7 @@ remove_shortcut() {
 # ---------------------------------------------------------------- commands
 
 cmd_install() {
-  command -v git >/dev/null 2>&1 || die "git is required (for example: sudo apt install git)."
+  command -v git >/dev/null 2>&1 || die "Radio Bot needs git. Install it first (for example: sudo apt install git)."
   # A fresh clone sits on the development branch; switch to the newest release once.
   if [ -z "${RADIO_BOT_VERSION_CHOSEN:-}" ] && ! on_release; then
     git fetch --quiet --tags origin 2>/dev/null || true
@@ -378,14 +379,14 @@ cmd_install() {
   install_shortcut
   if wait_until_healthy; then
     step "Last step: invite the bot to your Discord server"
-    say "Open this link, pick your server and click Authorize:"
+    say "Open this link, choose your server, click Continue, then click Authorize:"
     say ''
     say "  $(invite_url)"
     say ''
     say "Then, in your server: join a voice channel and type ${BOLD}/radio play${RESET}."
     say "Admins can set channels and roles with ${BOLD}/radio config${RESET}."
     say ''
-    say "Manage the bot with the ${BOLD}radio-bot${RESET} command: radio-bot help"
+    say "To look after the bot on this computer, use the ${BOLD}radio-bot${RESET} command. To see what it does: radio-bot help"
   else
     exit 1
   fi
@@ -394,9 +395,10 @@ cmd_install() {
 cmd_update() {
   ensure_docker
   [ -z "$(git status --porcelain --untracked-files=no)" ] ||
-    die "Files in $DIR were edited, so updating could overwrite them. Put local changes in compose.override.yaml, then run: git -C \"$DIR\" checkout -- ."
+    die "Files in $DIR were edited, so updating could overwrite them. Nothing was updated. Move your changes to compose.override.yaml, then undo the edits with: git -C \"$DIR\" checkout -- ."
   step "Checking for a new version"
-  git fetch --quiet --tags --force origin || die "Couldn't reach GitHub to check for updates."
+  git fetch --quiet --tags --force origin ||
+    die "Couldn't reach GitHub to check for updates. Check this computer's internet connection, then try again."
   local from to resume=''
   from=$(current_version)
   to=${1:-$(latest_release)}
@@ -466,8 +468,8 @@ warn_if_playing() { # warn_if_playing [no-ask]; fails if the user decides not to
   n=$(playing_count)
   if [ -z "$n" ] || [ "$n" -eq 0 ]; then return 0; fi
   if [ "$n" -eq 1 ]; then servers=server; fi
-  warn "Radio Bot is playing in $n $servers. Updating restarts it, and a server only starts playing again by itself if an admin turned on \"Resume after restart\" in /radio config."
-  warn "Before the restart, the update is downloaded (or built on this machine) while the station plays. That uses the processor and network, so on a small server listeners may hear small cuts."
+  warn "Radio Bot is playing in $n $servers. Updating restarts it. Afterwards, a server only starts playing again by itself if an admin turned on \"Resume after restart\" in /radio config."
+  warn "The new version is downloaded (or built on this machine) while the station still plays, so on a small server listeners may hear small cuts."
   if [ -n "${1:-}" ] || ! has_tty; then return 0; fi
   confirm "Update now?" y
 }
@@ -549,7 +551,8 @@ restore_failed() { # restore_failed REASON [interrupted]: starts the bot again, 
 
 cmd_restore() {
   local file=${1:-}
-  [ -n "$file" ] || die "Name the backup to restore, for example: radio-bot restore backups/radio-bot-manual-….sqlite"
+  [ -n "$file" ] ||
+    die "Name the backup to restore, for example: radio-bot restore backups/radio-bot-manual-….sqlite (to list them: ls -t $DIR/backups)"
   # A relative name means the folder the user is in; failing that, the Radio Bot folder.
   case "$file" in /*) ;; *) [ ! -f "$START_DIR/$file" ] || file="$START_DIR/$file" ;; esac
   [ -f "$file" ] || die "No such file: $file"
@@ -588,7 +591,8 @@ cmd_config() {
   local editor=${VISUAL:-${EDITOR:-}}
   if [ -z "$editor" ]; then
     for editor in nano vim vi ''; do [ -n "$editor" ] && command -v "$editor" >/dev/null 2>&1 && break; done
-    [ -n "$editor" ] || die "No text editor found. Edit $DIR/.env by hand, then run: radio-bot restart"
+    [ -n "$editor" ] ||
+      die "No text editor found. Install nano (for example: sudo apt install nano), or edit $DIR/.env another way, then run: radio-bot restart"
   fi
   [ -f .env ] || { cp .env.example .env && chmod 600 .env; }
   [ "$(basename "$editor")" != nano ] || say "Opening the settings in nano. To save and close: Ctrl+O, Enter, then Ctrl+X."
@@ -645,9 +649,9 @@ cmd_uninstall() {
   if confirm "Delete the bot's data (settings, favourites, custom stations)? This cannot be undone." n; then
     down+=(--volumes)
   else
-    say "Keeping the data volume radio-bot_radio-bot-data; reinstalling will pick it up again."
+    say "Keeping the bot's data (the Docker volume radio-bot_radio-bot-data), so installing again picks it up."
   fi
-  step "Stopping and removing the container and image"
+  step "Stopping the bot and removing it from Docker"
   compose "${down[@]}"
   remove_shortcut
   step "Deleting $DIR"
@@ -663,14 +667,16 @@ cmd_help() {
   cat <<EOF
 ${BOLD}radio-bot${RESET} — manage your Radio Bot install ($DIR)
 
-  ${BOLD}status${RESET}            Version, whether it is running and healthy, and available updates
-  ${BOLD}logs${RESET}              Follow the bot's log (Ctrl+C to stop following)
+  ${BOLD}status${RESET}            Show the version, whether the bot is running and healthy, and any new version
+  ${BOLD}logs${RESET}              Show the bot's log as it happens (Ctrl+C stops watching; the bot keeps running)
   ${BOLD}start${RESET} | ${BOLD}stop${RESET} | ${BOLD}restart${RESET}
-  ${BOLD}config${RESET}            Edit settings (.env) and restart to apply them
+                    Start, stop or restart the bot (a restart also applies changes to .env)
+  ${BOLD}config${RESET}            Edit the settings file (.env) and restart to apply them
   ${BOLD}invite${RESET}            Print the link that adds the bot to a Discord server
-  ${BOLD}backup${RESET}            Back up the database and copy the backups to $DIR/backups/ (copies only, if the bot is stopped)
-  ${BOLD}restore${RESET} FILE      Replace the database with a backup
-  ${BOLD}update${RESET} [vX.Y.Z]   Update to the newest release (or the one named): backs up first, keeps the old log, removes old images.
+  ${BOLD}backup${RESET}            Back up the bot's data and copy the backups to $DIR/backups/
+                    (if the bot is stopped, it only copies the backups made earlier)
+  ${BOLD}restore${RESET} FILE      Put a backup back, replacing the bot's current data
+  ${BOLD}update${RESET} [vX.Y.Z]   Update to the newest version (or the one named), after a backup.
                     If an update stops halfway, run it again to finish it
   ${BOLD}uninstall${RESET}         Remove the bot, optionally keeping a copy of its data
   ${BOLD}install${RESET}           Set up or repair this install (safe to run again)

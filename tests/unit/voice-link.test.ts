@@ -425,7 +425,9 @@ describe('DiscordVoiceLink: stats', () => {
 
   it('says whether DAVE end-to-end encryption was negotiated', async () => {
     const { connection, link } = await connect();
-    expect(link.encryption()).toBe('Transport-encrypted; DAVE not negotiated for this call');
+    expect(link.encryption()).toBe(
+      'Encrypted in transit; Discord did not use DAVE end-to-end encryption for this call',
+    );
     (connection as unknown as { voicePrivacyCode: string }).voicePrivacyCode = '12345 67890';
     expect(link.encryption()).toBe('DAVE end-to-end encrypted (privacy code 12345 67890)');
   });

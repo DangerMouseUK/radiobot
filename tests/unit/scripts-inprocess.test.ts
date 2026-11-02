@@ -515,7 +515,7 @@ describe('register-commands (in process, Discord replaced by a recorder)', () =>
       '222222222222222222',
     ]);
     expect(r.code).toBeNull();
-    expect(r.out).toBe('Registered /radio in 2 of 2 guild(s).\n');
+    expect(r.out).toBe('Registered /radio in 2 of 2 server(s).\n');
     expect(mocks.restPut.mock.calls.map((c) => c[0])).toEqual([
       `/applications/${APP}/guilds/111111111111111111/commands`,
       `/applications/${APP}/guilds/222222222222222222/commands`,
@@ -528,7 +528,7 @@ describe('register-commands (in process, Discord replaced by a recorder)', () =>
     env({ DISCORD_DEV_GUILD_ID: '333333333333333333' });
     mocks.restPut.mockResolvedValue([]);
     const r = await runScript('register-commands.ts');
-    expect(r.out).toBe('Registered /radio in 1 of 1 guild(s).\n');
+    expect(r.out).toBe('Registered /radio in 1 of 1 server(s).\n');
     expect(mocks.restPut.mock.calls[0]![0]).toBe(`/applications/${APP}/guilds/333333333333333333/commands`);
   });
 
@@ -541,7 +541,7 @@ describe('register-commands (in process, Discord replaced by a recorder)', () =>
     });
     const r = await runScript('register-commands.ts');
     expect(mocks.restGet).toHaveBeenCalledWith('/users/@me/guilds');
-    expect(r.out).toBe('Registered /radio in 1 of 2 guild(s).\n');
+    expect(r.out).toBe('Registered /radio in 1 of 2 server(s).\n');
   });
 
   it('stops on invalid configuration before contacting Discord', async () => {

@@ -88,8 +88,8 @@ const DESIRED_LABEL: Record<DesiredState, string> = {
   playing: 'play',
   paused_empty: 'play (paused while the channel is empty)',
   stopped: 'stay stopped',
-  left: 'stay out of voice',
-  kicked: 'stay out of voice (a moderator disconnected it)',
+  left: 'stay out of the voice channel',
+  kicked: 'stay out of the voice channel (a moderator disconnected it)',
 };
 
 /** Open browse lists kept for their Next, Previous and Favourites buttons (each expires 15 min after last use). */
@@ -557,7 +557,7 @@ export class RadioController {
       embeds: [
         infoEmbed(
           'Stopped',
-          `<@${i.user.id}> stopped the radio. It won’t start again by itself until someone uses /radio play.`,
+          `<@${i.user.id}> stopped the radio. It won’t start again by itself until someone plays a station.`,
           COLOR.neutral,
         ),
       ],
@@ -576,7 +576,7 @@ export class RadioController {
       embeds: [
         infoEmbed(
           'Left',
-          `<@${i.user.id}> disconnected the radio. I won’t rejoin until someone uses /radio play.`,
+          `<@${i.user.id}> disconnected the radio. I won’t rejoin until someone uses /radio join or plays a station.`,
           COLOR.neutral,
         ),
       ],
@@ -694,8 +694,16 @@ export class RadioController {
     const live = { playingId: status?.source?.id ?? null, manualId: status?.manualSourceId ?? null };
     const embed = sourcesEmbed(st, sources, selection, detailed, live);
     const pref = ctx.guilds.getPreference(guildId, st.id);
-    if (pref)
-      embed.addFields({ name: 'Server override', value: `${pref.mode} → \`${pref.sourceId ?? 'none'}\`` });
+    if (pref) {
+      const id = `\`${pref.sourceId ?? 'none'}\``;
+      embed.addFields({
+        name: 'Source chosen on this server',
+        value:
+          pref.mode === 'pin'
+            ? `Pinned to ${id}: only admins can switch it to another source. While that source can’t be used, another one plays and the station shows as degraded.`
+            : `${id} is tried first. If it can’t be used, the bot picks another source by itself.`,
+      });
+    }
     const row = (...c: MessageActionRowComponentBuilder[]) =>
       new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...c);
     const components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
@@ -735,7 +743,7 @@ export class RadioController {
         buttons.push(
           new ButtonBuilder()
             .setCustomId(ctx.ids.make(guildId, 'spref', st.id))
-            .setLabel('Prefer the playing source on this server')
+            .setLabel('Make the source playing now this server’s first choice')
             .setStyle(ButtonStyle.Secondary),
         );
       }
@@ -743,7 +751,7 @@ export class RadioController {
         buttons.push(
           new ButtonBuilder()
             .setCustomId(ctx.ids.make(guildId, 'sauto', st.id))
-            .setLabel('Back to automatic choice')
+            .setLabel('Let the bot choose the source again')
             .setStyle(ButtonStyle.Secondary),
         );
       }
@@ -766,7 +774,7 @@ export class RadioController {
     if (ctx.guilds.getPreference(i.guildId, st.id)?.mode === 'pin' && a.level !== 'admin')
       return this.#deny(
         i,
-        `An admin has pinned ${st.displayName} to one source, so only an admin can change it.`,
+        `An admin has pinned ${st.displayName} to one source, so only an admin can switch its source.`,
       );
     // Checked again now, not trusted from the menu: it must be a usable source of this station.
     const source = ctx.sources.select(i.guildId, st.id).ordered.find((s) => s.id === i.values[0]);
@@ -858,7 +866,7 @@ export class RadioController {
         : 'not measured yet';
     const where = (host: string | null | undefined) => {
       const hint = regionHint(host);
-      return hint ? ` (${hint}, from host name)` : '';
+      return hint ? ` (${hint}, guessed from the host name)` : '';
     };
 
     // Stream endpoint round trip: TCP handshakes to the exact IP the audio comes from.
@@ -908,7 +916,7 @@ export class RadioController {
                 : 'Transport: direct HTTP stream',
               `Codec: ${src ? sourceFormat(src) : 'unknown'}`,
               `Live input rate: ${kbps(inp.kbps10s)} (10 s) · ${kbps(inp.kbps60s)} (60 s) · ${(inp.bytes / 1048576).toFixed(1)} MB received`,
-              `Endpoint round trip (TCP): ${lat(streamRtt)}`,
+              `Round trip to the stream server (TCP): ${lat(streamRtt)}`,
             ].join('\n'),
             1024,
           ),
@@ -933,7 +941,7 @@ export class RadioController {
               `Voice WebSocket ping: ${lat(live.voice?.ws ?? null)}`,
               `Gateway ping: ${ctx.client.ws.ping >= 0 ? `${ctx.client.ws.ping} ms` : 'not measured yet'}`,
               `Encryption: ${live.voice?.encryption ?? '—'}${live.voice?.encryptionMode ? ` · ${live.voice.encryptionMode}` : ''}`,
-              `Source failovers: ${status.failovers} · voice reconnects: ${status.reconnects} · encoder PID: ${status.encoderPid ?? '—'}`,
+              `Source switches after a failure: ${status.failovers} · voice reconnects: ${status.reconnects} · encoder PID: ${status.encoderPid ?? '—'}`,
             ].join('\n'),
             1024,
           ),
@@ -1494,7 +1502,7 @@ export class RadioController {
           value: lines(
             '`/radio browse`: pick a station from the list',
             '`/radio play <station>`: play a station in your voice channel',
-            '`/radio now` what is playing · `/radio stop` · `/radio leave`',
+            '`/radio now`: what is playing · `/radio stop`: stop playing · `/radio leave`: leave the voice channel',
             '-# Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
           ),
         },
@@ -1502,7 +1510,7 @@ export class RadioController {
           name: '⭐ Favourites and the default station',
           value: lines(
             'Press **Favourite** under a playing station. Favourites come first in the `/radio play` suggestions, have their own list in Browse, and Next and Previous step through them.',
-            'The default station (set by an admin) is what `/radio join` plays, and what autostart plays when the bot starts.',
+            'The default station (set by an admin) is what `/radio join` plays, and what plays when the bot starts if **Autostart** is on.',
           ),
         },
         {
@@ -1525,6 +1533,7 @@ export class RadioController {
               name: '🛠 Admin',
               value: lines(
                 '`/radio config` · `/radio add` · `/radio edit` · `/radio remove` · `/radio source pin|prefer|auto|verify` · `/radio rescan` · `/radio sync` · `/radio export` · `/radio import` · `/radio panel`',
+                '-# `/radio source`: `prefer` tries a source first · `pin` keeps the station on one source while it works (only admins can switch it) · `auto` lets the bot choose again · `verify` records whether a source plays the right station',
                 '`/radio stats`: live stream and connection figures, shown only to you',
               ),
             }
@@ -1581,7 +1590,7 @@ export class RadioController {
       if (st.provider !== 'custom' && !isOperator(this.#ctx, i.user.id)) {
         return this.#deny(
           i,
-          'A review of a station-pack source applies to every server that uses this bot, so only the bot’s operator can record it (someone in OPERATOR_USER_IDS, or the application’s owner or team).',
+          'A review of a station-pack source applies to every server that uses this bot, so only the bot’s operator can record it: someone who runs the bot (listed in OPERATOR_USER_IDS, or the owner or team of the bot’s Discord application).',
         );
       }
       if (st.provider === 'custom' && st.guildId !== i.guildId)
@@ -1596,7 +1605,7 @@ export class RadioController {
       await i.reply({
         embeds: [
           infoEmbed(
-            'Identity review recorded',
+            'Source review recorded',
             `\`${source.id}\`: ${decision?.summary ?? `Verdict: ${verdict}.`} It is kept in the source’s evidence as a human review.`,
             COLOR.ok,
           ),
@@ -1611,12 +1620,14 @@ export class RadioController {
     const warn =
       selection.selected?.id === source.id
         ? ''
-        : `\n⚠ That source can’t be used right now (${selection.eligibility.find((e) => e.sourceId === source.id)?.reasons.join('; ') ?? 'reason unknown'}).${mode === 'pin' ? ' Until it recovers, the station plays from a fallback and is shown as degraded.' : ''}`;
+        : `\n⚠ That source can’t be used right now (${selection.eligibility.find((e) => e.sourceId === source.id)?.reasons.join('; ') ?? 'reason unknown'}).${mode === 'pin' ? ' Until it works again, another source plays and the station shows as degraded.' : ''}`;
     await i.reply({
       embeds: [
         infoEmbed(
-          mode === 'pin' ? 'Source pinned' : 'Source preferred',
-          `${st.displayName} → \`${source.id}\` (${sourceFormat(source)}).${warn}`,
+          mode === 'pin' ? 'Source pinned' : 'Source tried first',
+          mode === 'pin'
+            ? `On this server, ${st.displayName} now plays from \`${source.id}\` (${sourceFormat(source)}) whenever it can be used, and only admins can switch it to another source.${warn}`
+            : `On this server, ${st.displayName} now tries \`${source.id}\` (${sourceFormat(source)}) first. Whenever it can’t be used, the bot picks another source by itself.${warn}`,
           warn ? COLOR.warn : COLOR.ok,
         ),
       ],
@@ -1655,8 +1666,12 @@ export class RadioController {
           const playing =
             action === 'spref' && session?.stationId === arg ? (session.status()?.source?.id ?? null) : null;
           const source = playing ? this.#ctx.stations.getSource(playing) : null;
-          if (!st || (action === 'spref' && source?.stationId !== st.id))
-            return this.#deny(i, 'That station isn’t playing from a source that can be preferred right now.');
+          if (!st) return this.#deny(i, 'That station is no longer available.');
+          if (action === 'spref' && source?.stationId !== st.id)
+            return this.#deny(
+              i,
+              'That station isn’t playing from one of its sources right now, so there is no source to try first.',
+            );
           this.#ctx.guilds.setPreference(
             i.guildId,
             st.id,
@@ -1667,9 +1682,9 @@ export class RadioController {
           await i.reply({
             embeds: [
               infoEmbed(
-                action === 'spref' ? 'Preferred source' : 'Automatic selection',
+                action === 'spref' ? 'Source tried first' : 'Automatic selection',
                 action === 'spref'
-                  ? `This server now prefers ${source!.label ?? 'that source'} (${sourceFormat(source!)}) for ${st.displayName}, whenever it is verified and working.`
+                  ? `On this server, ${st.displayName} now tries ${source!.label ?? 'that source'} (${sourceFormat(source!)}) first. Whenever that source can’t be used, the bot picks another one by itself.`
                   : `The bot chooses the source for ${st.displayName} again, based on its own checks.`,
                 COLOR.ok,
               ),

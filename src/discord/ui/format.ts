@@ -46,8 +46,8 @@ const VERIFICATION_LABEL: Record<VerificationState, string> = {
   eligible: 'working',
   unverified: 'working, but not verified as this station',
   degraded: 'working with decode errors',
-  blocked_by_policy: 'blocked by the URL safety rules',
-  cooldown: 'paused after repeated failures',
+  blocked_by_policy: 'blocked by the bot’s safety rules',
+  cooldown: 'resting after repeated failures (it will be tried again later)',
   offline: 'last check failed',
   retired: 'retired',
 };
@@ -104,7 +104,7 @@ export function sourceFormat(s: StationSource): string {
         ? 'mono'
         : s.channels === 2
           ? 'stereo'
-          : `${s.channels} ch`
+          : `${s.channels} channels`
       : 'channels unknown',
   ];
   return parts.join(' · ');
@@ -149,11 +149,12 @@ function streamSummary(s: StationSource): string {
 /** Why this source plays, in one plain sentence (the full reasoning is under Sources). */
 const CHOICE_TEXT: Record<SelectionResult['conclusion'], string> = {
   'higher-quality-verified': 'The best measured quality of this station’s sources.',
-  'no-higher-quality-source-verified': 'Its sources carry the same audio; this one streams most simply.',
+  'no-higher-quality-source-verified':
+    'Its sources carry the same audio, so the choice came down to how each is delivered, its reliability, start-up time and the station pack’s order.',
   'not-conclusively-determined':
-    'No measured quality difference (different codecs aren’t compared), so the station pack’s order decided.',
+    'Which source sounds better was not conclusively determined (different codecs aren’t compared), so the choice came down to how each is delivered, its reliability, start-up time and the station pack’s order.',
   'higher-quality-source-ranked-lower':
-    'A source that measures higher ranks lower, because of how it is delivered, its reliability or an admin’s choice.',
+    'Another source measures higher but comes later, because of how it is delivered, its reliability or an admin’s choice.',
   'single-source': 'The only usable source right now.',
   'no-eligible-source': 'No usable source right now.',
 };
@@ -263,7 +264,7 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
       name: 'Processing',
       value: [
         s.codec === 'opus'
-          ? 'Transcode: yes. The Opus source is decoded and encoded again once for Discord (zero-transcode passthrough is not used in v1). The voice library adds no second encode.'
+          ? 'Transcode: yes. The Opus source is decoded and encoded again once for Discord (the bot never passes a stream through unchanged). The voice library adds no second encode.'
           : `Transcode: yes, exactly one lossy encode (${codecLabel(s.codec, s.profile)} → Opus). The voice library adds no second encode.`,
         `Resampling: ${p.resampled ? `${s.sampleRateHz} Hz → 48000 Hz (required by Discord)` : 'none'}`,
         'Volume/normalisation/EQ/compression: off',
@@ -273,7 +274,7 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
   );
   if (status.selection) {
     e.addFields({
-      name: 'Source decision',
+      name: 'Why this source',
       value: truncate(
         [CONCLUSION_TEXT[status.selection.conclusion], ...status.selection.explanation].join('\n'),
         1024,
@@ -365,7 +366,7 @@ export function sourcesEmbed(
     else if (nextCheck !== null) lines.push(failingLine(s, nextCheck));
     if (detailed) {
       lines.push(
-        `Endpoint: \`${truncate(redactUrl(s.url), 120)}\`${s.effectiveHost ? ` → ${s.effectiveHost}` : ''}`,
+        `Stream URL: \`${truncate(redactUrl(s.url), 120)}\`${s.effectiveHost ? ` → ${s.effectiveHost}` : ''}`,
         `Bitrates: advertised ${s.advertisedBitrateKbps ?? '—'} · codec ${s.codecBitrateKbps ?? '—'} · measured ${s.measuredBitrateKbps ?? '—'} kbps`,
         `Last checked ${ts(s.lastProbeAt)} · last worked ${ts(s.lastSuccessAt)} · last failed ${ts(s.lastFailureAt)}${s.lastFailureCode ? ` (${s.lastFailureCode})` : ''}`,
         `Health ${Math.round(s.healthScore)}/100 · start-up ${s.startupMs !== null ? `${s.startupMs} ms` : '—'}${s.icyName ? ` · stream name "${truncate(s.icyName, 60)}"` : ''}`,
@@ -383,7 +384,7 @@ export function sourcesEmbed(
   }
   if (omitted > 0) {
     e.addFields({
-      name: `${omitted} more source(s) not shown`,
+      name: `${omitted} more ${omitted === 1 ? 'source' : 'sources'} not shown`,
       value: 'Discord limits how much one message can hold.',
     });
   }

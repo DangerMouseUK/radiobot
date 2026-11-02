@@ -135,7 +135,7 @@ export function parseImport(text: string): GuildExport {
   try {
     json = JSON.parse(text);
   } catch {
-    throw new Error('The file is not valid JSON.');
+    throw new Error('The file is not a Radio Bot export (it is not valid JSON).');
   }
   const r = guildExportSchema.safeParse(json);
   if (!r.success) {

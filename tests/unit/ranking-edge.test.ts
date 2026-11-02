@@ -48,7 +48,7 @@ describe('fidelity evidence, both directions', () => {
     });
     expect(compareFidelity(unmeasured, src({}))).toEqual({
       relation: 'inconclusive',
-      reason: 'bitrate not measured',
+      reason: 'bitrate unknown',
     });
   });
 

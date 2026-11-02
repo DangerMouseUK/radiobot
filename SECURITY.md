@@ -40,7 +40,7 @@ In scope: vulnerabilities in this repository's code, default configuration, Dock
 - **FFmpeg argument or protocol injection.** Any way for user input to reach FFmpeg arguments, or to make FFmpeg open anything other than its stdin pipe.
 - **Authorisation bypass.** Running admin or control actions without the required role, channel or voice-channel conditions, through slash commands, buttons or select menus. This includes forged, replayed-across-servers or expired button and menu IDs, and import previews applied by someone who isn't an admin of that server, or after they expired or were replaced.
 - **Secret leakage.** The Discord token, stream credentials or tokenised URLs appearing in logs, Discord replies, `/radio stats`, exports, backups produced by the bot, or the diagnostics endpoint.
-- **Resource exhaustion.** Inputs that get around the documented bounds: playlist and segment size caps, probe budgets, the import file limit (a Discord attachment of at most 256 KB), concurrency limits, rate limits, process reaping. Examples are unbounded memory, zombie FFmpeg processes, or a crafted stream that hangs a session forever.
+- **Resource exhaustion.** Inputs that get around the documented bounds: playlist and segment size caps, probe budgets, the import file limit (a Discord attachment of at most 256 KB), concurrency limits, rate limits, the clean-up of finished FFmpeg processes. Examples are unbounded memory, zombie FFmpeg processes, or a crafted stream that hangs a session forever.
 - **Container hardening regressions:** running as root, a writable root filesystem, or published ports in the default Compose file.
 
 Out of scope:
@@ -56,6 +56,6 @@ Out of scope:
 
 - **Keep the token secret.** Keep `.env` mode `600`, never commit it, and reset the token in the Developer Portal if it leaks.
 - **Use the shipped Compose file.** It publishes no ports, runs as the non-root `node` user with a read-only root filesystem and all capabilities dropped, and sets `no-new-privileges`.
-- **Add egress rules for defence in depth.** The bot needs outbound access to Discord (HTTPS, WebSocket and voice UDP) and to the stream hosts you use.
+- **Limit outgoing traffic with firewall rules (egress rules) as an extra layer of protection.** The bot needs outbound access to Discord (HTTPS, WebSocket and voice UDP) and to the stream hosts you use.
 - **Custom stations are always admin-only** (server owner or Administrator permission). Set `MAX_CUSTOM_STATIONS_PER_GUILD=0` to switch them off entirely.
 - **Keep the image up to date.** Releases pin dependency versions, including the DAVE and voice libraries.

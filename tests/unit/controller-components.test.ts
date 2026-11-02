@@ -259,7 +259,9 @@ describe('preferring the playing source', () => {
   it('Prefer is refused when the station is not playing from one of its sources', async () => {
     const { t, st } = customServer();
     const notPlaying = await t.click(t.people.admin, t.ids.make(GUILD, 'spref', st.id));
-    expect(notPlaying.text).toMatch(/isn’t playing from a source that can be preferred right now/);
+    expect(notPlaying.text).toMatch(
+      /isn’t playing from one of its sources right now, so there is no source to try first/,
+    );
     // Playing, but from a source that belongs to another station.
     const s = playingIn(t, V1, st.id);
     s.fullStatus = { source: makeSource({ id: 'src-elsewhere' }) };
@@ -276,21 +278,23 @@ describe('preferring the playing source', () => {
       rightsStatus: 'unreviewed',
     });
     const wrong = await t.click(t.people.admin, t.ids.make(GUILD, 'spref', st.id));
-    expect(wrong.text).toMatch(/isn’t playing from a source that can be preferred/);
+    expect(wrong.text).toMatch(/isn’t playing from one of its sources right now/);
     expect(t.guilds.getPreference(GUILD, st.id)).toBeNull();
   });
 
-  it('Prefer names the source it now prefers', async () => {
+  it('Try first names the source it now tries first', async () => {
     const { t, st } = twoSources();
     const i = await t.click(t.people.admin, t.ids.make(GUILD, 'spref', st.id));
-    expect(i.text).toMatch(/This server now prefers Main stream \(.+\) for My Station/);
+    expect(i.text).toMatch(
+      /Source tried first\nOn this server, My Station now tries Main stream \(.+\) first\./,
+    );
     expect(i.ephemeral).toBe(true);
   });
 
-  it('Back to automatic is refused for a station that has gone', async () => {
+  it('Let the bot choose is refused for a station that has gone', async () => {
     const t = setup();
     const i = await t.click(t.people.admin, t.ids.make(GUILD, 'sauto', 'custom:gone'));
-    expect(i.text).toMatch(/isn’t playing from a source that can be preferred/);
+    expect(i.text).toMatch(/That station is no longer available\./);
   });
 });
 

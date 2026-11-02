@@ -363,7 +363,7 @@ describe('formatting helpers', () => {
     expect(sourceFormat(makeSource(advertised))).toContain('(advertised, unverified)');
     expect(sourceFormat(makeSource({ measuredBitrateKbps: null }))).toContain('(codec metadata)');
     expect(sourceFormat(makeSource({ channels: 1 }))).toMatch(/mono$/);
-    expect(sourceFormat(makeSource({ channels: 6 }))).toMatch(/6 ch$/);
+    expect(sourceFormat(makeSource({ channels: 6 }))).toMatch(/6 channels$/);
   });
 
   it('summarises identity with the first decisive piece of evidence', () => {
@@ -503,7 +503,7 @@ describe('status embeds', () => {
     const opus = JSON.stringify(
       qualityEmbed(station, status({ source: makeSource({ codec: 'opus' }) })).toJSON(),
     );
-    expect(opus).toContain('zero-transcode passthrough is not used');
+    expect(opus).toContain('the bot never passes a stream through unchanged');
   });
 
   it('lists sources with roles, redacted endpoints and within embed limits', () => {
@@ -560,7 +560,7 @@ describe('status embeds', () => {
       const e = sourcesEmbed(station, sources, selectSource(sources, null, { now }), true);
       // The controller may add a server override field (about 125 characters) and a re-check summary.
       expect(embedSize(e)).toBeLessThanOrEqual(5700);
-      expect(JSON.stringify(e.toJSON())).toMatch(/more source\(s\) not shown/);
+      expect(JSON.stringify(e.toJSON())).toMatch(/more sources? not shown/);
     }
   });
 });

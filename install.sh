@@ -16,9 +16,10 @@ main() {
     exit 1
   fi
   if [ -f "$dir/scripts/radio-bot.sh" ]; then
-    echo "Radio Bot is already in $dir; checking that install."
+    echo "Radio Bot is already in $dir, so this checks that install instead of downloading it again."
   elif [ -e "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
-    echo "$dir already exists and isn't a Radio Bot install. Set RADIO_BOT_DIR to another folder." >&2
+    echo "$dir already exists and isn't a Radio Bot install, so nothing was changed." >&2
+    echo "Rename that folder and run this again, or set RADIO_BOT_DIR to install somewhere else." >&2
     exit 1
   else
     echo "Downloading Radio Bot into $dir"

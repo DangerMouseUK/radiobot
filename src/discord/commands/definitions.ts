@@ -99,7 +99,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('inspect')
-        .setDescription('Technical details of a station’s sources: codec, bitrate and evidence')
+        .setDescription('Technical details of a station’s sources: codec, bitrate and how each was checked')
         .addStringOption((o) => stationOpt(o)),
     )
     .addSubcommand((s) =>
@@ -108,7 +108,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('sources')
-        .setDescription('A station’s sources, which one plays and which is the fallback')
+        .setDescription('Show a station’s sources: which one plays, and which takes over if it fails')
         .addStringOption((o) => stationOpt(o)),
     )
     .addSubcommand((s) =>
@@ -169,7 +169,9 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addBooleanOption((o) =>
           o
             .setName('compare')
-            .setDescription('Also compare about 40 seconds of audio to try to verify unverified sources'),
+            .setDescription(
+              'Also check unverified sources by comparing about 40 seconds of their audio with a verified one',
+            ),
         ),
     )
     .addSubcommand((s) =>
@@ -187,7 +189,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addStringOption((o) =>
           o
             .setName('default_station')
-            .setDescription('Station to play when the bot joins without one')
+            .setDescription('Station the bot plays when it joins without being given one')
             .setAutocomplete(true)
             .setMaxLength(100),
         )
@@ -251,7 +253,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommandGroup((g) =>
       g
         .setName('source')
-        .setDescription('Choose which source a station plays from (admins)')
+        .setDescription('Choose which source a station plays from on this server (admins)')
         .addSubcommand((s) =>
           s
             .setName('pin')
@@ -281,7 +283,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addSubcommand((s) =>
           s
             .setName('auto')
-            .setDescription('Let the bot choose the source again from its checks')
+            .setDescription('Undo pin or prefer, so the bot chooses the source again')
             .addStringOption((o) => stationOpt(o)),
         )
         .addSubcommand((s) =>

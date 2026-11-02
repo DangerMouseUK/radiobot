@@ -78,7 +78,7 @@ describe('entry point', () => {
     await runMain();
     expect(exits[0]).toBe(78);
     expect(stderr).toMatch(/Invalid configuration:/);
-    expect(stderr).toMatch(/DISCORD_TOKEN: DISCORD_TOKEN is required/);
+    expect(stderr).toMatch(/DISCORD_TOKEN: is missing or not long enough to be a bot token/);
     expect(stderr).toMatch(/See \.env\.example and docs\/install-docker\.md\./);
     expect(stderr).not.toContain('short');
     expect(fake.configs).toEqual([]);

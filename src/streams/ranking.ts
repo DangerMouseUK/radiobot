@@ -48,7 +48,7 @@ export function checkEligibility(s: StationSource, now: number): EligibilityRepo
   if (s.rightsStatus === 'blocked') reasons.push('blocked by rights/takedown policy');
   if (s.identityStatus === 'mismatch') reasons.push('plays a different station (identity mismatch)');
   else if (s.identityStatus !== 'verified') reasons.push('not verified as this station');
-  if (s.verificationState === 'blocked_by_policy') reasons.push('rejected by URL safety policy');
+  if (s.verificationState === 'blocked_by_policy') reasons.push('blocked by the bot’s safety rules');
   if (s.verificationState === 'discovered' || s.verificationState === 'resolved' || s.lastProbeAt === null) {
     reasons.push('not checked yet');
   } else if (s.verificationState === 'offline') {
@@ -58,7 +58,7 @@ export function checkEligibility(s: StationSource, now: number): EligibilityRepo
   }
   if (s.cooldownUntil && Date.parse(s.cooldownUntil) > now) {
     reasons.push(
-      `cooling down after repeated failures until ${s.cooldownUntil.slice(0, 16).replace('T', ' ')} UTC`,
+      `resting after repeated failures until ${s.cooldownUntil.slice(0, 16).replace('T', ' ')} UTC`,
     );
   }
   return { sourceId: s.id, eligible: reasons.length === 0, reasons };
@@ -142,8 +142,7 @@ export function compareFidelity(
   }
   const ba = effectiveBitrate(a);
   const bb = effectiveBitrate(b);
-  if (ba.kbps === null || bb.kbps === null)
-    return { relation: 'inconclusive', reason: 'bitrate not measured' };
+  if (ba.kbps === null || bb.kbps === null) return { relation: 'inconclusive', reason: 'bitrate unknown' };
   const ratio = Math.max(ba.kbps, bb.kbps) / Math.max(1, Math.min(ba.kbps, bb.kbps));
   // Two measured rates are precise (128.0 against 128.1 for the same stream), so 112 against 128
   // is a real difference; any other figure is looser (AAC metadata is only an estimate).
@@ -266,7 +265,7 @@ export function selectSource(
       const why =
         selected.transport === 'http-continuous' && relations.some((x) => x.o.transport === 'hls')
           ? 'direct feed selected for simpler live delivery'
-          : 'selected on stability, latency and catalogue order';
+          : 'chosen on stability, start-up time and the station pack’s order';
       explanation.push(`All usable sources carry equivalent audio (${relations[0]!.r.reason}); ${why}.`);
       explanation.push('No independently verified higher-quality source found.');
     } else if (relations.some((x) => x.r.relation === 'b')) {
@@ -297,7 +296,9 @@ export function selectSource(
   } else if (selected.transport === 'hls') {
     explanation.push('Only HLS is available right now; no direct stream of this station can be used.');
   } else if (ordered.some((s) => s.transport === 'hls')) {
-    explanation.push('HLS sources are kept as a last-resort fallback (segmented delivery).');
+    explanation.push(
+      'HLS sources are kept as a last-resort fallback: they start more slowly and recover less smoothly.',
+    );
   }
   if (fallback) explanation.push(`Fallback: ${describe(fallback)}.`);
   return {

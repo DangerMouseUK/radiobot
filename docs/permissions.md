@@ -30,7 +30,7 @@ There are **no privileged intents**: no Message Content, no Server Members, no P
 
 ### OAuth2 scopes
 
-`bot` and `applications.commands`.
+The invite link asks for two *scopes*: `bot`, which adds the bot to the server, and `applications.commands`, which adds its `/radio` command.
 
 ### Bot permissions (integer `281474979908608`)
 
@@ -50,7 +50,7 @@ Servers that invited the bot with the earlier integer `3197952` keep working. To
 
 Not needed: Administrator, Manage Server, Manage Channels, Manage Roles, Manage Messages, Read Message History, Mention Everyone, Use Voice Activity, Priority Speaker, Move Members.
 
-Each time it joins a channel, the bot checks View Channel, Connect and Speak on that **specific** channel. It also checks that the channel is a standard voice channel (stage channels are refused) and that it can join it (it isn't full). Before posting the control panel it checks View Channel and Send Messages in the panel channel. Notices are skipped silently if Send Messages is missing.
+Each time it joins a channel, the bot checks that it has View Channel, Connect and Speak in that **particular** channel, so a channel's own permission settings count. It also checks that the channel is a standard voice channel (stage channels are refused) and that it isn't full. Before posting the control panel it checks View Channel and Send Messages in the panel channel. If Send Messages is missing in the notice channel, notices are quietly skipped.
 
 ### Command registration
 
@@ -58,7 +58,7 @@ There is one command, `/radio`, registered separately in each server. It works o
 
 ## Access levels
 
-`accessLevel()` gives each user one level per server:
+Each person has one level in each server (worked out by `accessLevel()`):
 
 | Level | Who |
 |---|---|
@@ -66,15 +66,15 @@ There is one command, `/radio`, registered separately in each server. It works o
 | **dj** | Anyone with a role that an admin has set as a *DJ role* in `/radio config` → Access |
 | **member** | Everyone else (called *listeners* on this page) |
 
-Separately, the bot **operator** is a Discord user listed in `OPERATOR_USER_IDS`, or the owner of the bot's Discord application (or a member of its team). Only operators can record identity verdicts for the sources of station packs, because those verdicts affect every server the bot is in. They must also be an admin of the server where they run the command. Being an operator does not make you an admin of a server.
+Separately, the bot **operator** is the person running the bot: a Discord user listed in `OPERATOR_USER_IDS`, or the owner of the bot's Discord application (or a member of its team). Only operators can record identity verdicts (whether a source really carries its station) for the sources of station packs, because those verdicts affect every server the bot is in. They must also be an admin of the server where they run the command. Being an operator does not make you an admin of a server.
 
 ## Capabilities
 
-Each command, button and menu needs one *capability*:
+Each command, button and menu needs one of three kinds of access (*capabilities*): **read** to look, **control** to change what is playing, and **admin** for settings, custom stations and the other admin tools.
 
 - **read**: `/radio browse`, `list` (including `scope:favourites`), `now`, `quality`, `sources`, `inspect`, `status`, `help` and `queue list`. Also the buttons that browse, page through lists, refresh the now-playing card and open Sources or Inspect, including the Favourites filter in a browse list.
 - **control**: `/radio play`, `stop`, `join`, `leave`, `skip`, `queue add`, `queue remove` and `queue clear`. Also choosing a station from a browse list or a "which station did you mean?" menu, the Previous station, Next station, Stop, Leave and Skip buttons, and the **Favourite** and **Unfavourite** buttons. The source menu under `/radio sources` needs *control* too: it switches the source of the station that is playing, until the station changes. When an admin has pinned the station to one source, only admins can use that menu.
-- **admin**: `/radio stats` (and its Refresh button), `add`, `edit`, `remove`, `rescan` (and the **Check sources again** button), `sync`, `config` (and every settings control), `export`, `import` (and its Apply and Cancel buttons), `panel`, and `source pin`, `prefer`, `auto` and `verify`. Also the **Prefer the playing source on this server** and **Back to automatic choice** buttons under `/radio sources`. The Close button of `/radio stats` needs only *read*: it deletes the clicker's own private reply.
+- **admin**: `/radio stats` (and its Refresh button), `add`, `edit`, `remove`, `rescan` (and the **Check sources again** button), `sync`, `config` (and every settings control), `export`, `import` (and its Apply and Cancel buttons), `panel`, and `source pin`, `prefer`, `auto` and `verify`. Also the **Make the source playing now this server's first choice** and **Let the bot choose the source again** buttons under `/radio sources`. The Close button of `/radio stats` needs only *read*: it deletes the clicker's own private reply.
 
 ### Capability matrix
 
@@ -121,11 +121,11 @@ The capability check runs against that channel. So DJs and admins can name any c
 
 ## Server-side checks for buttons and menus
 
-The PRD requires that "a button posted in a public channel must not become an unrestricted bypass". This is how:
+A button posted in a public channel must not let anyone get round the rules above. This is how the bot makes sure:
 
 1. **Every click is authorised again,** using the clicking user's current roles, channel and voice channel, exactly as the matching slash command would be. A Stop button in a public panel still needs *control*. A settings menu still needs *admin*.
 2. **Signed button IDs.** Every button and menu carries a hidden ID of the form `rb2:<action>:<argument>:<expiry>:<signature>`.
-   - The signature is an HMAC-SHA256 (a keyed checksum), cut to 16 characters. It covers the server ID and the rest of the ID, and uses a secret that each installation generates once and stores in its database. It is checked in constant time.
+   - The signature is an HMAC-SHA256 (a keyed checksum), cut to 16 characters. It covers the server ID and the rest of the ID, and uses a secret that each installation generates once and stores in its database. It is checked in constant time, so the time a check takes gives nothing away.
    - A forged ID, or an ID copied from another server, fails the check with "This button or menu is not valid here.".
    - **The signature is not permission.** It only proves that this installation made the ID for this server. Step 1 still applies.
    - Every ID fits Discord's 100-character limit by design: the action name is at most 7 characters (all are listed in `COMPONENT_ACTIONS`), the argument at most 65 (the longest possible station ID) and the expiry 5. Making an ID with anything longer is refused.
@@ -142,7 +142,7 @@ The PRD requires that "a button posted in a public channel must not become an un
 
 ## Rate limits
 
-These limits are kept in memory, per bot process (`RateLimits` in `src/discord/context.ts`). Each one allows the stated number of uses at once, and refills steadily over the window. When a limit runs out, the reply says "Too many … in a short time. Try again in N s." (reason code `RATE_LIMITED`).
+These limits are kept in memory (`RateLimits` in `src/discord/context.ts`), so restarting the bot resets them. Each one lets you use the whole allowance at once; it then refills gradually over the stated time. When a limit runs out, the reply says "Too many … in a short time. Try again in N s." (reason code `RATE_LIMITED`).
 
 | Limit | Counted per | Allowance |
 |---|---|---|
