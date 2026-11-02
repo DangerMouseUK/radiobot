@@ -31,6 +31,8 @@ export interface EligibilityReport {
 export interface SelectionResult {
   mode: SourcePreference['mode'];
   selected: StationSource | null;
+  /** The source an admin pinned or preferred, when that is the one selected. */
+  preferredSourceId?: string | null;
   fallback: StationSource | null;
   ordered: StationSource[];
   eligibility: EligibilityReport[];
@@ -107,7 +109,10 @@ export function compareFidelity(
   if (ba.kbps === null || bb.kbps === null)
     return { relation: 'inconclusive', reason: 'bitrate not measured' };
   const ratio = Math.max(ba.kbps, bb.kbps) / Math.max(1, Math.min(ba.kbps, bb.kbps));
-  if (ratio < 1.15) return { relation: 'equal', reason: `both ≈${Math.round(ba.kbps)} kbps ${fa}` };
+  // Two measured rates are precise (128.0 against 128.1 for the same stream), so 112 against 128
+  // is a real difference; any other figure is looser (AAC metadata is only an estimate).
+  const sameBand = a.measuredBitrateKbps !== null && b.measuredBitrateKbps !== null ? 1.03 : 1.15;
+  if (ratio < sameBand) return { relation: 'equal', reason: `both ≈${Math.round(ba.kbps)} kbps ${fa}` };
   if (!ba.strong || !bb.strong) {
     return { relation: 'inconclusive', reason: 'bitrate difference only advertised, not measured' };
   }
@@ -191,10 +196,12 @@ export function selectSource(
   }
 
   let selected = ordered[0]!;
+  let preferredSourceId: string | null = null;
   if (mode !== 'auto' && preference?.sourceId) {
     const pinned = ordered.find((s) => s.id === preference.sourceId);
     if (pinned) {
       selected = pinned;
+      preferredSourceId = pinned.id;
       explanation.push(`Using the ${mode === 'pin' ? 'pinned' : 'preferred'} source an admin chose.`);
     } else if (mode === 'pin') {
       degraded = true;
@@ -257,5 +264,15 @@ export function selectSource(
     explanation.push('HLS sources are kept as a last-resort fallback (segmented delivery).');
   }
   if (fallback) explanation.push(`Fallback: ${describe(fallback)}.`);
-  return { mode, selected, fallback, ordered, eligibility, conclusion, degraded, explanation };
+  return {
+    mode,
+    selected,
+    preferredSourceId,
+    fallback,
+    ordered,
+    eligibility,
+    conclusion,
+    degraded,
+    explanation,
+  };
 }

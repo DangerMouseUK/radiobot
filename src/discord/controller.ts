@@ -104,6 +104,8 @@ const NO_DEFAULT_STATION = 'none';
 type Cmd = ChatInputCommandInteraction<'cached'>;
 type Comp = MessageComponentInteraction<'cached'>;
 const EPHEMERAL = MessageFlags.Ephemeral;
+/** Shown when a quality change re-encodes the playing station. */
+const REENCODE_NOTE = 'The station restarts for a moment to use the new quality.';
 
 /** What an interaction was, for the debug log: "command stats", "autocomplete play", "button stop". */
 export function describeInteraction(i: Interaction): string {
@@ -1334,8 +1336,12 @@ export class RadioController {
     const manual = i.options.getInteger('manual_bitrate');
     if (manual !== null) patch.manualBitrateKbps = manual;
     const settings = this.#ctx.guilds.updateSettings(i.guildId, patch);
-    if ('manualBitrateKbps' in patch) this.#ctx.sessions.get(i.guildId)?.refreshEncoder();
-    await i.reply({ ...configView(this.#ctx, i.guildId, settings, 'access'), flags: EPHEMERAL });
+    const restarted = 'manualBitrateKbps' in patch && this.#ctx.sessions.get(i.guildId)?.refreshEncoder();
+    await i.reply({
+      ...configView(this.#ctx, i.guildId, settings, 'access'),
+      ...(restarted ? { content: REENCODE_NOTE } : {}),
+      flags: EPHEMERAL,
+    });
   }
 
   async #cmdExport(i: Cmd): Promise<void> {
@@ -1920,9 +1926,11 @@ export class RadioController {
     const settings: GuildSettings = Object.keys(patch).length
       ? this.#ctx.guilds.updateSettings(g, patch)
       : cur;
-    if ('qualityMode' in patch || 'manualBitrateKbps' in patch) this.#ctx.sessions.get(g)?.refreshEncoder();
+    const restarted =
+      ('qualityMode' in patch || 'manualBitrateKbps' in patch) && this.#ctx.sessions.get(g)?.refreshEncoder();
     if ('idleMode' in patch) this.#recheckIdle(i.guild);
-    await i.update(configView(this.#ctx, g, settings, page));
+    // The note shows only with the change that caused the restart; the next update clears it.
+    await i.update({ ...configView(this.#ctx, g, settings, page), content: restarted ? REENCODE_NOTE : '' });
   }
 
   /** Re-applies the idle mode to the bot's current channel after the setting may have changed. */
@@ -1958,7 +1966,7 @@ export class RadioController {
       this.#ctx.db.transaction(fn),
     );
     // Imported quality and idle settings apply to the station already playing, as menu changes do.
-    this.#ctx.sessions.get(i.guildId)?.refreshEncoder();
+    const restarted = this.#ctx.sessions.get(i.guildId)?.refreshEncoder() ?? false;
     this.#recheckIdle(i.guild);
     const added: string[] = [];
     const failed: string[] = [];
@@ -1992,6 +2000,7 @@ export class RadioController {
           truncate(
             [
               'Settings, favourites and source preferences were applied.',
+              restarted ? REENCODE_NOTE : '',
               added.length ? `Custom stations added: ${added.join(', ')}` : '',
               failed.length ? `Custom stations not added: ${failed.join(', ')}` : '',
             ]

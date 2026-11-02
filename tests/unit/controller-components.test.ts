@@ -431,12 +431,16 @@ describe('settings menus and buttons', () => {
     await t.click(t.people.admin, cfg(t, 'member'), 'string', ['any']);
     await t.click(t.people.admin, cfg(t, 'member'), 'string', ['everyone']);
     expect(t.guilds.getSettings(GUILD).memberControlMode).toBe('any');
-    await t.click(t.people.admin, cfg(t, 'quality'), 'string', ['balanced']);
+    const changed = await t.click(t.people.admin, cfg(t, 'quality'), 'string', ['balanced']);
     expect(t.guilds.getSettings(GUILD).qualityMode).toBe('balanced');
     expect(s.encoderRefreshes).toBe(1);
+    expect(changed.text).toMatch(/restarts for a moment/);
+    s.reencodes = false;
+    const same = await t.click(t.people.admin, cfg(t, 'quality'), 'string', ['balanced']);
+    expect(same.text).not.toMatch(/restarts for a moment/);
     await t.click(t.people.admin, cfg(t, 'quality'), 'string', ['lossless']);
     expect(t.guilds.getSettings(GUILD).qualityMode).toBe('balanced');
-    expect(s.encoderRefreshes).toBe(1);
+    expect(s.encoderRefreshes).toBe(2);
   });
 
   it('the Autostart, Resume and Lock buttons each switch their setting', async () => {

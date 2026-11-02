@@ -51,6 +51,14 @@ describe('fidelity comparison', () => {
     ).toBe('equal');
   });
 
+  it('tells 112 from 128 kbps when both are measured, but not when either is only metadata', () => {
+    const measured = (kbps: number) => makeSource({ measuredBitrateKbps: kbps, codecBitrateKbps: kbps });
+    expect(compareFidelity(measured(128), measured(112)).relation).toBe('a');
+    expect(compareFidelity(measured(128.1), measured(128)).relation).toBe('equal');
+    const metadata = makeSource({ measuredBitrateKbps: null, codecBitrateKbps: 112 });
+    expect(compareFidelity(measured(128), metadata).relation).toBe('equal');
+  });
+
   it('prefers a measurably higher same-codec bitrate, but not an advertised-only one', () => {
     const hi = makeSource({ id: 'hi', measuredBitrateKbps: 256 });
     const lo = makeSource({ id: 'lo', measuredBitrateKbps: 128 });
@@ -122,10 +130,14 @@ describe('selection', () => {
       sourceId: 'b',
       updatedAt: '',
     };
-    expect(selectSource([a, b], pin, { now }).selected?.id).toBe('b');
+    expect(selectSource([a, b], pin, { now })).toMatchObject({
+      selected: { id: 'b' },
+      preferredSourceId: 'b',
+    });
     const r = selectSource([a, { ...b, verificationState: 'offline' as const }], pin, { now });
     expect(r.selected?.id).toBe('a');
     expect(r.degraded).toBe(true);
+    expect(r.preferredSourceId).toBeNull();
     expect(r.explanation[0]).toMatch(/Degraded: the pinned source can’t be used/);
   });
 

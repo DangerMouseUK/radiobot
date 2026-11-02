@@ -1130,6 +1130,7 @@ describe('/radio config', () => {
     expect(i.ephemeral).toBe(true);
     expect(t.guilds.getSettings(GUILD)).toMatchObject({ defaultStationId: st.id, manualBitrateKbps: 256 });
     expect(s.encoderRefreshes).toBe(1);
+    expect(i.text).toMatch(/The station restarts for a moment to use the new quality\./);
     expect(i.text).toMatch(/Default station: My Station/);
     expect(i.text).toMatch(/Page: Access/);
   });
@@ -1236,7 +1237,9 @@ describe('/radio import', () => {
     const apply = (await preview(t)).componentIds[0]!;
     const i = await t.click(t.people.admin, apply);
     expect(i.violations).toEqual([]);
-    expect(i.text).toMatch(/Import applied\nSettings, favourites and source preferences were applied\.$/);
+    expect(i.text).toMatch(
+      /Import applied\nSettings, favourites and source preferences were applied\.\nThe station restarts for a moment to use the new quality\.$/,
+    );
     expect(t.guilds.getSettings(GUILD)).toMatchObject({ qualityMode: 'balanced', idleMode: '24x7' });
     expect(s.encoderRefreshes).toBe(1);
     // Two people (one with no member cached) in the bot's channel; the bot user is not counted.

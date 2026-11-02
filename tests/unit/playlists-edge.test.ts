@@ -303,3 +303,19 @@ describe('ID3 stripping', () => {
     expect(stripId3(truncated)).toHaveLength(0);
   });
 });
+
+describe('choosing among alternate audio renditions', () => {
+  it('takes the group used by the higher-bandwidth variants first, whatever the default', () => {
+    const text = [
+      '#EXTM3U',
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac-64",NAME="Low",DEFAULT=YES,URI="audio/low.m3u8"',
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac-256",NAME="High",URI="audio/high.m3u8"',
+      '#EXT-X-STREAM-INF:BANDWIDTH=800000,CODECS="avc1.4d401f,mp4a.40.2",AUDIO="aac-64"',
+      'video/sd.m3u8',
+      '#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.640028,mp4a.40.2",AUDIO="aac-256"',
+      'video/hd.m3u8',
+    ].join('\n');
+    const order = rankAudioRenditions(parseHls(text, base) as HlsMaster).map((c) => c.uri.pathname);
+    expect(order.slice(0, 2)).toEqual(['/live/audio/high.m3u8', '/live/audio/low.m3u8']);
+  });
+});

@@ -15,6 +15,7 @@ import {
   GuildSession,
   type SessionNotice,
   type SessionTimings,
+  withOpenedBitrate,
 } from '../../src/voice/session.ts';
 import { makeSource, memoryDb, silentLogger } from '../helpers.ts';
 
@@ -98,7 +99,15 @@ class FakePipeline extends EventEmitter {
       }
     }, 5);
   }
-  fail(code: 'STREAM_EOF' | 'FFMPEG_EXIT' | 'NOT_FOUND' | 'FFMPEG_SPAWN' | 'INTERNAL' = 'STREAM_EOF'): void {
+  fail(
+    code:
+      | 'STREAM_EOF'
+      | 'FFMPEG_EXIT'
+      | 'NOT_FOUND'
+      | 'ACCESS_DENIED'
+      | 'FFMPEG_SPAWN'
+      | 'INTERNAL' = 'STREAM_EOF',
+  ): void {
     this.emit('failed', new RadioError(code, 'boom'));
   }
   stop(): void {
@@ -178,6 +187,7 @@ function setup(
       },
       recordPlaybackSuccess: () => {},
       refreshStation: (stationId) => refreshed.push({ stationId, at: Date.now() }),
+      select: () => selectSource(sources, null),
       holdBackground: (ms) => holds.push(ms),
       recordPlaybackFailure: (id) => {
         const n = (failures.get(id) ?? 0) + 1;
@@ -297,6 +307,19 @@ describe('GuildSession', () => {
     expect(t.session.stationId).toBe('fg:fg-chic');
   });
 
+  it('keeps playing, without a restart, when the station already playing is asked for again', async () => {
+    const t = setup();
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    await t.session.useSource('mypack:my-station', 'fallback');
+    const again = await t.session.play('mypack:my-station', 'voice-1', 'u2');
+    expect(again).toMatchObject({ ok: true, message: 'Already playing.' });
+    expect(t.pipelines).toHaveLength(2);
+    expect(t.session.status().manualSourceId).toBe('fallback');
+    // Another channel is a real move, so it does start again there.
+    await t.session.play('mypack:my-station', 'voice-2', null);
+    expect(t.pipelines).toHaveLength(3);
+  });
+
   it('lets a newer request supersede a pending one', async () => {
     const t = setup();
     const first = t.session.play('fg:fg-dj-radio', 'voice-1', null);
@@ -400,13 +423,22 @@ describe('GuildSession', () => {
     expect(t.refreshed[0]!.at - started).toBeGreaterThanOrEqual(FAST.stableMs!);
   });
 
-  it('fails over at once when the address is gone (no retries on the same source)', async () => {
+  it('fails over at once when the station refuses access (no retries on the same source)', async () => {
     const t = setup();
     await t.session.play('fg:fg-dj-radio', 'voice-1', null);
-    t.pipelines[0]!.fail('NOT_FOUND');
+    t.pipelines[0]!.fail('ACCESS_DENIED');
     await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
     expect(t.pipelines).toHaveLength(2);
     expect(t.session.status().failovers).toBe(1);
+  });
+
+  it('retries a 404 on the same source, as a station reconnecting its encoder sends for a moment', async () => {
+    const t = setup();
+    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    t.pipelines[0]!.fail('NOT_FOUND');
+    await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
+    expect(t.session.status().source?.id).toBe('primary');
+    expect(t.session.status().failovers).toBe(0);
   });
 
   it('fails over to a verified fallback after repeated failures and says so', async () => {
@@ -765,7 +797,7 @@ describe('GuildSession', () => {
     const t = setup({ timings: { backoff: [5] } });
     await t.session.play('mypack:my-station', 'voice-1', null);
     await t.session.useSource('mypack:my-station', 'fallback');
-    t.pipelines.at(-1)!.fail('NOT_FOUND');
+    t.pipelines.at(-1)!.fail('ACCESS_DENIED');
     await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'primary');
     expect(t.session.status().manualSourceId).toBeNull();
   });
@@ -853,5 +885,73 @@ describe('GuildSession', () => {
     await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
     expect(t.failures.size).toBe(0);
     expect(t.notices.some((n) => n.kind === 'failover')).toBe(true);
+  });
+});
+
+describe('GuildSession: back to the best quality', () => {
+  const later = (ms: number) => new Date(Date.now() + ms).toISOString();
+
+  it('moves back to the better source once a check shows it works again, at most once per interval', async () => {
+    const t = setup({ timings: { upgradeCheckMs: 10, autoSwitchMinIntervalMs: 150 } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    const primary = t.sources[0]!;
+    t.pipelines[0]!.fail('ACCESS_DENIED');
+    primary.lastFailureAt = new Date().toISOString();
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
+    // It failed after its last good check, so the bot stays on the fallback.
+    await wait(250);
+    expect(t.session.status().source?.id).toBe('fallback');
+    // A background check shows it works again: the next look moves back to it.
+    primary.lastSuccessAt = later(1);
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'primary');
+    expect(t.notices.at(-1)).toMatchObject({ kind: 'recovered' });
+    expect(t.notices.at(-1)!.message).toMatch(/moved back to it/);
+    expect(t.pipelines).toHaveLength(3);
+  });
+
+  it("does not move for a source that only ranks higher on health, or away from a listener's choice", async () => {
+    const t = setup({
+      sources: [
+        makeSource({ id: 'primary', url: 'https://a.example.com/p', priority: 10, healthScore: 100 }),
+        makeSource({ id: 'second', url: 'https://c.example.com/s', priority: 20, healthScore: 40 }),
+      ],
+      timings: { upgradeCheckMs: 10, autoSwitchMinIntervalMs: 0 },
+    });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    await t.session.useSource('mypack:my-station', 'second');
+    await wait(150);
+    expect(t.session.status().source?.id).toBe('second');
+    expect(t.pipelines).toHaveLength(2);
+  });
+
+  it('re-encodes at a clearly higher bitrate when the playing source now measures one', async () => {
+    const t = setup({ timings: { upgradeCheckMs: 10, autoSwitchMinIntervalMs: 0 } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    expect(t.pipelines[0]!.plan.targetKbps).toBe(128);
+    const primary = t.sources[0]!;
+    primary.measuredBitrateKbps = 130; // within 5 %: not worth a cut
+    await wait(100);
+    expect(t.pipelines).toHaveLength(1);
+    primary.measuredBitrateKbps = 192;
+    await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
+    expect(t.pipelines[1]!.plan.targetKbps).toBe(192);
+    expect(t.session.status().source?.id).toBe('primary');
+  });
+});
+
+describe('withOpenedBitrate', () => {
+  const opened = (kbps: number | null) => ({ info: { advertisedBitrateKbps: kbps } }) as never;
+  it('follows a clearly higher HLS rendition than the one the check measured', () => {
+    const hls = makeSource({ transport: 'hls', measuredBitrateKbps: 64, codecBitrateKbps: 64 });
+    expect(withOpenedBitrate(hls, opened(260))).toMatchObject({
+      measuredBitrateKbps: null,
+      advertisedBitrateKbps: 260,
+      bitrateConfidence: 'manifest',
+    });
+    // Container overhead alone, an unknown figure, or a direct stream: the stored figures stand.
+    expect(withOpenedBitrate(hls, opened(70))).toBe(hls);
+    expect(withOpenedBitrate(hls, opened(null))).toBe(hls);
+    const direct = makeSource({ measuredBitrateKbps: 64 });
+    expect(withOpenedBitrate(direct, opened(320))).toBe(direct);
   });
 });

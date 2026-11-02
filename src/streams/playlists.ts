@@ -270,8 +270,20 @@ export function rankAudioRenditions(master: HlsMaster): RenditionChoice[] {
     }
   }
   const byBitrate = (a: RenditionChoice, b: RenditionChoice) => (b.bitrateKbps ?? 0) - (a.bitrateKbps ?? 0);
+  // Alternate audio renditions declare no bitrate of their own. A group used by higher-bandwidth
+  // variants normally carries the better audio, so groups go highest first, the default breaking ties.
+  const groupBandwidth = new Map<string, number>();
+  for (const v of master.variants) {
+    const bw = plausibleBandwidth(v.averageBandwidth ?? v.bandwidth);
+    if (v.audioGroup && bw)
+      groupBandwidth.set(v.audioGroup, Math.max(groupBandwidth.get(v.audioGroup) ?? 0, bw));
+  }
   const renditions = [...master.audio]
-    .sort((a, b) => Number(b.isDefault) - Number(a.isDefault))
+    .sort(
+      (a, b) =>
+        (groupBandwidth.get(b.groupId) ?? 0) - (groupBandwidth.get(a.groupId) ?? 0) ||
+        Number(b.isDefault) - Number(a.isDefault),
+    )
     .map<RenditionChoice>((r) => ({
       uri: r.uri,
       bitrateKbps: null,
