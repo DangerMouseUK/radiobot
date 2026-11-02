@@ -41,8 +41,23 @@ class FakeSession {
   stationId: string | null = null;
   readonly joins: string[] = [];
   stops = 0;
+  /** The source playing now, and every source a listener switched to. */
+  playingSourceId: string | null = null;
+  readonly usedSources: string[] = [];
+  desiredState = 'playing';
   status() {
-    return null;
+    return this.playingSourceId
+      ? {
+          source: { id: this.playingSourceId },
+          manualSourceId: this.usedSources.at(-1) ?? null,
+          desiredState: this.desiredState,
+        }
+      : null;
+  }
+  async useSource(_stationId: string, id: string) {
+    this.usedSources.push(id);
+    this.playingSourceId = id;
+    return { ok: true, code: null, message: 'Playing.' };
   }
   liveStats() {
     return null;
@@ -562,7 +577,7 @@ describe('buttons and menus are authorised again on every click', () => {
     const off = await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus'));
     expect(off.violations).toEqual([]);
     expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(false);
-    expect(off.text).toMatch(/Voice channel status:\*\* off/);
+    expect(off.text).toMatch(/Voice channel status: off/);
     await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus'));
     expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(true);
     const denied = await t.click(t.people.member, t.ids.make(GUILD, 'cfg', 'vstatus'));
@@ -730,8 +745,18 @@ describe('/radio help', () => {
     const t = setup();
     const admin = await t.command(t.people.admin, { sub: 'help' });
     const member = await t.command(t.people.member, { sub: 'help' });
-    expect(admin.text).toMatch(/\*\*Admin\*\*/);
-    expect(member.text).not.toMatch(/\*\*Admin\*\*/);
+    expect(admin.text).toMatch(/🛠 Admin\n`\/radio config`/);
+    expect(member.text).not.toMatch(/🛠 Admin/);
+    // One section per topic, not one long description.
+    const fields = admin.calls[0]!.payload.embeds![0]!.toJSON().fields!.map((f) => f.name);
+    expect(fields).toEqual([
+      '🎧 Listen',
+      '⭐ Favourites and the default station',
+      '📋 Queue',
+      '📡 Sources',
+      '🛠 Admin',
+      '🔊 Sound',
+    ]);
     expect(member.text).toMatch(/`\/radio add`/);
     expect(member.ephemeral).toBe(true);
   });
@@ -819,5 +844,229 @@ describe('Next and Previous station buttons', () => {
     expect(t.stations.getStation(moved)?.provider).toBe(start.provider);
     await t.click(t.people.admin, t.ids.make(GUILD, 'prev'));
     expect(t.sessions.plays.at(-1)!.stationId).toBe(start.id);
+  });
+});
+
+describe('favourites and the default station', () => {
+  /** A suggestion request, as Discord sends one while someone types in an option. */
+  const suggest = async (t: ReturnType<typeof setup>, sub: string, option: string, value = '') => {
+    let answer: Array<{ name: string; value: string }> = [];
+    const i = {
+      guildId: GUILD,
+      user: { id: OWNER, bot: false },
+      inCachedGuild: () => true,
+      isRepliable: () => false,
+      isAutocomplete: () => true,
+      isChatInputCommand: () => false,
+      isMessageComponent: () => false,
+      isButton: () => false,
+      commandName: 'radio',
+      options: {
+        getFocused: () => ({ name: option, value }),
+        getSubcommand: () => sub,
+        getSubcommandGroup: () => null,
+        getString: () => null,
+      },
+      respond: async (choices: typeof answer) => {
+        answer = choices;
+      },
+    };
+    await new RadioController(t.ctx).handle(i as unknown as Interaction);
+    return answer;
+  };
+
+  it('suggests the default station first, then the favourites, and labels them', async () => {
+    const t = setup();
+    const [a, b, c] = t.stations.listStations(GUILD).slice(-3);
+    t.guilds.updateSettings(GUILD, { defaultStationId: c!.id });
+    t.guilds.toggleFavourite(GUILD, a!.id);
+    t.guilds.toggleFavourite(GUILD, b!.id);
+    const choices = await suggest(t, 'play', 'station');
+    expect(choices.slice(0, 3).map((x) => x.value)).toEqual([c!.id, a!.id, b!.id]);
+    expect(choices[0]!.name).toMatch(/\(default\)/);
+    expect(choices[1]!.name).toMatch(/\(favourite\)/);
+    expect(choices.filter((x) => x.value === a!.id)).toHaveLength(1);
+  });
+
+  it('lets an admin clear the default station', async () => {
+    const t = setup();
+    const station = t.stations.listStations(GUILD)[0]!;
+    await t.command(t.people.owner, { sub: 'config', strings: { default_station: station.id } });
+    expect(t.guilds.getSettings(GUILD).defaultStationId).toBe(station.id);
+    expect((await suggest(t, 'config', 'default_station'))[0]).toEqual({
+      name: 'No default station (clear it)',
+      value: 'none',
+    });
+    await t.command(t.people.owner, { sub: 'config', strings: { default_station: 'none' } });
+    expect(t.guilds.getSettings(GUILD).defaultStationId).toBeNull();
+  });
+
+  it('says where favourites show up, and the browse list filters to them in one click', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const station = t.stations.listStations(GUILD)[0]!;
+    const fav = await t.click(t.people.admin, t.ids.make(GUILD, 'fav', station.id));
+    expect(fav.text).toMatch(/come first in the `\/radio play` suggestions/);
+    const browse = await t.command(t.people.member, { sub: 'browse' });
+    const toggle = browse.componentIds.find((id) => decode(t.ids, id)?.action === 'bfav')!;
+    const filtered = await t.click(t.people.member, toggle);
+    expect(filtered.violations).toEqual([]);
+    const embed = filtered.calls[0]!.payload.embeds![0]!.toJSON();
+    expect(embed.footer?.text).toMatch(/· 1 station\./);
+    expect(embed.description).toContain(station.displayName);
+  });
+});
+
+describe('choosing another source while a station plays', () => {
+  /** A station with two usable sources (and possibly more that aren't), playing in V1 from the first. */
+  const playing = () => {
+    const t = setup();
+    const st = t.stations.listStations(GUILD).find((x) => t.stations.listSources(x.id).length >= 2)!;
+    const all = t.stations.listSources(st.id);
+    for (const src of all.slice(0, 2)) {
+      t.stations.applyProbePatch(src.id, {
+        lastProbeAt: new Date().toISOString(),
+        verificationState: 'eligible',
+        identityStatus: 'verified',
+        codec: 'mp3',
+      });
+    }
+    const usable = t.ctx.sources.select(GUILD, st.id).ordered.map((x) => x.id);
+    const unusable = all.find((x) => !usable.includes(x.id));
+    Object.assign(t.sessions.ensure(GUILD), {
+      connected: true,
+      channelId: V1,
+      stationId: st.id,
+      playingSourceId: usable[0],
+    });
+    return { t, st, usable, unusable, session: t.sessions.get(GUILD)! };
+  };
+  const pickerId = (i: { componentIds: string[] }, ids: ComponentIds) =>
+    i.componentIds.find((id) => decode(ids, id)?.action === 'usesrc');
+
+  it('lets a listener in the channel switch to another usable source', async () => {
+    const { t, st, usable, session } = playing();
+    t.putInVoice(t.people.member, V1);
+    const view = await t.command(t.people.member, { sub: 'sources', strings: { station: st.id } });
+    const picker = pickerId(view, t.ids);
+    expect(picker).toBeDefined();
+    const pick = await t.click(t.people.member, picker!, 'string', [usable[1]!]);
+    expect(pick.violations).toEqual([]);
+    expect(session.usedSources).toEqual([usable[1]]);
+    expect(pick.text).toMatch(/lasts until the station changes/);
+  });
+
+  it('refuses a source that is not usable, or belongs to another station', async () => {
+    const { t, st, unusable, session } = playing();
+    t.putInVoice(t.people.member, V1);
+    const picker = t.ids.make(GUILD, 'usesrc', st.id);
+    const other = t.stations.listAllSources().find((x) => x.stationId !== st.id)!;
+    for (const id of [unusable?.id ?? 'missing', other.id, 'made-up-source']) {
+      const pick = await t.click(t.people.member, picker, 'string', [id]);
+      expect(pick.text).toMatch(/can’t be used right now/);
+    }
+    expect(session.usedSources).toEqual([]);
+  });
+
+  it('refuses listeners outside the channel, and stations that are not playing', async () => {
+    const { t, st, usable, session } = playing();
+    t.putInVoice(t.people.member, V2);
+    const outside = await t.click(t.people.member, t.ids.make(GUILD, 'usesrc', st.id), 'string', [
+      usable[1]!,
+    ]);
+    expect(outside.text).toMatch(/Join that channel to control it/);
+    // Someone outside the channel isn't offered the picker at all.
+    const view = await t.command(t.people.member, { sub: 'sources', strings: { station: st.id } });
+    expect(pickerId(view, t.ids)).toBeUndefined();
+    t.putInVoice(t.people.member, V1);
+    const otherStation = t.stations.listStations(GUILD).find((x) => x.id !== st.id)!;
+    const stale = await t.click(t.people.member, t.ids.make(GUILD, 'usesrc', otherStation.id), 'string', [
+      usable[1]!,
+    ]);
+    expect(stale.text).toMatch(/isn’t playing any more/);
+    expect(session.usedSources).toEqual([]);
+  });
+
+  it('lets only admins make a source the server preference, and go back to automatic', async () => {
+    const { t, st, usable } = playing();
+    t.putInVoice(t.people.member, V1);
+    // The button names the station; the source it prefers is the one playing when it is pressed.
+    const denied = await t.click(t.people.member, t.ids.make(GUILD, 'srcpref', st.id));
+    expect(denied.text).toMatch(/Only the server owner/);
+    expect(t.guilds.getPreference(GUILD, st.id)).toBeNull();
+    await t.click(t.people.admin, t.ids.make(GUILD, 'srcpref', st.id));
+    expect(t.guilds.getPreference(GUILD, st.id)).toMatchObject({ mode: 'prefer', sourceId: usable[0] });
+    await t.click(t.people.admin, t.ids.make(GUILD, 'srcauto', st.id));
+    expect(t.guilds.getPreference(GUILD, st.id)?.mode ?? 'auto').toBe('auto');
+  });
+
+  it('never undoes a stop: the picker refuses once the station is stopped', async () => {
+    const { t, st, usable, session } = playing();
+    t.putInVoice(t.people.member, V1);
+    session.desiredState = 'stopped';
+    const pick = await t.click(t.people.member, t.ids.make(GUILD, 'usesrc', st.id), 'string', [usable[1]!]);
+    expect(pick.text).toMatch(/isn’t playing any more/);
+    expect(session.usedSources).toEqual([]);
+  });
+
+  it("keeps an admin's pin: listeners can't switch a pinned station, admins still can", async () => {
+    const { t, st, usable, session } = playing();
+    t.guilds.setPreference(GUILD, st.id, 'pin', usable[0]!, OWNER);
+    t.putInVoice(t.people.member, V1);
+    const view = await t.command(t.people.member, { sub: 'sources', strings: { station: st.id } });
+    expect(view.componentIds.some((id) => decode(t.ids, id)?.action === 'usesrc')).toBe(false);
+    const pick = await t.click(t.people.member, t.ids.make(GUILD, 'usesrc', st.id), 'string', [usable[1]!]);
+    expect(pick.text).toMatch(/pinned/);
+    expect(session.usedSources).toEqual([]);
+    t.putInVoice(t.people.admin, V1);
+    await t.click(t.people.admin, t.ids.make(GUILD, 'usesrc', st.id), 'string', [usable[1]!]);
+    expect(session.usedSources).toEqual([usable[1]]);
+  });
+});
+
+describe('settings with long channel and role lists', () => {
+  it('stays within Discord’s field limit however many are chosen', async () => {
+    const t = setup();
+    const ids = (start: number) =>
+      Array.from({ length: 25 }, (_, n) => `7${String(start + n).padStart(17, '0')}`);
+    t.guilds.updateSettings(GUILD, {
+      allowedTextChannelIds: ids(100),
+      allowedVoiceChannelIds: ids(200),
+      djRoleIds: ids(300),
+    });
+    const view = await t.command(t.people.owner, { sub: 'config' });
+    expect(view.violations).toEqual([]);
+    const fields = view.calls[0]!.payload.embeds![0]!.toJSON().fields!;
+    for (const f of fields) expect(f.value.length).toBeLessThanOrEqual(1024);
+    expect(fields[0]!.value).toMatch(/and 19 more/);
+  });
+});
+
+describe('open browse lists', () => {
+  it('keeps at most 500, dropping the oldest first', async () => {
+    const t = setup();
+    const first = await t.command(t.people.member, { sub: 'browse' });
+    const next = first.componentIds.find((id) => decode(t.ids, id)?.action === 'browse')!;
+    for (let n = 0; n < 500; n++) await t.command(t.people.member, { sub: 'browse' });
+    const old = await t.click(t.people.member, next);
+    expect(old.text).toMatch(/This station list has expired/);
+    const latest = await t.command(t.people.member, { sub: 'browse' });
+    const fresh = latest.componentIds.find((id) => decode(t.ids, id)?.action === 'browse')!;
+    expect((await t.click(t.people.member, fresh)).text).not.toMatch(/expired/);
+  });
+});
+
+describe('the Favourites filter in Browse', () => {
+  it('goes back to the category the list was opened with', async () => {
+    const t = setup();
+    const category = t.ctx.packs.categories()[0]!.id;
+    t.guilds.toggleFavourite(GUILD, t.stations.listStations(GUILD)[0]!.id);
+    const browse = await t.command(t.people.member, { sub: 'browse', strings: { category } });
+    const toggle = browse.componentIds.find((id) => decode(t.ids, id)?.action === 'bfav')!;
+    const footer = (i: {
+      calls: Array<{ payload: { embeds?: Array<{ toJSON(): { footer?: { text: string } } }> } }>;
+    }) => i.calls[0]!.payload.embeds![0]!.toJSON().footer?.text ?? '';
+    expect(footer(await t.click(t.people.member, toggle))).toMatch(/category: favourites/);
+    expect(footer(await t.click(t.people.member, toggle))).toContain(`category: ${category}`);
   });
 });

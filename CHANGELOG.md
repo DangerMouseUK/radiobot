@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Favourites are easy to get back to.** The station list from **Browse stations** has a **Favourites** button that shows only this server's favourites (and **All stations** to go back), and now-playing messages have the Browse stations button too, not just the control panel. Pressing **Favourite** now says where favourites show up, and `/radio help` explains favourites and the default station.
+- The default station can be cleared: choose **No default station** in `/radio config default_station`.
+- **Choosing another source.** `/radio sources` (and the Sources button) lists a station's sources best first, marks what is playing now, and shows why each can or can't be used. While the station plays, anyone who can control the radio can switch to another usable source from a menu (unless an admin has pinned the station to one source); it lasts until the station changes, and if that source fails the bot goes back to the best one by itself. Admins get buttons to make the playing source this server's preference, or to go back to automatic choice.
+
+### Changed
+
+- **Scales to big catalogues without holding up the stream.** Measured with synthetic catalogues of up to 10,000 stations and 100 streams:
+  - A source check or a playback result now updates one cached row instead of making the next read re-read the whole catalogue: that took 12–20 ms on one core with the 63 bundled stations, and half a second with 2,000.
+  - Each server's custom stations are kept apart, so lists and suggestions don't scan every server's.
+  - Exact station names resolve without fuzzy-scoring every station, and fuzzy search stops early on names that can't match.
+  - Panels are refreshed one server at a time, sync no longer rewrites unchanged stations, and the identity check reuses normalised names.
+  - The hourly probe-history clean-up uses a new index (database migration 3, applied automatically after a backup at the next start) and no longer re-counts every source's history.
+- **Clearer cards.** The now-playing card (from `/radio play`, `/radio now` and the control panel) leads with the song, puts the channel, the station's stream and what goes to Discord side by side, and gives one line on why this source plays; the full reasoning moved to Sources. `/radio help`, `/radio status`, the queue and `/radio config` are laid out in short sections instead of one block of text, the sources view shows each source in three short lines (the evidence stays in Inspect), and refusals and errors have a headline.
+- When two sources can't be told apart on measured quality (for example 128 kbps MP3 against 128 kbps AAC), the explanation now says the station pack's own order decided.
+- With nothing typed, `/radio play` suggests the default station first, then the favourites, each labelled, then everything else.
+- `/radio config` explains what the default station is for, and says when autostart is on but can't work because the default station or the preferred voice channel is missing.
+
 ## [1.0.4] - 2026-11-01
 
 ### Added
@@ -26,6 +45,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- A summary of repeated problem notices was lost if the clock jumped forward (for example after the host was suspended); it is now sent.
+- Open station lists from `/radio browse` are limited to the newest 500 as well as expiring after 15 minutes; an older list's buttons say it has expired.
 - **`radio-bot update` now removes old images.** Each update used to leave the previous Docker image behind, about 1 GB per release, which slowly filled small disks: the clean-up looked for a label the published images don't carry, and skipped tagged images anyway. Once the new version is healthy, the update now removes the other versions of the bot's image, including ones left by earlier updates. If the new version doesn't start, the old image is kept so you can go back. Published images are also labelled "Radio Bot" again.
 - If a start failed before a source was chosen (for example, an unexpected database error), the bot could try again immediately and indefinitely, which could freeze audio for every server. It now waits and retries, like any other start with no source.
 - Scheduled catalogue syncs no longer keep a timer for every past run, and none is started after shutdown begins.
@@ -162,14 +183,12 @@ A full code review before tagging found and fixed these; each has a regression t
 The following PRD acceptance items (§17, §20) are **open** for this release:
 
 - **Only 3 of the starter pack's 63 stations are confirmed by live probe.** On 31 October 2026 (the probe report is in the pack folder's `evidence/`), the three probed stations all played: direct MP3 at 128 kbps, HLS AAC-LC at 128 kbps, and the flagship's direct AAC-LC at 128 kbps, all 44.1 kHz stereo. One flagship HLS address timed out. The other 60 stations use the same host and pattern but have not been probed.
-- An end-to-end pipeline check (no Discord call) of the flagship station, MP3 and HLS, produced about 486 kbps Opus against a 510 kbps target. It used a single encoder process, the voice library only demuxed, and no process was left behind.
 - Identity "verified" for pack sources rests on official-player provenance. Audio correlation additionally supports two of the three probed stations (scores of 0.58 to 0.90). The third was inconclusive in the latest run, having matched in earlier runs. No listening review has been recorded.
-- The stream-side `/radio stats` figures were checked on the real flagship stream: the redirect to the broadcaster's regional server, 128.1 kbps input, 486 kbps Opus output, and the TCP round trip and jitter were all reported. The **Discord-side** figures (voice endpoint, WebSocket ping, packets per second, encryption) were seen on the live call below.
 - One live Discord test has been run. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played the starter pack's flagship station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. It found the self-cancelling start that is fixed above. Not yet tested live: station switching with identity checks, permission scenarios, and kick, move and delete handling.
 - No 72-hour soak test has been run.
 - The release workflow publishes the Docker image to GHCR, but the Docker, Linux (systemd) and container-platform deployments have not been smoke-tested on real hosts.
 - Resource use is measured for one stream only: about 8% of one CPU core and about 200 MB of memory at 128 kbps (the README now has a Requirements section). Several streams at once, long runs and ARM boards are unmeasured. DAVE negotiation has been seen on one live call only.
-- Encoding above the voice channel's bitrate setting (up to 510 kbps) relies on the project owner's statement that the setting does not cap a bot's stream. In the live test the bot sent 128 kbps into a 96 kbps channel and it sounded right, but the bitrate received by a listener's client has not been measured.
+- Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
 [Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.4...HEAD

@@ -101,7 +101,16 @@ export function browseView(
   const embed = new EmbedBuilder()
     .setTitle('Browse stations')
     .setColor(COLOR.info)
-    .setDescription(truncate(lines.length > 0 ? lines.join('\n') : 'No stations match.', 4000))
+    .setDescription(
+      truncate(
+        lines.length > 0
+          ? lines.join('\n')
+          : state.category === 'favourites'
+            ? 'No favourites yet. Press Favourite under a playing station to add one.'
+            : 'No stations match.',
+        4000,
+      ),
+    )
     .setFooter({
       text: `Page ${p + 1}/${pages}${filter ? ` · ${filter}` : ''} · ${all.length} ${all.length === 1 ? 'station' : 'stations'}. ${DISCLAIMER}`,
     });
@@ -123,6 +132,8 @@ export function browseView(
       );
     components.push(row(select));
   }
+  const favourites = ctx.guilds.listFavourites(guildId).length;
+  const onlyFavourites = state.category === 'favourites';
   components.push(
     row(
       new ButtonBuilder()
@@ -135,6 +146,17 @@ export function browseView(
         .setLabel('Next page')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(p >= pages - 1),
+      new ButtonBuilder()
+        .setCustomId(ctx.ids.make(guildId, 'bfav', token))
+        .setLabel(
+          onlyFavourites
+            ? 'All stations'
+            : favourites
+              ? `Favourites (${favourites})`
+              : 'Favourites (none yet)',
+        )
+        .setStyle(onlyFavourites ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        .setDisabled(!onlyFavourites && favourites === 0),
     ),
   );
   return { embeds: [embed], components };
@@ -284,8 +306,10 @@ export function controlRows(
       b('skip', queued > 0 ? `Skip (${queued} queued)` : 'Skip (queue empty)', ButtonStyle.Primary),
     );
   }
-  const second: ButtonBuilder[] = [b('now', 'Refresh', ButtonStyle.Primary)];
-  if (persistent) second.unshift(b('openbrowse', 'Browse stations', ButtonStyle.Success));
+  const second: ButtonBuilder[] = [
+    b('openbrowse', 'Browse stations', ButtonStyle.Success),
+    b('now', 'Refresh', ButtonStyle.Primary),
+  ];
   if (stationId) {
     const fav = ctx.guilds.isFavourite(guildId, stationId);
     second.push(
@@ -315,25 +339,63 @@ const IDLE_LABEL: Record<GuildSettings['idleMode'], string> = {
 export function configView(ctx: AppContext, guildId: string, s: GuildSettings, page: ConfigPage): View {
   const id = (field: string) => ctx.ids.make(guildId, 'cfg', field, 30 * 60_000);
   const station = s.defaultStationId ? ctx.stations.getStation(s.defaultStationId) : null;
+  // Long lists are shortened, so a field never exceeds Discord's 1024-character limit.
   const fmtIds = (ids: string[], kind: '#' | '@&') =>
-    ids.length ? ids.map((x) => `<${kind}${x}>`).join(', ') : 'any';
+    ids.length === 0
+      ? 'any'
+      : `${ids
+          .slice(0, 6)
+          .map((x) => `<${kind}${x}>`)
+          .join(', ')}${ids.length > 6 ? ` and ${ids.length - 6} more` : ''}`;
   const embed = new EmbedBuilder()
     .setTitle('Radio Bot settings')
     .setColor(COLOR.info)
     .setDescription(
-      [
-        `**Command channels:** ${fmtIds(s.allowedTextChannelIds, '#')}`,
-        `**Voice channels:** ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
-        '**Admins:** the server owner and members with the Administrator permission',
-        `**DJ roles:** ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
-        `**Who else can control the radio:** ${s.memberControlMode === 'same_channel' ? 'listeners in the bot’s voice channel' : s.memberControlMode === 'any' ? 'anyone' : 'nobody (DJs and admins only)'}`,
-        `**Default station:** ${station?.displayName ?? 'none'} · **Preferred voice channel:** ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>` : 'none'}${s.voiceLock ? ' (locked)' : ''}`,
-        `**When the channel is empty:** ${IDLE_LABEL[s.idleMode]} · **Quality:** ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
-        `**Autostart when the bot starts:** ${s.autostart ? 'on' : 'off'} · **Resume after restart:** ${s.resumeOnRestart ? 'on' : 'off'}`,
-        `**Notifications:** ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'} · **Voice channel status:** ${s.voiceChannelStatus ? 'on' : 'off'}`,
-        '',
-        'Leave a channel or role menu empty for no restriction. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config`.',
-      ].join('\n'),
+      'Change a setting with the menus and buttons below; the pages switch between Access, Playback and Notifications. Set the default station and the manual bitrate with the `default_station` and `manual_bitrate` options of `/radio config` (choose "No default station" to clear the default).',
+    )
+    .addFields(
+      {
+        name: 'Access',
+        value: truncate(
+          [
+            `Commands work in: ${fmtIds(s.allowedTextChannelIds, '#')}`,
+            `Voice channels: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
+            `DJ roles: ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
+            `Listeners can control: ${s.memberControlMode === 'same_channel' ? 'from the bot’s voice channel' : s.memberControlMode === 'any' ? 'from anywhere' : 'no (DJs and admins only)'}`,
+            '-# Admins are the server owner and members with the Administrator permission.',
+          ].join('\n'),
+          1024,
+        ),
+      },
+      {
+        name: 'Playback',
+        value: truncate(
+          [
+            `Default station: ${station?.displayName ?? 'none'}`,
+            `Preferred voice channel: ${s.preferredVoiceChannelId ? `<#${s.preferredVoiceChannelId}>${s.voiceLock ? ' (locked)' : ''}` : 'none'}`,
+            `When the channel is empty: ${IDLE_LABEL[s.idleMode]}`,
+            `Quality: ${s.qualityMode}${s.qualityMode === 'manual' ? (s.manualBitrateKbps !== null ? ` (${s.manualBitrateKbps} kbps)` : ' (no bitrate set yet, so it follows the station)') : ''}`,
+            `Autostart: ${s.autostart ? 'on' : 'off'} · Resume after restart: ${s.resumeOnRestart ? 'on' : 'off'}`,
+            ...(s.autostart && (!station || !s.preferredVoiceChannelId)
+              ? [
+                  `⚠️ Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
+                ]
+              : []),
+            '-# The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
+          ].join('\n'),
+          1024,
+        ),
+      },
+      {
+        name: 'Notifications',
+        value: truncate(
+          [
+            `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
+            `Voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`,
+          ].join('\n'),
+          1024,
+        ),
+      },
     )
     .setFooter({ text: `Page: ${PAGE_LABEL[page]}` });
   const nav = row(

@@ -136,7 +136,7 @@ Replies that only concern you are ephemeral (only you see them).
 | `/radio play <station> [channel]` | Control | Plays a station in your voice channel (or `channel`), or switches to it. An ambiguous name shows a picker; the bot never guesses. |
 | `/radio browse [pack] [category] [search]` | Read | Paged station picker, grouped by pack, with this server's custom stations last. Picking a station plays it (needs Control). |
 | `/radio list [scope] [pack] [page]` | Read | Station list with status and IDs: pack stations (`scope:packs`, optionally one `pack`), this server's `custom` stations, or `favourites`. |
-| `/radio now` | Read | What's playing: station, state, source format and verification, Discord output, stream metadata and what's up next, with control buttons. |
+| `/radio now` | Read | What's playing, at a glance: the song or show title from the stream, then the channel, the station's stream and what goes to Discord side by side, and one line on why this source plays (and the fallback), with control buttons and what's up next. The full figures are under Sources, Inspect and `/radio quality`. |
 | `/radio stop` | Control | Stops the audio. The bot stays in the channel for 5 minutes (or indefinitely in 24/7 mode) and cancels auto-resume. |
 | `/radio join [channel]` | Control | Joins a voice channel, and starts the default station if one is set. |
 | `/radio leave` | Control | Disconnects. The bot won't rejoin until someone plays something. |
@@ -158,7 +158,7 @@ Radio never ends, so the queue moves only when you skip.
 | Command | Level | What it does |
 |---|---|---|
 | `/radio quality` | Read | Input and output report: source codec, bitrate evidence, sample rate and channels; Opus target, the channel's bitrate setting (shown as "not a cap"), observed output, encryption and resampling. |
-| `/radio sources <station>` | Read | Candidate sources, the selected one and the fallback, with the reason each is or isn't eligible. Admins also get a re-probe button. |
+| `/radio sources <station>` | Read | The station's sources, best first, with what plays now, the fallback, and why each one can or can't be used. While it plays, anyone with Control can switch to another usable source until the station changes. Admins also get re-probe, *Prefer the playing source on this server* and *Back to automatic choice* buttons. |
 | `/radio inspect <station>` | Read | Everything in `sources`, plus the redacted endpoint, every bitrate figure, probe and failure times, health, start-up time and provenance. Admins also get a re-probe button. |
 | `/radio status` | Read | Connection state, the desired station and the last problem. |
 | `/radio stats` | Admin | A private live panel with **Refresh** and **Close** buttons, described below. |
@@ -189,7 +189,12 @@ Radio never ends, so the queue moves only when you skip.
 | `/radio source auto <station>` | Admin | Returns the station to evidence-based selection. |
 | `/radio source verify <station> <source> <verdict>` | Admin (+ Operator for pack sources) | Records an identity review (`verified`, `mismatch` or `clear`). Admins can review their own server's custom stations. A review of a pack source affects every server, so the admin must also be an operator: listed in `OPERATOR_USER_IDS`, or the application owner (or a member of its team). |
 
-**Buttons** on now-playing messages and the control panel: Previous station, Next station, Stop, Leave, Refresh, Favourite, Sources and Inspect. **Skip (n queued)** appears when the queue isn't empty, and is always on the panel. The panel also has Browse stations.
+**Buttons** on now-playing messages and the control panel: Previous station, Next station, Stop, Leave, Browse stations, Refresh, Favourite, Sources and Inspect. **Skip (n queued)** appears when the queue isn't empty, and is always on the panel. The station list from Browse has a **Favourites** button that shows only this server's favourites, and back.
+
+**Favourites and the default station** do different jobs:
+
+- **Favourites** are this server's shortlist. Anyone who can control the radio adds or removes one with the **Favourite** button under a playing station. They come first in the `/radio play` suggestions, have their own list (the Favourites button in Browse, or `/radio list scope:favourites`), and when there are two or more, Next and Previous step through them while one is playing.
+- **The default station** is the one station the bot starts by itself, set by an admin with `/radio config default_station` (choose **No default station** to clear it). `/radio join` plays it, and autostart plays it in the preferred voice channel when the bot starts. It also comes first in the `/radio play` suggestions.
 
 > `/radio` uses all 25 top-level options that Discord allows, which is why `queue` and `source` are subcommand groups.
 
@@ -288,9 +293,8 @@ Version **1.0.4** is the current release; 1.0.0 was the first public release. Li
 - **Only one live Discord test so far.** On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played a bundled station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Not yet tested on a live call: the owner, DJ and member permission scenarios, station switching, and kick, move and channel-delete handling.
 - **No 72-hour soak test** has been run, so long-run memory growth and FFmpeg process clean-up over days are unmeasured.
 - **Bundled stations are only partly probed.** On 31 October 2026, live probes confirmed 3 of the 63 bundled stations: direct MP3 and AAC-LC, and HLS AAC-LC, all at 128 kbps, 44.1 kHz stereo. The other 60 use the same host and URL pattern but haven't been probed. One HLS address timed out, and one station's direct stream refuses access and is disabled. The probe evidence is kept in the pack's `evidence/` folder.
-- **End-to-end pipeline, without Discord:** a bundled station ran through the safe client, one libopus encode and `@discordjs/voice` at about 486 kbps Opus against the 510 kbps target, with one encoder process and nothing left running afterwards. The stream-side stats were checked live: the redirect to a regional server, 128 kbps in, and the TCP round trip and jitter were all reported.
 - **"Identity verified" mostly rests on provenance** (the official player maps the stream to the station) plus a successful probe. Audio comparison has confirmed two stations; the others haven't been compared or checked by listening. `/radio rescan compare:true` and `/radio source verify` exist to strengthen this.
-- **Encoding above the channel's bitrate setting:** in the live test the bot sent 128 kbps into a channel set to 96 kbps and it sounded right, but the bitrate a listener's client actually receives hasn't been measured.
+- **Encoding above the channel's bitrate setting:** the bitrate a listener's client actually receives, when the bot sends more than the channel's setting, hasn't been measured.
 - **Resource use is measured for one stream only** (see [Requirements](#requirements)): about 8% of one CPU core and about 200 MB of memory at 128 kbps. Several streams at once, long runs, and a Raspberry Pi haven't been measured yet.
 - **The licence review of the FFmpeg build in the Docker image hasn't been done.** The image, published to GHCR by the release workflow, uses Debian's FFmpeg packages. The installer downloads it for release versions, and builds the image on your machine if the download fails.
 - **The installer and `radio-bot` command** are tested end to end in CI against a stand-in for Docker. `radio-bot update` has also taken a real Docker install from 1.0.1 to 1.0.3 (backup first, healthy straight away, settings kept); that run found the old-image clean-up bug fixed in 1.0.4. A fresh install hasn't yet been run against real Docker on a Linux server, a Raspberry Pi, macOS or Windows.

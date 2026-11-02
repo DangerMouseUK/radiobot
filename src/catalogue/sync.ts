@@ -172,7 +172,11 @@ export class CatalogueSync {
         report.renamed.push({ from: match.displayName, to: e.name });
       }
       if (match.catalogueStatus === 'missing_from_official') report.returned.push(e.name);
-      if (match.catalogueStatus !== 'retired') this.#repo.setCatalogueStatus(match.id, 'active', today);
+      if (
+        match.catalogueStatus !== 'retired' &&
+        (match.catalogueStatus !== 'active' || match.officialLastSeenAt?.slice(0, 10) !== today)
+      )
+        this.#repo.setCatalogueStatus(match.id, 'active', today);
       if (match.displayName === e.name) report.unchanged++;
     }
     const missingNow = existing.filter((s) => !seen.has(s.id) && s.catalogueStatus === 'active');

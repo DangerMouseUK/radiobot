@@ -21,23 +21,40 @@ export function slugify(input: string): string {
     .slice(0, MAX_SLUG_LENGTH - 4);
 }
 
-export function levenshtein(a: string, b: string): number {
+/** Two rows of the edit-distance table, reused between calls (search compares many names per keystroke). */
+let rowA = new Int32Array(64);
+let rowB = new Int32Array(64);
+
+/**
+ * Edit distance. With `max`, it stops as soon as the distance must exceed `max` and returns
+ * `max + 1`: search only needs to know whether a name is close enough.
+ */
+export function levenshtein(a: string, b: string, max = Number.POSITIVE_INFINITY): number {
   if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > max) return max + 1;
   if (!a.length) return b.length;
   if (!b.length) return a.length;
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = Math.min(
-        (prev[j] ?? 0) + 1,
-        (cur[j - 1] ?? 0) + 1,
-        (prev[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-    }
-    prev = cur;
+  if (rowA.length <= b.length) {
+    rowA = new Int32Array(b.length + 1);
+    rowB = new Int32Array(b.length + 1);
   }
-  return prev[b.length] ?? 0;
+  let prev = rowA;
+  let cur = rowB;
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    cur[0] = i;
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const v = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    const t = prev;
+    prev = cur;
+    cur = t;
+  }
+  return Math.min(prev[b.length]!, max + 1);
 }
 
 /** 0..1 similarity based on edit distance of normalised strings. */

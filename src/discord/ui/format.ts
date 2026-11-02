@@ -134,6 +134,34 @@ export function stationLine(st: Station, a: StationAvailability, current = false
   return `${current ? '▶ ' : ''}**${st.displayName}** — ${availabilityBadge(a)}${st.provider === 'custom' ? ' · custom' : ''}`;
 }
 
+/** "Direct MP3 · ≈128 kbps": what the station sends, at a glance (the full figures are in Sources). */
+function streamSummary(s: StationSource): string {
+  const br = effectiveBitrate(s);
+  const how = s.transport === 'hls' ? 'HLS' : s.transport === 'http-continuous' ? 'Direct' : '';
+  return [
+    `${how} ${codecLabel(s.codec, s.profile)}`.trim(),
+    br.kbps !== null ? `≈${Math.round(br.kbps)} kbps` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** Why this source plays, in one plain sentence (the full reasoning is under Sources). */
+const CHOICE_TEXT: Record<SelectionResult['conclusion'], string> = {
+  'higher-quality-verified': 'The best measured quality of this station’s sources.',
+  'no-higher-quality-source-verified': 'Its sources carry the same audio; this one streams most simply.',
+  'not-conclusively-determined':
+    'No measured quality difference (different codecs aren’t compared), so the station pack’s order decided.',
+  'higher-quality-source-ranked-lower':
+    'A source that measures higher ranks lower, because of how it is delivered, its reliability or an admin’s choice.',
+  'single-source': 'The only usable source right now.',
+  'no-eligible-source': 'No usable source right now.',
+};
+
+/**
+ * What's playing, laid out to scan: the song first, then three short facts side by side, then
+ * one line on why this source plays. Every detail behind these is a button away (Sources, Inspect).
+ */
 export function nowEmbed(
   st: Station | null,
   status: SessionStatus | null,
@@ -147,30 +175,53 @@ export function nowEmbed(
       .setColor(COLOR.neutral);
   }
   const playing = status.state === 'PLAYING';
-  e.setTitle(`${playing ? 'Now playing' : STATE_LABEL[status.state]}: ${st.displayName}`).setColor(
+  e.setTitle(playing ? `▶ ${st.displayName}` : `${STATE_LABEL[status.state]}: ${st.displayName}`).setColor(
     playing ? COLOR.ok : status.state === 'ERROR' ? COLOR.error : COLOR.warn,
   );
   const lines: string[] = [];
-  lines.push(`**Station:** ${st.displayName}${voiceChannelId ? ` in <#${voiceChannelId}>` : ''}`);
-  lines.push(
-    `**State:** ${STATE_LABEL[status.state]}${status.state !== 'PLAYING' && status.lastError ? ` — ${status.lastError.message}` : ''}`,
-  );
-  if (status.source) {
-    lines.push(`**Source:** ${transportLabel(status.source.transport)} · ${sourceFormat(status.source)}`);
-    lines.push(
-      `**Verification:** ${identityLine(status.source)} · last checked ${ts(status.source.lastProbeAt)}`,
-    );
-  }
-  lines.push(`**Discord output:** ${outputLine(status.plan)}`);
-  if (status.selection?.degraded) lines.push('**Degraded: playing from a fallback source.**');
   if (status.nowPlaying) {
-    lines.push(
-      `**On air:** ${streamText(truncate(status.nowPlaying.title, 200))} _(stream metadata, received ${ts(status.nowPlaying.receivedAt)})_`,
-    );
+    lines.push(`🎵 **${streamText(truncate(status.nowPlaying.title, 200))}**`);
+    lines.push(`-# From the station’s stream, updated ${ts(status.nowPlaying.receivedAt)}`);
   } else {
-    lines.push('**On air:** no song or show title from the stream right now.');
+    lines.push('-# The station isn’t sending a song or show title right now.');
   }
+  if (!playing && status.lastError) lines.push(`⚠️ ${status.lastError.message}`);
+  if (status.selection?.degraded) lines.push('⚠️ Playing from a fallback: the usual source isn’t working.');
   e.setDescription(lines.join('\n'));
+  const s = status.source;
+  e.addFields(
+    { name: 'Channel', value: voiceChannelId ? `<#${voiceChannelId}>` : '—', inline: true },
+    { name: 'Station stream', value: s ? streamSummary(s) : '—', inline: true },
+    {
+      name: 'To Discord',
+      value: status.plan ? `Opus · ${status.plan.targetKbps} kbps` : '—',
+      inline: true,
+    },
+  );
+  if (s) {
+    const verified =
+      s.identityStatus === 'verified' ? '✅ Verified as this station' : '❔ Not yet verified as this station';
+    const choice =
+      status.manualSourceId === s.id
+        ? 'Chosen by a listener for this play.'
+        : status.selection
+          ? CHOICE_TEXT[status.selection.conclusion]
+          : null;
+    const fallback = status.selection?.fallback;
+    e.addFields({
+      name: 'Source',
+      value: truncate(
+        [
+          `${verified} · checked ${ts(s.lastProbeAt)}`,
+          choice,
+          fallback ? `Fallback: ${streamSummary(fallback)}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        1024,
+      ),
+    });
+  }
   return e;
 }
 
@@ -253,6 +304,7 @@ export function sourcesEmbed(
   sources: StationSource[],
   selection: SelectionResult,
   detailed: boolean,
+  live: { playingId: string | null; manualId: string | null } = { playingId: null, manualId: null },
 ): EmbedBuilder {
   const e = new EmbedBuilder()
     .setTitle(`${detailed ? 'Inspection' : 'Sources'}: ${st.displayName}`)
@@ -273,20 +325,39 @@ export function sourcesEmbed(
   // Discord rejects an embed whose title, description, fields and footer exceed 6000 characters
   // in total, so detailed views of stations with many sources stop adding fields before that.
   let budget = 5900 - (e.data.title?.length ?? 0) - (e.data.footer?.text.length ?? 0) - description.length;
-  const shown = sources.slice(0, 10);
-  let omitted = sources.length - shown.length;
+  // Usable sources first, in the order the bot ranks them; then the rest, which can't be used.
+  const rank = new Map(selection.ordered.map((s, i) => [s.id, i + 1]));
+  const ranked = [
+    ...selection.ordered.map((o) => sources.find((s) => s.id === o.id) ?? o),
+    ...sources.filter((s) => !rank.has(s.id)),
+  ];
+  const shown = ranked.slice(0, 10);
+  let omitted = ranked.length - shown.length;
   for (const [index, s] of shown.entries()) {
     const elig = checkEligibility(s, now);
-    const role =
+    const marks = [
+      live.playingId === s.id ? '▶ playing now' : null,
+      live.manualId === s.id ? 'chosen by a listener for this play' : null,
       selection.selected?.id === s.id
-        ? ' — **selected**'
+        ? '**best choice**'
         : selection.fallback?.id === s.id
-          ? ' — fallback'
-          : '';
+          ? 'fallback'
+          : null,
+    ].filter(Boolean);
+    const role = marks.length ? ` — ${marks.join(' · ')}` : '';
+    const place = rank.has(s.id) ? `#${rank.get(s.id)} ` : '';
     const lines = [
       `${transportLabel(s.transport === 'unknown' ? s.transportHint : s.transport)} · ${sourceFormat(s)}`,
-      identityLine(s),
-      `Check result: ${VERIFICATION_LABEL[s.verificationState]}${elig.eligible ? ' · can be used' : ` · can’t be used: ${truncate(elig.reasons.join('; '), 200)}`}`,
+      detailed
+        ? identityLine(s)
+        : s.identityStatus === 'verified'
+          ? '✅ Verified as this station'
+          : s.identityStatus === 'mismatch'
+            ? '❌ Plays a different station'
+            : '❔ Not yet verified as this station',
+      elig.eligible
+        ? `✅ Can be used · ${VERIFICATION_LABEL[s.verificationState]}`
+        : `❌ Can’t be used: ${truncate(elig.reasons.join('; '), 200)}`,
     ];
     const nextCheck = nextAutomaticCheck(s);
     if (isPaused(s)) lines.push(pausedLine(s));
@@ -300,7 +371,7 @@ export function sourcesEmbed(
         `Where it came from: ${PROVENANCE_LABEL[s.provenance]}${s.rightsStatus !== 'unreviewed' ? ` · rights: ${s.rightsStatus}` : ''}`,
       );
     }
-    const name = truncate(`${s.label ?? 'Source'} \`${s.id}\`${role}`, 256);
+    const name = truncate(`${place}${s.label ?? 'Source'} \`${s.id}\`${role}`, 256);
     const value = truncate(lines.join('\n'), 1024);
     if (name.length + value.length > budget - 80) {
       omitted += shown.length - index;
@@ -319,8 +390,11 @@ export function sourcesEmbed(
   return e;
 }
 
-export function errorEmbed(message: string): EmbedBuilder {
-  return new EmbedBuilder().setColor(COLOR.error).setDescription(truncate(message, 2000));
+export function errorEmbed(message: string, title = 'Couldn’t do that'): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(COLOR.error)
+    .setTitle(`⚠️ ${title}`)
+    .setDescription(truncate(message, 2000));
 }
 
 export function infoEmbed(title: string, message: string, color: number = COLOR.info): EmbedBuilder {

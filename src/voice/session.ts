@@ -190,6 +190,8 @@ export interface SessionStatus {
   hls: SourceInput['info']['hls'];
   encoderPid: number | null;
   ffmpegWarnings: string[];
+  /** A source a listener chose for this station, which overrides the automatic choice. */
+  manualSourceId: string | null;
 }
 
 const NON_RETRYABLE: ReadonlySet<ReasonCode> = new Set([
@@ -226,6 +228,11 @@ export class GuildSession {
   #gen = 0;
   /** Counts commands (play, join, stop, leave, destroy); internal retries don't change it. */
   #commands = 0;
+  /**
+   * A source a listener chose for the station that is playing. It holds through reconnects and
+   * restarts of the same station, and is dropped when the station changes or the source fails.
+   */
+  #manualSourceId: string | null = null;
   #runId = 0;
   #runAbort: AbortController | null = null;
   #link: VoiceLink | null = null;
@@ -314,6 +321,7 @@ export class GuildSession {
     this.#clearTimer('empty');
     this.#stationId = stationId;
     this.#channelId = channelId;
+    this.#manualSourceId = null;
     this.#excluded.clear();
     this.#attempts = 0;
     this.#voiceReconnectAttempts = 0;
@@ -325,6 +333,37 @@ export class GuildSession {
       lastErrorCode: null,
     });
     return this.#start(this.#gen, {});
+  }
+
+  /**
+   * Plays the current station from another of its usable sources, chosen by a listener. It lasts
+   * until the station changes; if the source fails, the bot goes back to choosing automatically.
+   * The caller checks that the source belongs to the playing station and is usable.
+   */
+  async useSource(stationId: string, sourceId: string): Promise<StartResult> {
+    // Checked here as well as by the caller: a stop, or another station, may have come in
+    // between. A stop is authoritative; a source choice never restarts playback.
+    if (this.#stationId !== stationId || this.#desired() !== 'playing') {
+      return {
+        ok: false,
+        code: 'CANCELLED',
+        message: 'That station isn’t playing any more, so its source can’t be changed.',
+        selection: null,
+        plan: null,
+      };
+    }
+    this.#commands++;
+    this.#gen++;
+    this.#clearTimer('retry');
+    this.#manualSourceId = sourceId;
+    this.#excluded.clear();
+    this.#attempts = 0;
+    return this.#start(this.#gen, { forceSourceId: sourceId, reason: 'manual' });
+  }
+
+  /** The source a listener chose for this station, if any. */
+  get manualSourceId(): string | null {
+    return this.#manualSourceId;
   }
 
   /** Joins without playing (used by /radio join without a default station). */
@@ -602,9 +641,13 @@ export class GuildSession {
         signal: abort.signal,
       });
       if (gen !== this.#gen) return this.#superseded();
-      if (opts.forceSourceId && selection.selected?.id !== opts.forceSourceId) {
-        const forced = selection.ordered.find((s) => s.id === opts.forceSourceId);
+      const force = opts.forceSourceId ?? this.#manualSourceId;
+      if (force && selection.selected?.id !== force) {
+        const forced = selection.ordered.find((s) => s.id === force);
         if (forced) selection = { ...selection, selected: forced };
+        // A listener's choice that can't be used now (cooling down, failing) is dropped, so a
+        // later restart doesn't jump back to it.
+        else if (force === this.#manualSourceId) this.#manualSourceId = null;
       }
       this.#selection = selection;
       const source = selection.selected;
@@ -846,6 +889,8 @@ export class GuildSession {
       return;
     }
     if (source) this.#excluded.add(source.id);
+    // A listener's chosen source has failed: the bot chooses automatically again.
+    if (source?.id === this.#manualSourceId) this.#manualSourceId = null;
     this.#attempts = 0;
     this.#failovers++;
     this.#d.metrics.inc('playback.failover');
@@ -1126,6 +1171,7 @@ export class GuildSession {
       hls: p?.input.info.hls ?? null,
       encoderPid: p?.stats.pid ?? null,
       ffmpegWarnings: p?.stderrTail ?? [],
+      manualSourceId: this.#manualSourceId,
     };
   }
 }

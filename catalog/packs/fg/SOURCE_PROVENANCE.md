@@ -123,8 +123,6 @@ During calibration, different stations scored 0.08–0.14.
 
 Radio Bot now identifies to stream hosts as FFmpeg's network library, the `Lavf/<version>` of the installed FFmpeg. That is accurate, because FFmpeg is the software that decodes the audio. `STREAM_USER_AGENT` can override it. The bot does **not** imitate a web browser, sends no `Referer`, and never uses the signed play URLs.
 
-**End-to-end check (not a Discord call).** FG DJ RADIO's MP3 and HLS sources were run through the safe HTTP client, one FFmpeg libopus encode and `@discordjs/voice`, whose only stream edges were the Ogg/Opus demuxer. The output was about 486 kbps of Opus against the 510 kbps target. It used one encoder process, and none was left afterwards.
-
 **What this means:**
 
 - 3 of 63 stations are confirmed usable and verified playable.

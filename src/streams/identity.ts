@@ -43,7 +43,7 @@ export function metadataSignal(
     .filter((n) => n && !brandLabels.has(n));
   // Exact name of another station first: a short alias of this station (e.g. "XY") must never
   // turn another station's name ("XY DANCE") into support, whatever brand labels a pack declares.
-  const other = otherStations.find((s) => s.id !== station.id && normalizeName(s.displayName) === meta);
+  const other = otherStations.find((s) => s.id !== station.id && normalisedName(s) === meta);
   if (other && !own.includes(meta)) {
     return {
       verdict: 'contradicts',
@@ -57,6 +57,18 @@ export function metadataSignal(
     verdict: 'inconclusive',
     detail: `Stream name "${icyName}" does not identify a catalogue station.`,
   };
+}
+
+/** Station rows are shared and read-only, so each one's normalised name is worked out once. */
+const normalisedNames = new WeakMap<Station, string>();
+
+function normalisedName(s: Station): string {
+  let n = normalisedNames.get(s);
+  if (n === undefined) {
+    n = normalizeName(s.displayName);
+    normalisedNames.set(s, n);
+  }
+  return n;
 }
 
 function containsWords(haystack: string, needle: string): boolean {

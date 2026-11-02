@@ -110,7 +110,7 @@ Identity facts about pack sources are shared by every server on the installation
 `selectSource()` in `src/streams/ranking.ts` follows PRD §7.4:
 
 1. **Gate.** Only eligible sources are considered, and a source that just failed in this session is also excluded.
-2. **Transport tier, first.** Direct streams (tier 0) come before sources of unknown transport (tier 1), which come before HLS (tier 2). **HLS is a last resort.** It is used only when no direct stream of the station is eligible, even if the HLS rendition measures higher. The project owner's reasoning is that segmented delivery makes live playback start more slowly, sit further behind live and recover less smoothly. The explanation then says either "Only HLS is available right now; no direct stream of this station is eligible." or "HLS sources are kept as a last-resort fallback (segmented delivery)."
+2. **Transport tier, first.** Direct streams (tier 0) come before sources of unknown transport (tier 1), which come before HLS (tier 2). **HLS is a last resort.** It is used only when no direct stream of the station is eligible, even if the HLS rendition measures higher. Segmented delivery makes live playback start more slowly, sit further behind live and recover less smoothly. The explanation then says either "Only HLS is available right now; no direct stream of this station is eligible." or "HLS sources are kept as a last-resort fallback (segmented delivery)."
 3. **Fidelity, from evidence only, within a tier.** `compareFidelity(a, b)`:
    - Stereo beats mono.
    - A clear difference in audio bandwidth counts: one source below 32 kHz and the other at 44.1 kHz or above.
@@ -118,7 +118,9 @@ Identity facts about pack sources are shared by every server on the installation
    - Within the same codec family (AAC-LC, HE-AAC, MP3 and so on are each separate families), bitrates within 15 % of each other are "equal". A larger gap counts only if both figures are measured or codec metadata; if either is only advertised, the result is inconclusive.
 4. **Stability.** A health-score difference of 20 points or more decides.
 5. **Latency.** A difference in measured start-up time of more than 1.5 s decides.
-6. **Catalogue priority**, then source ID.
+6. **Catalogue priority**, then source ID. This is what decides between, say, a 128 kbps MP3 and a 128 kbps AAC stream of similar health: different codecs aren't ranked, so the order the pack lists them in settles it, and the explanation says so.
+
+While a station plays, anyone who can control the radio can play it from another usable source with the picker under `/radio sources` (or the Sources button). When an admin has pinned the station to one source, only admins can switch it. That choice lasts until the station changes, and a stop is never undone by it; if the chosen source fails, the bot goes back to choosing automatically. Only usable sources are offered, and each choice is checked again when it is made.
 
 An admin can still `pin` or `prefer` an HLS source for their server. That choice overrides the tier order, but not the eligibility gate.
 

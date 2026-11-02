@@ -53,16 +53,33 @@ function similarityAtLeast(a: string, b: string, min: number): number | null {
   if (max === 0) return 1;
   // The distance is at least the difference in length, so most names are ruled out without it.
   if (1 - Math.abs(a.length - b.length) / max < min) return null;
-  const sim = 1 - levenshtein(a, b) / max;
+  const sim = 1 - levenshtein(a, b, Math.floor((1 - min) * max + 1e-9)) / max;
   return sim >= min ? sim : null;
 }
 
-function score(station: Station, q: string, raw: string): SearchHit | null {
-  if (!q) return { station, score: 1, exact: false };
+/** An exact identity match (ID, slug, name or alias), or null. */
+function exactScore(station: Station, q: string, raw: string): SearchHit | null {
   const p = prepare(station);
   if (raw === p.id || raw === station.slug || q === p.slug) return { station, score: 1000, exact: true };
   if (q === p.name) return { station, score: 950, exact: true };
   if (p.aliases.includes(q)) return { station, score: 900, exact: true };
+  return null;
+}
+
+/** Ties: pack stations before custom ones, then catalogue order, then name. */
+function rankTie(a: SearchHit, b: SearchHit): number {
+  return (
+    Number(a.station.provider === 'custom') - Number(b.station.provider === 'custom') ||
+    a.station.sortOrder - b.station.sortOrder ||
+    a.station.displayName.localeCompare(b.station.displayName)
+  );
+}
+
+function score(station: Station, q: string, raw: string): SearchHit | null {
+  if (!q) return { station, score: 1, exact: false };
+  const exact = exactScore(station, q, raw);
+  if (exact) return exact;
+  const p = prepare(station);
   const qWords = q.split(' ');
   let score = 0;
   if (p.name.startsWith(q)) score = Math.max(score, 700 - (p.name.length - q.length));
@@ -90,13 +107,7 @@ export function searchStations(stations: Station[], query: string, limit = 25): 
   return stations
     .map((s) => score(s, q, raw))
     .filter((h): h is SearchHit => h !== null)
-    .sort(
-      (a, b) =>
-        b.score - a.score ||
-        Number(a.station.provider === 'custom') - Number(b.station.provider === 'custom') ||
-        a.station.sortOrder - b.station.sortOrder ||
-        a.station.displayName.localeCompare(b.station.displayName),
-    )
+    .sort((a, b) => b.score - a.score || rankTie(a, b))
     .slice(0, limit);
 }
 
@@ -111,6 +122,21 @@ export type Resolution =
  * matches, or a single clearly dominant hit, are accepted.
  */
 export function resolveStation(stations: Station[], query: string): Resolution {
+  // A name typed or picked exactly is the common case: settle it without fuzzy-scoring every
+  // station. Exact hits (900+) always outrank fuzzy ones (700 at most), so the outcome is the same.
+  const q = normalizeName(query);
+  const raw = query.trim().toLowerCase();
+  if (q) {
+    const exact = stations
+      .map((s) => exactScore(s, q, raw))
+      .filter((h): h is SearchHit => h !== null)
+      .sort((a, b) => b.score - a.score || rankTie(a, b));
+    if (exact.length >= 1) {
+      const top = exact[0]!;
+      if (exact.length === 1 || exact[1]!.score < top.score) return { kind: 'match', station: top.station };
+      return { kind: 'ambiguous', candidates: exact.slice(0, 10).map((h) => h.station) };
+    }
+  }
   const hits = searchStations(stations, query, 10);
   if (hits.length === 0) return { kind: 'none' };
   const exact = hits.filter((h) => h.exact);
