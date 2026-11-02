@@ -1,0 +1,31 @@
+# Weekly update proposals. Each one is an ordinary pull request: CI must pass and a maintainer
+# merges it. Updates are grouped so a week brings a handful of pull requests, not dozens.
+version: 2
+updates:
+  - package-ecosystem: npm # reads pnpm-lock.yaml
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  # The Node base image in the Dockerfile (both FROM lines). Node 24 only: a new major version of
+  # Node is a deliberate change (engines, CI and the docs name the version too).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]

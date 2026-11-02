@@ -38,6 +38,29 @@ jobs:
           FFMPEG_PATH: /usr/bin/ffmpeg
           FFPROBE_PATH: /usr/bin/ffprobe
       - run: pnpm build
+      - name: Smoke test the build
+        run: pnpm smoke
+        env:
+          FFMPEG_PATH: /usr/bin/ffmpeg
+          FFPROBE_PATH: /usr/bin/ffprobe
+
+  node-minimum:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: pnpm test
+        env:
+          FFMPEG_PATH: /usr/bin/ffmpeg
+          FFPROBE_PATH: /usr/bin/ffprobe
 
   lifecycle:
     runs-on: ubuntu-24.04
@@ -47,6 +70,17 @@ jobs:
         run: shellcheck -x install.sh scripts/radio-bot.sh tests/lifecycle/run.sh tests/lifecycle/fake-docker
       - name: Install, update, back up and uninstall against a fake Docker
         run: bash tests/lifecycle/run.sh
+
+  lifecycle-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: The system bash is 3.2
+        run: /bin/bash --version | head -n 1 | grep -F 'version 3.2'
+      - name: Parse the scripts with bash 3.2
+        run: for f in install.sh scripts/radio-bot.sh tests/lifecycle/run.sh tests/lifecycle/fake-docker; do /bin/bash -n "$f"; done
+      - name: Install, update, back up and uninstall against a fake Docker, with bash 3.2
+        run: /bin/bash tests/lifecycle/run.sh
 
   docker:
     runs-on: ubuntu-24.04
@@ -73,9 +107,32 @@ jobs:
           cat out.txt
           test "$code" = "78"
           grep -q "DISCORD_TOKEN" out.txt
+      - name: Smoke test the image's build with its own Node and FFmpeg, offline
+        run: docker run --rm --network none --entrypoint node radio-bot:ci dist/scripts/smoke.js
+      # Pinned by commit: this action's version tags were once rewritten by an attacker.
+      - name: Scan the image for fixable high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: radio-bot:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Build the test stage (same base as the image)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          push: false
+          load: true
+          tags: radio-bot:test
+          cache-from: |
+            type=gha
+            type=gha,scope=test
+      - name: Integration tests on the image's Node and FFmpeg, offline
+        run: docker run --rm --network none radio-bot:test
 
   image:
-    needs: [test, lifecycle, docker]
+    needs: [test, node-minimum, lifecycle, lifecycle-macos, docker]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

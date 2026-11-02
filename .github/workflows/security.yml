@@ -34,6 +34,30 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Known vulnerabilities in the image (Debian packages, Node and npm packages) that have a fix
+  # available. Weekly too, since new advisories appear while the code stays the same.
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: radio-bot:scan
+          cache-from: type=gha
+      # Pinned by commit: this action's version tags were once rewritten by an attacker.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: radio-bot:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
   codeql:
     runs-on: ubuntu-24.04
     steps:

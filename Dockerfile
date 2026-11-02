@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 # Radio Bot — reproducible multi-stage build. Pin the base image; bump deliberately.
-ARG NODE_IMAGE=node:24.22.1-trixie-slim
-
-FROM ${NODE_IMAGE} AS build
+# The base image is written out in both FROM lines (not an ARG) so Dependabot can propose bumps;
+# keep the two the same.
+FROM node:24.22.1-trixie-slim AS build
 WORKDIR /app
 ENV CI=true
 RUN corepack enable
@@ -18,11 +18,34 @@ COPY scripts ./scripts
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
   pnpm run build && pnpm prune --prod --ignore-scripts
 
-FROM ${NODE_IMAGE} AS runtime
+FROM node:24.22.1-trixie-slim AS base
 # Debian's FFmpeg includes libopus (required) and is LGPL/GPL-licensed; see docs/rights-and-disclaimer.md.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*
+
+# CI only (`docker build --target test`): the integration tests on the image's own Node and FFmpeg.
+# Never published; the runtime image below is built without it.
+FROM base AS test
+RUN corepack enable && mkdir -p /app && chown node:node /app
+WORKDIR /app
+USER node
+ENV CI=true \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    FFPROBE_PATH=/usr/bin/ffprobe
+COPY --chown=node:node package.json pnpm-lock.yaml ./
+RUN --mount=type=cache,id=pnpm-test,target=/home/node/.local/share/pnpm/store,uid=1000,gid=1000 \
+  pnpm install --frozen-lockfile --ignore-scripts
+COPY --chown=node:node tsconfig.json vitest.config.ts ./
+COPY --chown=node:node src ./src
+COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node migrations ./migrations
+COPY --chown=node:node catalog ./catalog
+COPY --chown=node:node tests ./tests
+# Vitest directly, not through pnpm, so the tests can run without a network (`--network none`).
+CMD ["./node_modules/.bin/vitest", "run", "tests/integration"]
+
+FROM base AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     DATABASE_PATH=/app/data/radio-bot.sqlite \
@@ -33,7 +56,10 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY migrations ./migrations
 COPY catalog ./catalog
-RUN mkdir -p /app/data && chown node:node /app/data
+# The bot runs only `node`. npm comes with the base image, unused, and carries its own dependencies
+# (with their own security advisories), so it is removed.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+  && mkdir -p /app/data && chown node:node /app/data
 USER node
 VOLUME ["/app/data"]
 LABEL org.opencontainers.image.title="Radio Bot" \

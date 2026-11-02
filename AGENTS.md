@@ -23,13 +23,26 @@ pnpm format                        # biome format --write .
 pnpm test                          # vitest run: unit + integration
 pnpm test:unit | pnpm test:integration
 pnpm test:coverage                 # vitest run --coverage: how much of src/ and scripts/ the tests run, by file
-pnpm test:lifecycle                # Linux only: install.sh + radio-bot.sh against a fake docker
+pnpm test:lifecycle                # Linux or macOS: install.sh + radio-bot.sh against a fake docker
 pnpm vitest run tests/unit/session.test.ts      # a single file
 pnpm build                         # tsc -p tsconfig.build.json → dist/
+pnpm smoke                         # after a build: migrations, both workers, an encode, the healthcheck, from dist/
 node scripts/validate-catalogue.ts # validate every station pack, straight from source
+docker build --target test -t radio-bot:test . && docker run --rm --network none radio-bot:test
+                                   # integration tests on the image's own Node and FFmpeg
 ```
 
-**Definition of done** for any change: `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` succeeds. If you touch `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` must pass too. CI (`.github/workflows/ci.yml`) runs all of these, then builds the Docker image and smoke-tests it (FFmpeg has `libopus`; a missing token exits with code 78).
+**Definition of done** for any change: `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` and then `pnpm smoke` succeed. If you touch `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` must pass too. If you touch the `Dockerfile`, the test stage above must pass.
+
+CI (`.github/workflows/ci.yml`) runs all of these, and also:
+
+- the typecheck and tests on the oldest Node that `engines` allows (24.17.0);
+- `tests/integration/main-thread-budget.test.ts`, part of `pnpm test`: a stream plays through the real pipeline while `/radio stats`, browse, ranking and a 2000-station sync run, and the event-loop delay must stay under 50 ms;
+- the lifecycle test on macOS with its bash 3.2 (`/bin/bash -n` on every script first);
+- an offline check of the relative links and anchors in README.md, CONTRIBUTING.md, AGENTS.md, SECURITY.md, `docs/` and `catalog/README.md` (lychee);
+- the Docker image build, then in the image: FFmpeg has `libopus`, a missing token exits with code 78, `dist/scripts/smoke.js` passes with no network, and the integration tests pass in the `test` stage (same base, no network).
+
+`security.yml` adds `pnpm audit`, gitleaks, CodeQL and a Trivy scan of the image that fails on high or critical vulnerabilities with a fix available, on every push and pull request and weekly; releases repeat the scan. Dependabot (`.github/dependabot.yml`) proposes npm, GitHub Actions and Node base-image updates weekly (Node 24 only). Pin third-party actions that run with secrets or scan images by commit SHA, as the Trivy action is.
 
 The tests need FFmpeg and FFprobe. They use `ffmpeg-static` / `ffprobe-static` from the dev dependencies, or a system FFmpeg via `FFMPEG_PATH` / `FFPROBE_PATH`. **On Linux, use the system FFmpeg** (`FFMPEG_PATH=/usr/bin/ffmpeg FFPROBE_PATH=/usr/bin/ffprobe pnpm test`): `ffmpeg-static`'s Linux build crashes while decoding the HLS fixtures, which is why CI installs the distro FFmpeg, as the Docker image does. The tests never touch the real network, real radio stations or Discord.
 
@@ -76,7 +89,7 @@ src/
   import-export/        /radio export and import
   shared/               errors (reason codes), backoff, rate limits, redaction, text, async helpers, paths,
                         workers (one-off worker threads)
-scripts/                validate-catalogue, register-commands, healthcheck, backup (CLI entry points);
+scripts/                validate-catalogue, register-commands, healthcheck, backup, smoke (CLI entry points);
                         radio-bot.sh, the bash manager behind the `radio-bot` command (install, update,
                         backup, restore, uninstall …) for Docker Compose installs
 install.sh              one-line bootstrap: clones into ~/radio-bot, then runs `radio-bot.sh install`
@@ -86,7 +99,8 @@ tests/unit/             fast, pure tests;  tests/integration/  local fixture rad
 tests/helpers.ts        memoryDb(), makeSource(), silentLogger()
 tests/lifecycle/        run.sh + fake-docker: end-to-end test of the installer and manager
 vitest.config.ts        test settings, including the coverage report for `pnpm test:coverage`
-.github/workflows/      ci.yml, release.yml, security.yml (dependency audit, gitleaks, CodeQL)
+.github/workflows/      ci.yml, release.yml, security.yml (dependency audit, gitleaks, CodeQL, image scan);
+                        .github/dependabot.yml
 docs/                   install.md (beginner guide, start here), install-docker/-linux/-container-platforms,
                         architecture, audio-quality, station-verification, permissions, rights-and-disclaimer,
                         PRD, troubleshooting
@@ -167,6 +181,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 - Use `memoryDb()` from `tests/helpers.ts` for an in-memory, migrated database, and `makeSource()` for source fixtures. Match the existing style: import from `'../../src/…ts'`, with `describe`/`it` and plain `expect`.
 - New behaviour needs a test. A bug fix needs a test that failed before the fix. Avoid timing-sensitive assertions; inject clocks (for example `RateMeter`'s `now`) instead of sleeping.
 - CI runs `pnpm test:coverage`, which fails if coverage falls below the thresholds in `vitest.config.ts`. Add tests rather than lowering them.
+- `tests/integration/main-thread-budget.test.ts` guards rule 1 of "The stream comes first". If it fails, find the slow step (the test prints the longest run of each) and make it cheaper; don't raise the bound. A new heavy path that a listener or a timer can trigger belongs in that test.
 
 ## Documentation must match the code
 
