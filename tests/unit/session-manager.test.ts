@@ -29,7 +29,13 @@ function setup(catalogueStatus: CatalogueStatus = 'active') {
     desiredVoiceChannelId: 'voice-1',
   });
   const guild = { id: 'g1', channels: { cache: new Map(), fetch: async () => null } };
-  const client = { guilds: { cache: new Map([['g1', guild]]), fetch: async () => guild }, on() {} };
+  const handlers = new Map<string, (...args: unknown[]) => void>();
+  const client = {
+    guilds: { cache: new Map([['g1', guild]]), fetch: async () => guild },
+    on(event: string, fn: (...args: unknown[]) => void) {
+      handlers.set(event, fn);
+    },
+  };
   const manager = new SessionManager({
     client: client as never,
     stations,
@@ -48,8 +54,50 @@ function setup(catalogueStatus: CatalogueStatus = 'active') {
     logger: silentLogger(),
     metrics: new Metrics(),
   });
-  return { manager, guilds };
+  return { manager, guilds, stations, handlers };
 }
+
+describe('SessionManager on removal from a server', () => {
+  function withCustomStation() {
+    const t = setup();
+    t.stations.insertCustomStation({
+      id: 'custom:my-station',
+      guildId: 'g1',
+      slug: 'my-station',
+      displayName: 'My station',
+      description: null,
+      category: null,
+      websiteUrl: null,
+      language: null,
+      createdById: '123456789012345678',
+    });
+    t.guilds.toggleFavourite('g1', 'custom:my-station');
+    t.manager.attach();
+    const removed = () => t.handlers.get('guildDelete')!({ id: 'g1', available: true });
+    return { ...t, removed };
+  }
+
+  it('deletes the server’s settings and custom stations', () => {
+    const t = withCustomStation();
+    t.removed();
+    expect(t.guilds.listGuildIdsWithSettings()).toEqual([]);
+    expect(t.guilds.getIntent('g1')).toBeNull();
+    expect(t.stations.countCustomStations('g1')).toBe(0);
+  });
+
+  it('deletes nothing when a later step fails', () => {
+    const t = withCustomStation();
+    t.stations.deleteGuildCustomStations = () => {
+      throw new Error('disk full');
+    };
+    expect(t.removed).toThrow('disk full');
+    // The settings purge ran first, and was rolled back with the rest.
+    expect(t.guilds.listGuildIdsWithSettings()).toEqual(['g1']);
+    expect(t.guilds.getIntent('g1')?.desiredStationId).toBe('fg:x');
+    expect(t.guilds.listFavourites('g1')).toEqual(['custom:my-station']);
+    expect(t.stations.countCustomStations('g1')).toBe(1);
+  });
+});
 
 describe('SessionManager.restoreOnBoot', () => {
   it('tries to resume a station that may still be played', async () => {

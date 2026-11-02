@@ -186,7 +186,7 @@ docker compose exec radio-bot node dist/scripts/healthcheck.js
 
 ### Optional diagnostics endpoint
 
-If you set `DIAGNOSTICS_PORT=9464` (any free port), the bot serves `GET /healthz` and `GET /diagnostics` (JSON: streams, FFmpeg process counts, counters, recent incidents and sessions). It binds to **`127.0.0.1` inside the container**, so publishing the port does not expose it. Query it from inside the container:
+If you set `DIAGNOSTICS_PORT=9464` (any free port), the bot serves `GET /healthz` and `GET /diagnostics` (JSON: streams, FFmpeg process counts, counters, recent incidents and sessions). It binds to **`127.0.0.1` inside the container**, so publishing the port does not expose it. If the port is already in use, the bot logs a warning and carries on without the endpoint. Query it from inside the container:
 
 ```sh
 docker compose exec radio-bot node -e "fetch('http://127.0.0.1:9464/diagnostics').then(r=>r.text()).then(console.log)"
@@ -255,7 +255,7 @@ docker compose up -d
 
 `docker volume ls` lists the volumes if yours is named differently. The `chown` makes the file owned by the image's `node` user (UID 1000).
 
-**Settings only:** `/radio export` in Discord downloads a server's settings as JSON, with no secrets. `/radio import` restores them after showing a preview.
+**Settings only:** `/radio export` in Discord downloads a server's settings as JSON, with no secrets. `/radio import` restores them after showing a preview. Custom stations' URLs may hold secrets, so custom-station favourites and a custom default station aren't exported; an import keeps the ones the server already has.
 
 ## Registering commands manually
 

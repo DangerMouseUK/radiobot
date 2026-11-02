@@ -336,7 +336,7 @@ export function createApp(
     for (const t of timers) t.unref?.();
     scheduleSync();
     if (config.diagnosticsPort) {
-      diagnostics = startDiagnosticsServer(config.diagnosticsPort, () => ({
+      diagnostics = startDiagnosticsServer(config.diagnosticsPort, logger, () => ({
         startedAt: ctx.startedAt.toISOString(),
         discordReady: client.isReady(),
         activeStreams: sessions.activeStreams(),

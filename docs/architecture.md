@@ -62,7 +62,7 @@ There are no other services. State lives in one SQLite file. All network traffic
 - Subscribes to interactions, client errors, shard disconnects (recorded as incidents) and `GuildCreate` (registers commands for newly joined servers).
 - On `ClientReady`, fetches the application (needed for the owner check), registers guild commands, writes the first heartbeat, runs `restoreOnBoot()`, sets the bot's status and re-renders each server's control panel, one at a time (`guildsWithPanel()`). On every `ShardReady` it sends the status again, because a new gateway session starts without it.
 - Starts timers: a heartbeat every 30 s; a bot-status check every 20 s (`PresenceUpdater`, which sends only changes); hourly rate-limit sweeping and probe-history pruning by age (the per-source limit is applied as each check is written); a panel refresh every 5 min; and the catalogue sync. Each enabled pack that declares an official list gets its own schedule. It first runs about 10 min after start (if it has never run) or when it is due, then every `CATALOG_SYNC_INTERVAL_HOURS`, with up to 15 min of jitter (`scheduleCatalogueSyncs()` in `sync-schedule.ts`: one pending timer per pack, none after shutdown begins).
-- Starts the optional diagnostics HTTP server on `127.0.0.1:DIAGNOSTICS_PORT`.
+- Starts the optional diagnostics HTTP server on `127.0.0.1:DIAGNOSTICS_PORT`. If the port is in use, it logs a warning and the bot runs without it.
 - Logs in.
 
 `stop()` clears timers, closes the diagnostics server, destroys every session, closes the notifier, destroys the client, kills any remaining child processes and closes the database.
@@ -114,7 +114,7 @@ There are no other services. State lives in one SQLite file. All network traffic
   - listener-count changes;
   - channel bitrate changes;
   - channel deletion;
-  - guild removal. When Discord reports a real removal (`guild.available` is true), the session is destroyed and the server's data is purged with `GuildRepository.purgeGuild()` and `StationRepository.deleteGuildCustomStations()`. A server that is only unavailable because of an outage keeps its data.
+  - guild removal. When Discord reports a real removal (`guild.available` is true), the session is destroyed and the server's data is purged with `GuildRepository.purgeGuild()` and `StationRepository.deleteGuildCustomStations()`, in one transaction. A server that is only unavailable because of an outage keeps its data.
 
   It also implements the boot policy (`restoreOnBoot()` / `bootDecision()`) and shutdown.
 
@@ -157,11 +157,11 @@ There are no other services. State lives in one SQLite file. All network traffic
 
 ### `persistence/`
 
-`Db` wraps `node:sqlite` (`DatabaseSync`). It provides nested transactions (savepoints) and versioned SQL migrations from `migrations/`. Checksums are verified: an edited applied migration aborts start-up, and so does a database that is newer than the build. `backup()` uses `VACUUM INTO` to write a consistent copy into `data/backups/` and rotates each kind separately: the newest 5 pre-migration backups (`pre-vN`) and the newest 10 manual ones (`backup.js`). The rotation class is the label without its trailing digits. The tables are listed in [rights-and-disclaimer.md](rights-and-disclaimer.md#privacy-policy-for-a-self-hosted-instance).
+`Db` wraps `node:sqlite` (`DatabaseSync`). It provides nested transactions (savepoints) and versioned SQL migrations from `migrations/`. Checksums are verified: an edited applied migration aborts start-up, and so does a database that is newer than the build. `backup()` uses `VACUUM INTO` to write a consistent copy into `data/backups/` and rotates each kind separately: the newest 5 pre-migration backups (`pre-vN`) and the newest 10 manual ones (`backup.js`, which lowers its own process priority so that it yields to the live encoder). The rotation class is the label without its trailing digits. The tables are listed in [rights-and-disclaimer.md](rights-and-disclaimer.md#privacy-policy-for-a-self-hosted-instance).
 
 ### `import-export/`
 
-`config-io.ts` defines the export schema `radio-bot/guild-config` version 1: settings, pack-station favourites, prefer/pin source preferences and custom stations. Custom URLs that have a query string or credentials are redacted and flagged. `parseImport()` validates with Zod. `previewImport()` reports what would change and warns about channels and roles that don't exist in the target server. Nothing changes until an admin clicks **Apply import**. Redacted custom stations are skipped, and the rest go through the normal add path, including the probe.
+`config-io.ts` defines the export schema `radio-bot/guild-config` version 1: settings, pack-station favourites, prefer/pin source preferences and custom stations. Custom URLs that have a query string or credentials are redacted and flagged. `parseImport()` validates with Zod. `previewImport()` reports what would change and warns about channels and roles that don't exist in the target server. Nothing changes until an admin clicks **Apply import**. Exports leave out custom-station favourites and a custom default station, so `applyImport()` keeps the target server's own: its custom-station favourites follow the file's favourites in their existing order, and its custom default station stays when the file has no default. Redacted custom stations are skipped, and the rest go through the normal add path, including the probe.
 
 ### `observability/`
 
