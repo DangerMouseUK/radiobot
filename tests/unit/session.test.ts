@@ -98,7 +98,7 @@ class FakePipeline extends EventEmitter {
       }
     }, 5);
   }
-  fail(code: 'STREAM_EOF' | 'FFMPEG_EXIT' | 'NOT_FOUND' | 'FFMPEG_SPAWN' = 'STREAM_EOF'): void {
+  fail(code: 'STREAM_EOF' | 'FFMPEG_EXIT' | 'NOT_FOUND' | 'FFMPEG_SPAWN' | 'INTERNAL' = 'STREAM_EOF'): void {
     this.emit('failed', new RadioError(code, 'boom'));
   }
   stop(): void {
@@ -840,5 +840,18 @@ describe('GuildSession', () => {
     expect(t.failures.size).toBe(0);
     expect(t.notices.some((n) => n.kind === 'failover')).toBe(false);
     expect(t.notices.at(-1)?.code).toBe('FFMPEG_SPAWN');
+  });
+
+  it('does not hold an internal error against the source, but fails over once its retries run out', async () => {
+    const t = setup({ timings: { backoff: [5], stableMs: 60_000, noSourceRetryMs: 60_000 } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    t.pipelines[0]!.fail('INTERNAL');
+    await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
+    expect(t.session.status().source?.id).toBe('primary');
+    // An unexpected error may be specific to this source's data, so a working fallback plays.
+    t.pipelines[1]!.fail('INTERNAL');
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
+    expect(t.failures.size).toBe(0);
+    expect(t.notices.some((n) => n.kind === 'failover')).toBe(true);
   });
 });

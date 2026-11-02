@@ -485,6 +485,10 @@ export function setup(opts: SetupOptions = {}) {
     maxConcurrentProbes: 1,
     logger: silentLogger(),
     metrics,
+    // The bundled packs hold real station addresses: a probe must never reach them from a test.
+    probeImpl: async () => {
+      throw new Error('no probing in controller tests');
+    },
   });
   const probes: string[] = [];
   /** What a re-probe reports, and the progress it announces on the way. */

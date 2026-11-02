@@ -98,6 +98,10 @@ chmod 000 "$RADIO_BOT_DIR/logs"
 out=$(finish)
 chmod 700 "$RADIO_BOT_DIR/logs"
 check "finishes the update even when the log can't be saved" has "$out" "Updated v1.0.0"
+out=$(FAKE_UP_FAIL=1 finish)
+check "an update an older script started is remembered if it stops halfway" test -s "$RADIO_BOT_DIR/.update-pending"
+out=$(finish)
+check "and forgotten once it finishes" test ! -e "$RADIO_BOT_DIR/.update-pending"
 echo "local edit" >>"$RADIO_BOT_DIR/README.md"
 out=$(radio-bot update 2>&1 | strip)
 check "refuses to update over edited files" has "$out" "were edited"

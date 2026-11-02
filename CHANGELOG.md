@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - A station started within a second or two of the bot leaving the channel played without stall detection, so if the stream stopped sending audio, it was never restarted.
 - An HLS station could repeat a few seconds of audio when its playlist servers were briefly out of step.
 - For HLS streams in fMP4 format, one failed download of the stream's start-up section stopped the stream. That section is now retried once, like the audio segments.
-- When FFmpeg failed to start, or the bot hit an internal error, the failure counted against the station's source. That could put a working source on hold and switch to a fallback for no reason. Such failures are now retried on the same source and never count against it.
+- When FFmpeg failed to start, or the bot hit an internal error, the failure counted against the station's source. That could put a working source on hold and switch to a fallback for no reason. Such failures are now retried on the same source and never count against it. If FFmpeg can't start, the bot doesn't switch sources, because every source would fail the same way; after an unexpected internal error it still moves to a fallback once the retries run out.
 - A voice connection that had just been handed over could still try to rejoin the channel on its own.
 - Pressing **Favourite** twice, or on an older message, could undo it. **Favourite** now only adds and **Unfavourite** only removes, and each one says so when nothing needed to change.
 - A new `/radio import` now replaces the server's earlier import preview, whose buttons then say it has expired. Imports are limited to five per server in ten minutes.
@@ -38,11 +38,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- In `maximum` mode the Opus target now follows the bitrate the bot measured for a source before the one its codec metadata reports, and is rounded up rather than to the nearest whole number. For AAC, the metadata is only an estimate: streams that measure 128 kbps reported 114 to 176 kbps, so they were encoded below or above what the station sends. They are now encoded at 129 kbps. MP3 streams are unchanged.
+- In `maximum` mode the Opus target now follows the bitrate the bot measured for a source before the one its codec metadata reports, and is rounded up rather than to the nearest whole number. For AAC, the metadata is only an estimate: streams that measure 128.1 kbps reported anything from 114 to 176 kbps, so they were encoded below or above what the station sends. They are now encoded at 129 kbps, just above the source, never below it. MP3 streams are unchanged.
 - Database migration 4 adds indexes, so deleting a station or source no longer reads every server's favourites, queue and source preferences. It is applied automatically at the next start, after a backup.
 - Adding, editing or removing a custom station re-reads only that server's custom stations, not the whole catalogue.
-- Manual backups (`backup.js`, and the backups `radio-bot` takes) run at the lowest process priority, so they give way to the stream's encoder.
-- Docker's health check, the backups that `radio-bot` takes and its own health checks now run at the lowest CPU priority, so they can't hold up the stream on a one-core host.
+- Manual backups (`backup.js`), the backups that `radio-bot` takes, Docker's health check and `radio-bot`'s own health checks now run at the lowest CPU priority, so they can't hold up the stream on a one-core host.
 - Docker builds reuse downloaded packages and earlier build steps, so they are faster. The image is the same.
 - The release workflow now runs every CI check, including the installer test and the image smoke test, before it publishes an image.
 - The tests can now report coverage: `pnpm test:coverage` shows how much of the bot's code they run, file by file.

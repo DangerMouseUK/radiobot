@@ -180,7 +180,10 @@ pending_from() { # the version an unfinished update started from, as far as it i
     image=$(running_image)
     from=${image##*:}
   fi
-  case "$from" in '' | *[!A-Za-z0-9._/-]*) from=old ;; esac
+  case "$from" in
+    '' | *[!A-Za-z0-9._/-]*) from=old ;;
+    [0-9]*) from="v$from" ;; # images are tagged 1.2.3, releases v1.2.3
+  esac
   printf '%s\n' "$from"
 }
 
@@ -433,6 +436,8 @@ cmd_update() {
 
 # Updates started by an older copy of this script arrive here without the warning, so it is shown now.
 cmd_finish_update() {
+  # An older copy of this script doesn't write the marker, so it is written here as well.
+  [ -z "${1:-}" ] || printf '%s\n' "$1" >"$PENDING"
   ensure_docker
   [ "${2:-}" = warned ] || [ "$(container_state)" != running ] || warn_if_playing no-ask || true
   get_image
@@ -521,13 +526,17 @@ is_sqlite_file() {
   [ "$(od -An -tx1 -N16 "$1" 2>/dev/null | tr -d '[:space:]')" = 53514c69746520666f726d6174203300 ]
 }
 
-restore_failed() { # restore_failed REASON: starts the bot again, then stops with the reason
+restore_failed() { # restore_failed REASON [interrupted]: starts the bot again, then stops with the reason
   trap - INT TERM
   warn "$1"
+  local what="The backup wasn't restored."
+  # Ctrl+C can arrive after the copy has finished, so whether it was restored isn't known.
+  [ -z "${2:-}" ] || what="The backup may or may not have been restored; to be sure, run the same restore again."
   if compose up -d >/dev/null 2>&1; then
-    die "The backup wasn't restored. Radio Bot has been started again with the data it had."
+    if [ -n "${2:-}" ]; then die "$what Radio Bot has been started again."; fi
+    die "$what Radio Bot has been started again with the data it had."
   fi
-  die "The backup wasn't restored, and Radio Bot couldn't be started again. Try: radio-bot start"
+  die "$what Radio Bot couldn't be started again. Try: radio-bot start"
 }
 
 cmd_restore() {
@@ -552,7 +561,7 @@ cmd_restore() {
   fi
   step "Restoring"
   # From here until the bot is started again, a failure or Ctrl+C still brings it back up.
-  trap 'restore_failed "Restoring was interrupted."' INT TERM
+  trap 'restore_failed "Restoring was interrupted." interrupted' INT TERM
   compose stop "$SERVICE" >/dev/null || restore_failed "Couldn't stop Radio Bot."
   # Copied next to the database first, then swapped in, so a failed copy leaves the current data alone.
   # shellcheck disable=SC2016 # $d is expanded by the container's shell

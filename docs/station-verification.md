@@ -191,7 +191,7 @@ When you pin or prefer a source that can't be used right now, the reply warns yo
 The starter pack is a folder in `catalog/packs/`, like any other pack:
 
 - **`pack.json`** holds:
-  - the pack ID, its name and an unofficial disclaimer;
+  - the pack ID, its name and, optionally, an unofficial disclaimer;
   - six categories and the pack's brand labels;
   - `sync` with the `webradio-apidata` adapter, pointing at the broadcaster's official station list page;
   - the snapshot date, 2026-10-31.

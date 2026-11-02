@@ -240,7 +240,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - Detects stream end, FFmpeg exit, missing audio progress, failed HLS segments and playlists, voice disconnection and a feed that starts identifying as another station.
 - Reconnects the same source with jittered backoff (about 1, 3 and 8 s), then fails over to the next eligible source, then reports an error and retries every 2 minutes while playback is still wanted.
 - A source with 4 consecutive failures (the first plus every retry) cools down (10 minutes, doubling to 2 hours).
-- A failure in the bot's own domain (FFmpeg failing to start, an internal error) says nothing about the source: it is retried on the same source, never counts against it and never causes a failover. If those retries run out, the bot reports an error and tries again after 2 minutes.
+- A failure in the bot's own domain (FFmpeg failing to start, an internal error) says nothing about the source: it is retried on the same source and never counts against it. If FFmpeg can't start and those retries run out, the bot reports an error and tries again after 2 minutes, with no failover, since any source would fail the same way. An unexpected internal error may be specific to that source's data, so once its retries run out the bot fails over to a verified fallback.
 - Desired state (playing, stopped, left, kicked, paused) is stored separately from runtime state. An explicit stop or leave is never overridden.
 - Every FFmpeg process and network input is closed on switch, stop, leave, server removal and shutdown.
 - Notices to a configured channel are coalesced (one per kind per 5 minutes, with a count).

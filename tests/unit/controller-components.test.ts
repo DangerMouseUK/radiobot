@@ -227,6 +227,18 @@ describe('now-playing buttons', () => {
     expect(t.guilds.listFavourites(GUILD)).toEqual([]);
   });
 
+  it('Favourite and Unfavourite redraw the control panel only when something changed', async () => {
+    const { t, st } = customServer();
+    const panel = t.textChannel('800000000000000010');
+    t.guilds.updateSettings(GUILD, { panelChannelId: panel.id, panelMessageId: PANEL_MESSAGE });
+    await t.click(t.people.admin, t.ids.make(GUILD, 'fav', st.id), 'button', [], PANEL_MESSAGE);
+    expect(panel.edits.map((e) => e.id)).toEqual([PANEL_MESSAGE]);
+    await t.click(t.people.admin, t.ids.make(GUILD, 'fav', st.id), 'button', [], PANEL_MESSAGE);
+    expect(panel.edits).toHaveLength(1);
+    await t.click(t.people.admin, t.ids.make(GUILD, 'unfav', st.id), 'button', [], PANEL_MESSAGE);
+    expect(panel.edits).toHaveLength(2);
+  });
+
   it('Sources and Inspect show the station’s sources privately', async () => {
     const { t, st } = customServer();
     const sources = await t.click(t.people.member, t.ids.make(GUILD, 'srcs', st.id));

@@ -1788,6 +1788,8 @@ export class RadioController {
             embeds: [infoEmbed('Favourites', text, COLOR.ok)],
             flags: EPHEMERAL,
           });
+          // The control panel shows Favourite or Unfavourite for the playing station: redraw it.
+          if (was !== want) await this.refreshPanel(i.guildId);
           return;
         }
         case 'srcs':

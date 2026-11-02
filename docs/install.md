@@ -35,6 +35,7 @@ Radio Bot is **self-hosted**. That means it runs on a computer you look after, u
 - **Docker:** a free tool that runs Radio Bot in its own sealed box, with everything it needs already inside. The installer uses it, so you don't have to install anything else for Radio Bot.
 - **Bot token:** a long secret code that lets the bot log in to Discord as your bot. Treat it like a password.
 - **Application ID:** a long number that identifies your bot to Discord. It isn't secret.
+- **kbps:** kilobits per second, how much sound data a station sends each second. More usually means better sound, and more data used.
 - **sudo:** a word in front of a command that runs it with administrator rights. When a command uses it, the terminal may ask for your computer password. Nothing appears on screen while you type the password; that is normal. Type it and press **Enter**.
 
 ## 1. Create your Discord bot

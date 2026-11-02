@@ -88,7 +88,7 @@ Voice packets go out every 20 ms from Node's main thread. That's the same thread
 
 ### Catalogue changes
 
-Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The code must stay pack-agnostic: never special-case a pack ID in `src/`. A new pack must be **labelled as unofficial** (with a `disclaimer` and no logos or artwork) unless the broadcaster has agreed otherwise. For these files:
+Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The code must stay pack-agnostic: never special-case a pack ID in `src/`. A pack carries no logos or artwork, and must not present itself as official unless the broadcaster has agreed. Radio Bot always shows its own "not affiliated with or endorsed by any broadcaster" notice with station lists, so a pack's own `disclaimer` is optional. For these files:
 
 - **Every source mapping needs provenance and evidence:**
   - **Provenance:** how the URL is tied to the station, and when. For example: "Official web player entry `<officialId>` redirected to this mount on YYYY-MM-DD". Put this in `provenanceDetail`, and add a row or section to `SOURCE_PROVENANCE.md`.

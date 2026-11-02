@@ -64,13 +64,16 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 
 | Reason shown | Meaning | What to do |
 |---|---|---|
-| not yet probed | No probe has run yet. A probe normally runs automatically when you play. | Admins: run `/radio rescan <station>`. |
-| last probe failed (CODE) | The last probe failed. See the probe codes below. `/radio sources` shows how many checks failed in a row and when the next automatic one is. | Wait: failing sources are re-checked with a growing wait (about 10 min, 1 h, 6 h, 12 h, then once a day), and playback is retried every 2 min while it is wanted. Or rescan, which checks at once. A source that has had no successful check for a week is **paused** ("Paused: no successful check for over a week…") and is only tested again when an admin rescans. |
-| station identity not verified | The probe worked, but nothing confirms that this feed carries this station. | An admin can compare it with `/radio rescan <station> compare:true`. The operator (or, for a custom station, a server admin) can review it with `/radio source verify`. See [station-verification.md](station-verification.md#identity-rules). |
-| identity mismatch | The stream names itself as a different catalogue station, or an operator marked it as a mismatch. | Deliberate: the bot never plays a mismatched feed for this station. |
+| not checked yet | No check has run yet. A probe normally runs automatically when you play. | Admins: run `/radio rescan <station>`. |
+| last check failed (CODE) | The last check failed. See the probe codes below. `/radio sources` shows how many checks failed in a row and when the next automatic one is. | Wait: failing sources are re-checked with a growing wait (about 10 min, 1 h, 6 h, 12 h, then once a day), and playback is retried every 2 min while it is wanted. Or rescan, which checks at once. A source that has had no successful check for a week is **paused** ("Paused: no successful check for over a week…") and is only tested again when an admin rescans. |
+| not verified as this station | The check worked, but nothing confirms that this feed carries this station. | An admin can compare it with `/radio rescan <station> compare:true`. The operator (or, for a custom station, a server admin) can review it with `/radio source verify`. See [station-verification.md](station-verification.md#identity-rules). |
+| plays a different station (identity mismatch) | The stream names itself as a different catalogue station, or an operator marked it as a mismatch. | Deliberate: the bot never plays a mismatched feed for this station. |
 | cooling down after repeated failures until … | The circuit breaker tripped after 4 consecutive playback failures. | Wait for the cooldown (10 min, doubling up to 2 h), or fix the upstream. |
 | disabled: … | Disabled in the manifest, or by the operator via `DISABLED_SOURCE_IDS` / `DISABLED_STATION_IDS`. | Intentional. See [rights-and-disclaimer.md](rights-and-disclaimer.md#takedown-procedure). |
 | rejected by URL safety policy | The source resolves to a blocked address or uses a disallowed URL. | See `ADDRESS_BLOCKED` below. |
+| codec not verified | The check didn't confirm what kind of audio the stream carries. | Admins: run `/radio rescan <station>`. |
+| blocked by rights/takedown policy | The operator has blocked this source after a rights request. | Intentional. See [rights-and-disclaimer.md](rights-and-disclaimer.md#takedown-procedure). |
+| skipped because it just failed | It failed a moment ago, so the bot is trying the others first. | Nothing: it can be tried again on the next attempt. |
 
 "…is catalogued, but no stream source is known for it yet" means the station has no enabled source at all. This happens, for example, with a station newly added by `/radio sync`. Nothing else is played in its place. Someone has to add a reviewed source mapping to the pack's `sources.json` (see [catalog/README.md](../catalog/README.md) and [CONTRIBUTING.md](../CONTRIBUTING.md#catalogue-changes)).
 
@@ -178,7 +181,8 @@ This is by design unless the server opted in. With *Resume after restart* on, th
 | `The last update to … didn't finish` (from `update` or `status`) | An earlier update switched versions but stopped before the bot ran the new one, for example because the download failed. `radio-bot update` finishes it. |
 | `Radio Bot isn't running, so no new backup can be made.` (from `backup`) | Expected when the bot can't start. The backups it made earlier are still copied to the `backups` folder. If it then says `Couldn't copy the backups out of the bot's data`, the bot hasn't made any backups yet. `There is no Radio Bot container to copy backups from` means the bot has never been started on this install: run `radio-bot start`. |
 | `… isn't a Radio Bot backup (a .sqlite file), so nothing was changed.` (from `restore`) | The file isn't a SQLite database. Choose a `.sqlite` file from the `backups` folder. |
-| `The backup wasn't restored. Radio Bot has been started again with the data it had.` | Copying the backup in failed or was interrupted, and nothing was changed. The lines above say why. |
+| `The backup wasn't restored. Radio Bot has been started again with the data it had.` | Copying the backup in failed, and nothing was changed. The lines above say why. |
+| `The backup may or may not have been restored; to be sure, run the same restore again.` | You pressed Ctrl+C while the backup was being copied in. The copy may have finished just before. Radio Bot has been started again either way; running the same `radio-bot restore` again makes sure. |
 
 ## Getting help
 

@@ -8,7 +8,7 @@ Radio Bot is an independent, community-maintained open-source project.
 
 - **It is not affiliated with, endorsed by, sponsored by or approved by any broadcaster or rights holder.**
 - Station packs, including the bundled starter pack, refer to stations by their **station names** only so that listeners can find them (this is called *nominative use*). The names, audio and artwork belong to their owners. The names are recorded as they appear on the broadcaster's official site. Their use does not imply any partnership.
-- A pack's `pack.json` can carry its own unofficial disclaimer; the bundled pack does. It is shown in the footer of `/radio list` when that pack is listed.
+- A pack's `pack.json` can carry its own unofficial disclaimer (the bundled pack doesn't). If it has one, it is shown in the footer of `/radio list` when that pack is listed. Radio Bot always shows its own "not affiliated with or endorsed by any broadcaster" notice with station lists either way.
 - The repository contains **no station logos, artwork or audio**, and none should be added. Don't name, brand or present your instance or your Discord application in a way that suggests it is an official broadcaster product.
 - The bot shows "Radio Bot is unofficial and not affiliated with or endorsed by any broadcaster." in its now-playing, quality, sources/inspect, browse, list and help views.
 

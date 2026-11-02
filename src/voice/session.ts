@@ -881,12 +881,14 @@ export class GuildSession {
     this.#log.warn({ code, sourceId: source?.id, attempts: this.#attempts }, 'playback failure');
 
     // The bot's own faults (FFmpeg could not start, an internal error) say nothing about the
-    // source: they are not held against it, and another source would fail the same way.
+    // source, so they are not held against it. FFmpeg failing to start would fail the same way on
+    // any source, so it never fails over; an unexpected error may be specific to this source's
+    // data, so once its retries run out it still fails over to a fallback.
     const botFault = faultDomain(code) === 'bot';
     const tripped = botFault ? false : this.#d.sources.recordPlaybackFailure(source.id, code);
     this.#attempts++;
     const retrySame = !tripped && !NON_RETRYABLE.has(code) && this.#attempts < this.#t.backoff.length + 1;
-    if (botFault && !retrySame) {
+    if (code === 'FFMPEG_SPAWN' && !retrySame) {
       this.#attempts = 0;
       this.#setState('ERROR');
       this.#d.notify({
