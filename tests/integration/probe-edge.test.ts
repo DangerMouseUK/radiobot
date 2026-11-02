@@ -83,7 +83,7 @@ describe('probeSource: analysis failures', () => {
     const o = await probeSource(deps, `${BASE}/live`, BY_SIZE);
     expect(o.success).toBe(false);
     expect(o.failureCode).toBe('PROBE_FAILED');
-    expect(o.failureDetail).toMatch(/^ffprobe could not analyse the stream\./);
+    expect(o.failureDetail).toMatch(/^The stream’s audio format could not be read \(ffprobe failed\)\./);
     expect(o.transport).toBe('http-continuous');
     expect(o.advertisedBitrateKbps).toBe(128);
   });

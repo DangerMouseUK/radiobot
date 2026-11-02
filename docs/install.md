@@ -33,6 +33,7 @@ Radio Bot is **self-hosted**. That means it runs on a computer you look after, u
 
 - **Terminal:** a window where you type commands instead of clicking. Each command in this guide is in a grey box. Copy it, paste it into the terminal, and press **Enter**. To paste in a terminal, press **Ctrl+Shift+V** on Linux, **Cmd+V** on a Mac, or **Ctrl+V** (or right-click) in the Ubuntu window on Windows.
 - **Docker:** a free tool that runs Radio Bot in its own sealed box, with everything it needs already inside. The installer uses it, so you don't have to install anything else for Radio Bot.
+- **Image:** Docker's word for the ready-made download of Radio Bot (about 1 GB). Each version of Radio Bot has its own image.
 - **Bot token:** a long secret code that lets the bot log in to Discord as your bot. Treat it like a password.
 - **Application ID:** a long number that identifies your bot to Discord. It isn't secret.
 - **kbps:** kilobits per second, how much sound data a station sends each second. More usually means better sound, and more data used.
@@ -147,7 +148,7 @@ followed by an invite link. Keep the terminal open for the next step.
 **If you don't see "Radio Bot is online":**
 
 - `Radio Bot stopped while starting. The lines above say why.` usually means the token or the Application ID is wrong. Run `radio-bot config` and correct them (see [If something goes wrong](#if-something-goes-wrong)).
-- `Radio Bot hasn't reported in after 90 seconds` usually means the computer can't reach Discord. Check its internet connection, then run `radio-bot status`.
+- `Radio Bot still isn't ready after 90 seconds` usually means the computer can't reach Discord. Check its internet connection, then run `radio-bot status`.
 - **"permission denied" when talking to Docker, on Linux:** the installer gets round this by using `sudo`, so it may ask for your password. To stop that, add yourself to the `docker` group with `sudo usermod -aG docker $USER`, then log out and back in.
 - **It asks for your computer password:** that's `sudo`. It may need it to set up Docker on Linux, or to add the `radio-bot` command to the `/usr/local/bin` folder (common on a Mac). Type the password you sign in with and press **Enter**.
 
@@ -172,7 +173,7 @@ The bot asks only for what it needs:
 |---|---|
 | View Channels | See the voice channel and the channels it posts in |
 | Send Messages | Only for the optional control panel and problem notices |
-| Embed Links | Show the panel and notices as tidy cards |
+| Embed Links | Show the control panel as a tidy card |
 | Attach Files | `/radio export` sends a settings file |
 | Connect | Join a voice channel |
 | Speak | Play the radio |
@@ -333,7 +334,7 @@ Start with `radio-bot status`, then `radio-bot logs`. The log is technical, but 
 | What you see | What to do |
 |---|---|
 | **"An invalid token was provided"** in the log, or the bot keeps restarting | The token was copied wrongly or has been reset. Get a fresh one ([step 1](#1-create-your-discord-bot), **Reset Token**). Run `radio-bot config`, replace everything after `DISCORD_TOKEN=` with the new token, then save and close |
-| **`DISCORD_APPLICATION_ID: must be a Discord snowflake ID`** | The Application ID is wrong. Copy it again from the **General Information** page; it's only digits. Run `radio-bot config` and put it after `DISCORD_APPLICATION_ID=` |
+| **`DISCORD_APPLICATION_ID: must be a Discord ID (17 to 20 digits)`** | The Application ID is wrong. Copy it again from the **General Information** page; it's only digits. Run `radio-bot config` and put it after `DISCORD_APPLICATION_ID=` |
 | **"Docker is installed but not running"** | Start Docker Desktop (Mac or Windows), or run `sudo systemctl start docker` (Linux), then try again |
 | **"Docker Compose … is too old"** | Update Docker (on a Mac or Windows PC, update Docker Desktop), then try again |
 | `radio-bot: command not found` | Open a new terminal window. If it still isn't found, type `bash ~/radio-bot/scripts/radio-bot.sh` instead of `radio-bot` |

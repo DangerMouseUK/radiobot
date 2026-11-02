@@ -94,6 +94,12 @@ describe('Play buttons and the station picker', () => {
     expect(i.violations).toEqual([]);
     expect(i.calls[0]).toMatchObject({ method: 'deferReply', payload: { flags: EPHEMERAL } });
     expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: st.id, channelId: V1 }]);
+    // A station change from a button is announced to the channel too, in one public line.
+    expect(i.calls.at(-1)).toMatchObject({
+      method: 'followUp',
+      payload: { content: `<@${t.people.member.id}> started **My Station** in <#${V1}>.` },
+    });
+    expect(i.calls.at(-1)!.payload.flags).toBeUndefined();
   });
 
   it('a Play button or picker choice for a station that has gone is refused', async () => {
@@ -204,16 +210,22 @@ describe('now-playing buttons', () => {
     expect(leave.text).toMatch(/disconnected the radio/);
   });
 
-  it('Refresh updates the card in place, but answers privately from the control panel', async () => {
+  it('Refresh redraws the card it is on, the control panel included, without a reply', async () => {
     const { t, st } = customServer();
     playingIn(t, V1, st.id).fullStatus = { state: 'PLAYING', stationId: st.id, channelId: V1 };
     const card = await t.click(t.people.member, t.ids.make(GUILD, 'now'));
     expect(methods(card)).toEqual(['update']);
-    expect(firstEmbed(card).title).toBe('▶ My Station');
+    expect(firstEmbed(card).title).toBe('▶ Playing: My Station');
     t.guilds.updateSettings(GUILD, { panelChannelId: '800000000000000010', panelMessageId: PANEL_MESSAGE });
     const panel = await t.click(t.people.member, t.ids.make(GUILD, 'now'), 'button', [], PANEL_MESSAGE);
-    expect(panel.calls[0]).toMatchObject({ method: 'reply', payload: { flags: EPHEMERAL } });
-    expect(firstEmbed(panel).title).toBe('▶ My Station');
+    // The panel itself is redrawn for everyone: no private copy.
+    expect(methods(panel)).toEqual(['update']);
+    expect(firstEmbed(panel)).toMatchObject({
+      title: '▶ Playing: My Station',
+      author: { name: 'Radio Bot control panel' },
+    });
+    // Its buttons are still the panel's own, which never expire.
+    expect(panel.componentIds.map((id) => t.ids.parse(GUILD, id)?.expired)).not.toContain(true);
   });
 
   it('Favourite and Unfavourite refuse a station that has gone, and listeners who cannot control', async () => {
@@ -246,8 +258,11 @@ describe('now-playing buttons', () => {
     for (const i of [sources, inspect]) {
       expect(i.calls[0]).toMatchObject({ method: 'reply', payload: { flags: EPHEMERAL } });
       expect(i.text).toMatch(/My Station/);
-      expect(i.text).toMatch(/custom-my-station-1/);
+      expect(i.text).toMatch(/\nMain stream\n/);
     }
+    // The source's ID is detail: only Inspect shows it, on a line of its own.
+    expect(sources.text).not.toMatch(/custom-my-station-1/);
+    expect(inspect.text).toMatch(/ID: `custom-my-station-1`/);
     // Inspect has the detail that Sources leaves out.
     expect(inspect.text.length).toBeGreaterThan(sources.text.length);
     const gone = await t.click(t.people.member, t.ids.make(GUILD, 'insp', 'custom:gone'));
@@ -259,7 +274,9 @@ describe('preferring the playing source', () => {
   it('Prefer is refused when the station is not playing from one of its sources', async () => {
     const { t, st } = customServer();
     const notPlaying = await t.click(t.people.admin, t.ids.make(GUILD, 'spref', st.id));
-    expect(notPlaying.text).toMatch(/isn’t playing from a source that can be preferred right now/);
+    expect(notPlaying.text).toMatch(
+      /isn’t playing from one of its sources right now, so there is no source to try first/,
+    );
     // Playing, but from a source that belongs to another station.
     const s = playingIn(t, V1, st.id);
     s.fullStatus = { source: makeSource({ id: 'src-elsewhere' }) };
@@ -276,21 +293,23 @@ describe('preferring the playing source', () => {
       rightsStatus: 'unreviewed',
     });
     const wrong = await t.click(t.people.admin, t.ids.make(GUILD, 'spref', st.id));
-    expect(wrong.text).toMatch(/isn’t playing from a source that can be preferred/);
+    expect(wrong.text).toMatch(/isn’t playing from one of its sources right now/);
     expect(t.guilds.getPreference(GUILD, st.id)).toBeNull();
   });
 
-  it('Prefer names the source it now prefers', async () => {
+  it('Try first names the source it now tries first', async () => {
     const { t, st } = twoSources();
     const i = await t.click(t.people.admin, t.ids.make(GUILD, 'spref', st.id));
-    expect(i.text).toMatch(/This server now prefers Main stream \(.+\) for My Station/);
+    expect(i.text).toMatch(
+      /Source tried first\nOn this server, My Station now tries \*\*Main stream\*\* first\. If it fails, the bot switches to another source\.$/,
+    );
     expect(i.ephemeral).toBe(true);
   });
 
-  it('Back to automatic is refused for a station that has gone', async () => {
+  it('Let the bot choose is refused for a station that has gone', async () => {
     const t = setup();
     const i = await t.click(t.people.admin, t.ids.make(GUILD, 'sauto', 'custom:gone'));
-    expect(i.text).toMatch(/isn’t playing from a source that can be preferred/);
+    expect(i.text).toMatch(/That station is no longer available\./);
   });
 });
 
@@ -343,7 +362,7 @@ describe('choosing another source', () => {
 
 describe('settings menus and buttons', () => {
   const cfg = (t: Harness, field: string) => t.ids.make(GUILD, 'cfg', field, 30 * 60_000);
-  const page = (i: FakeInteraction) => firstEmbed(i).footer?.text;
+  const page = (i: FakeInteraction) => firstEmbed(i).title?.replace('Radio Bot settings: ', 'Page: ');
 
   it('the page buttons switch pages without changing anything', async () => {
     const t = setup();
@@ -351,7 +370,7 @@ describe('settings menus and buttons', () => {
     for (const [field, label] of [
       ['page-access', 'Page: Access'],
       ['page-playback', 'Page: Playback'],
-      ['page-notify', 'Page: Notifications'],
+      ['page-notify', 'Page: Notices'],
     ] as const) {
       const i = await t.click(t.people.admin, cfg(t, field));
       expect(methods(i)).toEqual(['update']);
@@ -368,7 +387,7 @@ describe('settings menus and buttons', () => {
     const pvoice = await t.click(t.people.admin, cfg(t, 'pvoice'), 'channel', [V2]);
     expect(page(pvoice)).toBe('Page: Playback');
     const notify = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', ['800000000000000022']);
-    expect(page(notify)).toBe('Page: Notifications');
+    expect(page(notify)).toBe('Page: Notices');
     expect(t.guilds.getSettings(GUILD)).toMatchObject({
       allowedTextChannelIds: ['800000000000000021'],
       allowedVoiceChannelIds: [V1, V2],
@@ -382,6 +401,22 @@ describe('settings menus and buttons', () => {
       preferredVoiceChannelId: null,
       notificationChannelId: null,
     });
+  });
+
+  it('says when the bot cannot post in the notice channel just chosen', async () => {
+    const t = setup();
+    t.guild.members.me = { id: '900000000000000099' };
+    const muted = t.textChannel('800000000000000022');
+    muted.canSend = false;
+    const i = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', [muted.id]);
+    expect(i.calls[0]!.payload.content).toBe(
+      '⚠️ I can’t post in <#800000000000000022> yet. Give me View Channel and Send Messages there.',
+    );
+    // The setting is saved anyway: the admin may be about to fix the channel's permissions.
+    expect(t.guilds.getSettings(GUILD).notificationChannelId).toBe(muted.id);
+    muted.canSend = true;
+    const fine = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', [muted.id]);
+    expect(fine.calls[0]!.payload.content).toBe('');
   });
 
   it('the DJ role menu never stores @everyone', async () => {
@@ -443,7 +478,26 @@ describe('settings menus and buttons', () => {
     expect(s.encoderRefreshes).toBe(2);
   });
 
-  it('the Autostart, Resume and Lock buttons each switch their setting', async () => {
+  it('the switches menu turns on exactly the ticked switches, and stays on the Playback page', async () => {
+    const t = setup();
+    t.guilds.updateSettings(GUILD, { autostart: false, resumeOnRestart: true, voiceLock: false });
+    const on = await t.click(t.people.admin, cfg(t, 'switches'), 'string', ['autostart', 'lock']);
+    expect(page(on)).toBe('Page: Playback');
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({
+      autostart: true,
+      resumeOnRestart: false,
+      voiceLock: true,
+    });
+    // Unticking everything turns every switch off.
+    await t.click(t.people.admin, cfg(t, 'switches'), 'string', []);
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({
+      autostart: false,
+      resumeOnRestart: false,
+      voiceLock: false,
+    });
+  });
+
+  it('the switch buttons of settings pages sent before the menu still work', async () => {
     const t = setup();
     const before = t.guilds.getSettings(GUILD);
     for (const field of ['autostart', 'resume', 'lock']) {

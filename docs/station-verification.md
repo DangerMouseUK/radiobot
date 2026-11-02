@@ -16,18 +16,18 @@ The rest of this page gives the precise rules. The code is in `src/streams/ident
 
 - A **station** is a programme, for example `mypack:my-station` ("My Station"). It has a permanent ID, a display name, aliases, tags, a category and a catalogue status: `active`, `missing_from_official` or `retired`.
 - A **source** is one stream address that may carry a station. Besides its URL, a source records:
-  - transport and codec hints from the pack (hints are not evidence);
+  - hints from the pack about its transport (a direct stream or HLS) and its codec (the audio format, such as MP3 or AAC). Hints are not evidence;
   - what the bot measured: transport, container, codec, profile, sample rate, channels, and the advertised, codec-metadata and measured bitrates;
   - its identity status, confidence and a log of the evidence;
   - its provenance (where the address came from);
-  - a health score, failure counts and any cooldown;
+  - a health score, failure counts and any cooldown (a rest after repeated failures);
   - whether it is enabled, and why not.
 
 Pack stations come from **station packs**. Each pack is a folder under `catalog/packs/` (or `EXTRA_PACKS_DIR`) with `pack.json`, `stations.json` and, optionally, `sources.json`; the authoring guide is [catalog/README.md](../catalog/README.md). Station IDs are `<pack-id>:<slug>`, and a station's provider is its pack ID. Custom stations (provider `custom`) belong to one Discord server and have one source each.
 
 ## Candidate states
 
-Each source has a `verification_state`. The PRD (§7.2) describes a longer chain; this version uses only these states. The "Eligible?" column quotes the reason the bot gives in `/radio sources`.
+Each source has a `verification_state`. The PRD (§7.2) describes a longer chain; this version uses only these states. A source that is *eligible* is one the bot may play. The last column quotes the reason the bot gives in `/radio sources` when it can't.
 
 | State | Set when | Eligible? |
 |---|---|---|
@@ -36,8 +36,8 @@ Each source has a `verification_state`. The PRD (§7.2) describes a longer chain
 | `degraded` | As `eligible`, but the decode check logged more than 3 errors. | Yes. The station shows as Degraded if all its usable sources are in this state. |
 | `unverified` | The check succeeded but the identity is not verified. | No: "not verified as this station" |
 | `offline` | The last check failed: access denied (401/403/451), another HTTP status, a timeout, a decode failure, no audio and so on. See [Failed checks](#failed-checks). | No: "last check failed (code)" |
-| `blocked_by_policy` | The check failed on a safety rule: `ADDRESS_BLOCKED`, a URL host, port, scheme or credentials that aren't allowed, or `HLS_ENCRYPTED`. | No: "rejected by URL safety policy" |
-| `cooldown` | The circuit breaker tripped: at least 4 playback failures in a row over more than a minute. The bot's own faults, such as FFmpeg failing to start, don't count, and several servers failing at the same moment count once. When nothing else can play, the bot checks it every 2 min, and a good check ends the cooldown. | No, until the cooldown ends: "cooling down after repeated failures until …" |
+| `blocked_by_policy` | The check failed on a safety rule: `ADDRESS_BLOCKED`, a URL host, port, scheme or credentials that aren't allowed, or `HLS_ENCRYPTED`. | No: "blocked by the bot's safety rules" |
+| `cooldown` | The circuit breaker tripped, so the bot rests the source for a while: at least 4 playback failures in a row over more than a minute. The bot's own faults, such as FFmpeg failing to start, don't count, and several servers failing at the same moment count once. When nothing else can play, the bot checks it every 2 min, and a good check ends the cooldown. | No, until the cooldown ends: "resting after repeated failures until …" |
 
 The type definitions also reserve `resolved`, `transport_healthy`, `codec_verified`, `identity_verified` and `retired` for finer tracking later; this version doesn't set them. Each check stores its findings in `source_probe_results` instead.
 
@@ -77,10 +77,10 @@ When nothing is eligible, the station is not played. **Another station is never 
 
 `decideIdentity()` in `src/streams/identity.ts` weighs the evidence **in this order**:
 
-1. **An admin's review decides.** A `/radio source verify` verdict of `verified` or `mismatch` sets the status with `high` confidence, and is kept in the evidence log as a human review. `clear` removes it.
+1. **A human review decides.** A `/radio source verify` verdict of `verified` or `mismatch` sets the status with `high` confidence, and is kept in the evidence log as a human review. `clear` removes it. Only an operator can give a verdict on a pack source; for a custom station, a server admin can (see [Operator identity overrides](#operator-identity-overrides)).
 2. **An audio match with an already verified source is strong support.** If the latest audio comparison supports the source, the status is `verified` with `high` confidence.
-3. **A name that contradicts, without an audio match, means `mismatch`.** The source is never promoted automatically. This applies when the stream's announced name (its `icy-name` header) is exactly the name of a *different* station in any loaded pack. That check comes **before** any match against this station's own aliases, so a short alias such as "Example" can never turn another station's name, such as "Example Dance", into support. The only exception is when that exact name is also one of this station's own names or aliases.
-4. **Trusted provenance means `verified` with `medium` confidence.** That is a pack source marked `official-player` or `curated`, or a custom station's address added by a server admin. If the announced name also matches the station's name or an alias (exactly, or as whole words within it), confidence is `high`.
+3. **A contradicting name, without an audio match, means `mismatch`.** The source is never promoted automatically. A name contradicts when the stream's announced name (its `icy-name` header) is exactly the name of a *different* station in any loaded pack. That check comes **before** any match against this station's own aliases, so a short alias such as "Example" can never turn another station's name, such as "Example Dance", into support. The only exception is when that exact name is also one of this station's own names or aliases.
+4. **Trusted provenance (where the address came from) means `verified` with `medium` confidence.** That is a pack source marked `official-player` or `curated`, or a custom station's address added by a server admin. If the announced name also matches the station's name or an alias (exactly, or as whole words within it), confidence is `high`.
 5. **Anything else is `unverified` with `low` confidence.** This covers sources found automatically, with nothing official linking them to the station.
 
 **A failed audio comparison on its own never demotes a source.** A weak or failed match is recorded as *inconclusive*, not as a mismatch: a few seconds of different adverts between two feeds don't prove they carry a different programme.
@@ -149,7 +149,7 @@ The result includes a **conclusion**, shown at the top of `/radio sources` and i
 It also includes a short explanation and, when there is one, a different eligible **fallback**. For example: "All usable sources carry equivalent audio (both ≈128 kbps AAC-LC); direct feed selected for simpler live delivery." followed by "No independently verified higher-quality source found." When HLS is involved, the explanation adds one of:
 
 - "Only HLS is available right now; no direct stream of this station can be used."
-- "HLS sources are kept as a last-resort fallback (segmented delivery)."
+- "HLS sources are kept as a last-resort fallback: they start more slowly and recover less smoothly."
 - "An admin chose this HLS source; a usable direct stream would normally come first."
 
 ### Choosing another source while a station plays
@@ -165,11 +165,15 @@ While a station plays, anyone who can control the radio can switch it to another
 
 When someone plays a station (`prepareForPlayback`):
 
-- **If an eligible source exists, it plays straight away.** The station's other sources that are due a check (last checked more than 24 h ago, or failing and past their wait) are checked in the background, but only once the stream has played steadily for 30 s, and again about once a minute while it plays (that is how a source that failed earlier shows it works again, so the bot can move back to it). The source that is playing is never checked in the background: its steady playback is better evidence than a check, and 30 s of it clears a failed check. Background checks run one at a time, at the lowest CPU priority, so a live stream is never disturbed:
+- **If an eligible source exists, it plays straight away.** The station's other sources that are due a check (last checked more than 24 h ago, or failing and past their wait) are then checked in the background:
+  - only once the stream has played steadily for 30 s, and again about once a minute while it plays. That is how a source that failed earlier shows that it works again, so the bot can move back to it;
+  - never the source that is playing: its steady playback is better evidence than a check, and 30 s of it clears a failed check.
+
+  Background checks run one at a time, at the lowest CPU priority, so a live stream is never disturbed:
   - a source is queued once, and skipped if it was checked in the meantime;
   - no background check starts while any stream on the installation is in its first 30 s;
   - a check someone is waiting for interrupts a background check on the same stream host; the interrupted check records nothing and runs again later.
-- **If none is eligible,** sources are checked while the person waits, one after another: the admin's preferred source first, then direct streams before others, then by `priority`. This stops as soon as one becomes eligible. Failing sources are checked again despite their wait, because they are the only hope, but no more than every 10 min within a day of last working, and hourly after that. Paused sources are skipped.
+- **If none is eligible,** sources are checked while the person waits, one after another: the admin's preferred source first, then direct streams before others, then by `priority`. This stops as soon as one becomes eligible. Failing sources are checked again even if their wait isn't over, because nothing else can play, but no more than every 10 min within a day of last working, and hourly after that. Paused sources are skipped.
 
 ## Pin, prefer and auto
 
@@ -181,7 +185,7 @@ These are per-server overrides, stored in `guild_source_preferences`:
 | `prefer` | `/radio source prefer <station> <source>` | Uses that source whenever it is eligible. Otherwise the bot chooses automatically, without marking playback as degraded. |
 | `pin` | `/radio source pin <station> <source>` | Uses that source whenever it is eligible. Otherwise playback is marked **Degraded: the pinned source can't be used (reason), so a fallback is playing.** |
 
-Admins can also use the **Prefer the playing source on this server** and **Back to automatic choice** buttons under `/radio sources`.
+Admins can also use the **Use this source first** button (the same as `prefer` with the source that is playing) and the **Choose automatically** button (the same as `auto`) under `/radio sources`. The view's "On this server" field says what each one does, and which source this server tries first or is pinned to.
 
 When you pin or prefer a source that can't be used right now, the reply warns you and gives the reason. An override never makes an ineligible source playable: the identity and health gate always applies. An admin may pin or prefer an HLS source; that overrides the tier order, but not the gate. Catalogue sync and pack updates never touch these preferences, except that moving a source to a different station clears the preferences that pointed to it.
 
@@ -198,7 +202,7 @@ The starter pack is a folder in `catalog/packs/`, like any other pack:
   - the snapshot date, 2026-10-31.
 - **`stations.json`** has 63 stations, from the official list as it was on 31 October 2026. For each: `slug`, `displayName` as listed, `externalId` (the site's stable 10-character stream ID), `aliases`, `category`, `tags`, `order`, `officialPage` where there is one, `catalogueStatus` and `catalogueLastSeen`.
 - **`sources.json`** has 126 candidate sources. For each: `id`, `station` (the slug), `url`, `label`, `priority`, `transportHint`, `codecHint`, `provenance` (`official-player` or `curated`), `provenanceDetail`, `enabled` and `disabledReason`. Every URL in this pack is HTTPS. Hints are never evidence: every source is checked when the bot runs.
-- **`SOURCE_PROVENANCE.md`** is the full provenance record, and **`evidence/`** holds the check reports. Each bundled pack's folder has both; the station-by-station details are recorded there.
+- **`SOURCE_PROVENANCE.md`** records where every source address came from, and **`evidence/`** holds the check reports. Each bundled pack's folder has both, with the station-by-station details.
 
 At start-up every pack is validated and cross-checked. Start-up fails if any of these is found:
 
@@ -326,6 +330,6 @@ A sync:
 - applies all its changes together or none of them. Only a sync with more than 50 changes at once is written in parts of 50; the report then lists what was written, and if a part fails, the next sync finishes the job;
 - on **failure**, keeps the existing entries and records a failed report. `/radio list` for that pack shows "list may be out of date" when no sync has succeeded within three intervals.
 
-Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio sync` shows one report per pack: added, renamed, no longer on the official list, back on the list, new stations with no stream yet, and stations whose sources all failed their last check.
+Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio sync` shows one report per pack: what was added (new stations have no stream yet), renamed, dropped from or back on the official list, or "No stations were added, renamed, dropped or brought back."; then the stations whose sources all failed their last check. Long lists show 15 names and how many more.
 
 A rename made by a sync survives restarts. While the pack's `stations.json` still has the old name, and that old name is an alias of the station, the bot keeps the synced name. Updating the pack file makes it permanent. The old name stays as an alias either way.

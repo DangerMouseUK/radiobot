@@ -77,7 +77,7 @@ export class CustomStationService {
     if (this.#repo.countCustomStations(guildId) >= this.#maxPerGuild) {
       throw new RadioError(
         'CUSTOM_STATION_LIMIT',
-        `This server already has the maximum of ${this.#maxPerGuild} custom stations.`,
+        `This server already has the maximum of ${this.#maxPerGuild} custom stations.${this.#maxPerGuild > 0 ? ' Remove one with /radio remove first.' : ''}`,
       );
     }
     const url = this.#policy.validateUrl(input.url).href;

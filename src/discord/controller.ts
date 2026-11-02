@@ -32,7 +32,12 @@ import {
 } from '../import-export/config-io.ts';
 import { safeErr } from '../observability/logger.ts';
 import { type LatencySummary, regionHint, tcpPing } from '../observability/netstats.ts';
-import type { DesiredState, GuildSettings, SettingsPatch } from '../persistence/repositories/guilds.ts';
+import type {
+  DesiredState,
+  GuildSettings,
+  QueueEntry,
+  SettingsPatch,
+} from '../persistence/repositories/guilds.ts';
 import { errorCode, isRadioError, RadioError } from '../shared/errors.ts';
 import { truncate } from '../shared/text.ts';
 import { codecLabel } from '../streams/probe.ts';
@@ -49,7 +54,9 @@ import {
 } from './context.ts';
 import { type AuthResult, authorize, type Capability } from './permissions/authorize.ts';
 import {
+  bitrateText,
   COLOR,
+  checkedLine,
   DISCLAIMER,
   errorEmbed,
   infoEmbed,
@@ -59,8 +66,8 @@ import {
   qualityEmbed,
   sourceFormat,
   sourcesEmbed,
+  stateColor,
   stationLine,
-  transportLabel,
 } from './ui/format.ts';
 import {
   ambiguityView,
@@ -75,11 +82,18 @@ import {
   type View,
 } from './ui/views.ts';
 
-/** Identity status as a word for autocomplete and rescan summaries. */
+/** Identity status as a word for source autocomplete. */
 const IDENTITY_WORD: Record<IdentityStatus, string> = {
   verified: 'verified',
   unverified: 'unverified',
   mismatch: 'wrong station',
+};
+
+/** A check's identity result, in the words the sources view uses. */
+const CHECK_IDENTITY: Record<IdentityStatus, string> = {
+  verified: 'verified as this station',
+  unverified: 'not yet verified as this station',
+  mismatch: 'plays a different station',
 };
 
 /** What the server has asked the radio to do, for /radio status. */
@@ -88,8 +102,8 @@ const DESIRED_LABEL: Record<DesiredState, string> = {
   playing: 'play',
   paused_empty: 'play (paused while the channel is empty)',
   stopped: 'stay stopped',
-  left: 'stay out of voice',
-  kicked: 'stay out of voice (a moderator disconnected it)',
+  left: 'stay out of the voice channel',
+  kicked: 'stay out of the voice channel (a moderator disconnected it)',
 };
 
 /** Open browse lists kept for their Next, Previous and Favourites buttons (each expires 15 min after last use). */
@@ -106,6 +120,8 @@ type Comp = MessageComponentInteraction<'cached'>;
 const EPHEMERAL = MessageFlags.Ephemeral;
 /** Shown when a quality change re-encodes the playing station. */
 const REENCODE_NOTE = 'The station restarts for a moment to use the new quality.';
+/** Shown when a button or menu names a station that has since gone (removed, or its pack switched off). */
+const GONE = 'That station is no longer available. Pick another with `/radio browse`.';
 
 /** What an interaction was, for the debug log: "command stats", "autocomplete play", "button stop". */
 export function describeInteraction(i: Interaction): string {
@@ -201,7 +217,7 @@ export class RadioController {
     }
     const message = isRadioError(err)
       ? err.userMessage
-      : 'Something went wrong. The details were logged for the person who runs this bot.';
+      : 'Something went wrong. Try again in a moment. If it keeps happening, let the bot owner know.';
     if (!isRadioError(err) || err.code === 'INTERNAL') {
       this.#ctx.logger.error({ err: safeErr(err), guildId: i.guildId, type: i.type }, 'interaction failed');
       this.#ctx.metrics.incident(i.guildId, 'INTERNAL', 'bot', 'interaction failed');
@@ -226,11 +242,14 @@ export class RadioController {
 
   #rate(limiter: { take(k: string): number }, key: string, what: string): void {
     const wait = limiter.take(key);
-    if (wait > 0)
+    if (wait > 0) {
+      // Some limits refill over an hour: "30 min" reads better than "1800 s".
+      const s = Math.ceil(wait / 1000);
       throw new RadioError(
         'RATE_LIMITED',
-        `Too many ${what} in a short time. Try again in ${Math.ceil(wait / 1000)} s.`,
+        `Too many ${what} in a short time. Try again in ${s < 90 ? `${s} s` : `${Math.ceil(s / 60)} min`}.`,
       );
+    }
   }
 
   #station(guildId: string, query: string): Station {
@@ -397,7 +416,10 @@ export class RadioController {
         case 'help':
           return await this.#cmdHelp(i);
         default:
-          await this.#deny(i, 'That command is not recognised.');
+          await this.#deny(
+            i,
+            'That command is not recognised. Your Discord app may be showing an old list of commands: restart it and try again.',
+          );
       }
     } catch (err) {
       if (err instanceof AmbiguousStation) {
@@ -439,6 +461,7 @@ export class RadioController {
     explicitChannel: string | null,
     respond: (o: InteractionEditReplyOptions) => Promise<unknown>,
     defer: () => Promise<unknown>,
+    skipped = false,
   ): Promise<void> {
     const ctx = this.#ctx;
     const settings = ctx.guilds.getSettings(i.guildId);
@@ -489,11 +512,12 @@ export class RadioController {
         embeds: [
           infoEmbed(
             `Starting ${station.displayName}`,
-            `${result.message}\nCheck progress with /radio now.`,
+            `${result.message}\nPress **Refresh** to check progress.`,
             COLOR.warn,
           ),
         ],
-        components: [],
+        // Refresh shows progress, Stop cancels the retry, Sources says what is wrong.
+        components: controlRows(ctx, i.guildId, station.id),
       });
       return;
     }
@@ -513,18 +537,29 @@ export class RadioController {
                 ? '\n\nI will try again automatically in a couple of minutes.'
                 : ''
             }`,
+            `Couldn’t play ${station.displayName}`,
           ),
         ],
-        components: [],
+        // Sources says why, Stop cancels an automatic retry, Browse picks another station.
+        components: controlRows(ctx, i.guildId, station.id),
       });
       return;
     }
     // The card says in one line why this source plays; Sources has the full reasoning.
-    const embed = nowEmbed(station, status, target);
+    const queue = ctx.guilds.listQueue(i.guildId);
     await respond({
-      embeds: [this.#withQueue(embed, i.guildId)],
-      components: controlRows(ctx, i.guildId, station.id),
+      embeds: [this.#withQueue(nowEmbed(station, status, target), queue)],
+      components: controlRows(ctx, i.guildId, station.id, false, queue),
     });
+    // The card above is for the person who asked; the channel gets one short public line, from
+    // the command, a button or a menu alike. If Discord refuses it, the private card is enough.
+    const verb = skipped ? 'skipped to' : switching ? 'switched to' : 'started';
+    await i
+      .followUp({
+        content: `<@${i.user.id}> ${verb} **${station.displayName}**${switching ? '' : ` in <#${target}>`}.`,
+        allowedMentions: { parse: [] },
+      })
+      .catch(() => {});
     await this.refreshPanel(i.guildId);
   }
 
@@ -536,7 +571,7 @@ export class RadioController {
       station,
       channel?.id ?? null,
       (o) => i.editReply(o),
-      () => i.deferReply(),
+      () => i.deferReply({ flags: EPHEMERAL }),
     );
   }
 
@@ -544,25 +579,29 @@ export class RadioController {
     const a = this.#auth(i, 'control');
     if (!a.ok) return this.#deny(i, a.reason);
     const s = this.#ctx.sessions.get(i.guildId);
-    if (!s) {
-      this.#ctx.guilds.setIntent(i.guildId, { desiredState: 'stopped' });
+    // Playing, paused for an empty channel, or still trying to start: there is something to stop.
+    // Otherwise the answer is private, so a second press doesn't post another public notice.
+    const desired = this.#ctx.guilds.getIntent(i.guildId)?.desiredState;
+    const active = Boolean(s) && (desired === 'playing' || desired === 'paused_empty');
+    if (s) s.stop();
+    else this.#ctx.guilds.setIntent(i.guildId, { desiredState: 'stopped' });
+    if (!active) {
       await i.reply({
         embeds: [infoEmbed('Stopped', 'Nothing was playing.', COLOR.neutral)],
         flags: EPHEMERAL,
       });
-      return;
+    } else {
+      await i.reply({
+        embeds: [
+          infoEmbed(
+            'Stopped',
+            `<@${i.user.id}> stopped the radio. It won’t start again by itself until someone plays a station.`,
+            COLOR.neutral,
+          ),
+        ],
+        allowedMentions: { parse: [] },
+      });
     }
-    s.stop();
-    await i.reply({
-      embeds: [
-        infoEmbed(
-          'Stopped',
-          `<@${i.user.id}> stopped the radio. It won’t start again by itself until someone uses /radio play.`,
-          COLOR.neutral,
-        ),
-      ],
-      allowedMentions: { parse: [] },
-    });
     await this.refreshPanel(i.guildId);
   }
 
@@ -570,18 +609,33 @@ export class RadioController {
     const a = this.#auth(i, 'control');
     if (!a.ok) return this.#deny(i, a.reason);
     const s = this.#ctx.sessions.get(i.guildId);
+    const here = s?.connected ?? false;
     if (s) s.leave('left');
     else this.#ctx.guilds.setIntent(i.guildId, { desiredState: 'left' });
-    await i.reply({
-      embeds: [
-        infoEmbed(
-          'Left',
-          `<@${i.user.id}> disconnected the radio. I won’t rejoin until someone uses /radio play.`,
-          COLOR.neutral,
-        ),
-      ],
-      allowedMentions: { parse: [] },
-    });
+    if (!here) {
+      // Nothing to announce: the bot wasn't in a channel, so the answer is private.
+      await i.reply({
+        embeds: [
+          infoEmbed(
+            'Not in a voice channel',
+            'Radio Bot wasn’t in a voice channel. It won’t join one until someone uses `/radio join` or plays a station.',
+            COLOR.neutral,
+          ),
+        ],
+        flags: EPHEMERAL,
+      });
+    } else {
+      await i.reply({
+        embeds: [
+          infoEmbed(
+            'Left',
+            `<@${i.user.id}> disconnected the radio. I won’t rejoin until someone uses /radio join or plays a station.`,
+            COLOR.neutral,
+          ),
+        ],
+        allowedMentions: { parse: [] },
+      });
+    }
     await this.refreshPanel(i.guildId);
   }
 
@@ -605,7 +659,13 @@ export class RadioController {
       const playing = desired === 'playing' || desired === 'paused_empty';
       if (!def || playing) {
         await i.reply({
-          embeds: [infoEmbed('Already here', `Radio Bot is already in <#${target}>.`)],
+          embeds: [
+            infoEmbed(
+              'Already here',
+              `Radio Bot is already in <#${target}>.${playing ? '' : ' Pick a station with `/radio play` or `/radio browse`.'}`,
+              COLOR.neutral,
+            ),
+          ],
           flags: EPHEMERAL,
         });
         return;
@@ -618,7 +678,7 @@ export class RadioController {
         def,
         explicit,
         (o) => i.editReply(o),
-        () => i.deferReply(),
+        () => i.deferReply({ flags: EPHEMERAL }),
       );
       return;
     }
@@ -630,9 +690,12 @@ export class RadioController {
       embeds: [
         infoEmbed(
           'Joined',
-          `Joined <#${target}>. There is no default station, so pick one with /radio play or /radio browse.`,
+          `Joined <#${target}>. There is no default station, so press **Browse** or use \`/radio play\` to pick one. Admins can set one with \`/radio config default_station\`.`,
+          COLOR.ok,
         ),
       ],
+      // Browse picks a station; Next starts the first one in the catalogue.
+      components: controlRows(this.#ctx, i.guildId, null),
     });
   }
 
@@ -642,9 +705,10 @@ export class RadioController {
     const s = this.#ctx.sessions.get(i.guildId);
     const status = s?.status() ?? null;
     const st = status?.stationId ? this.#ctx.stations.getStation(status.stationId) : null;
+    const queue = this.#ctx.guilds.listQueue(i.guildId);
     const view = {
-      embeds: [this.#withQueue(nowEmbed(st, status, status?.channelId ?? null), i.guildId)],
-      components: controlRows(this.#ctx, i.guildId, st?.id ?? null),
+      embeds: [this.#withQueue(nowEmbed(st, status, status?.channelId ?? null), queue)],
+      components: controlRows(this.#ctx, i.guildId, st?.id ?? null, false, queue),
     };
     if (update && i.isMessageComponent()) await i.update(view);
     else await i.reply({ ...view, flags: EPHEMERAL });
@@ -694,28 +758,49 @@ export class RadioController {
     const live = { playingId: status?.source?.id ?? null, manualId: status?.manualSourceId ?? null };
     const embed = sourcesEmbed(st, sources, selection, detailed, live);
     const pref = ctx.guilds.getPreference(guildId, st.id);
-    if (pref)
-      embed.addFields({ name: 'Server override', value: `${pref.mode} → \`${pref.sourceId ?? 'none'}\`` });
+    const pinned = pref?.mode === 'pin';
+    const canPrefer =
+      who.admin &&
+      sources.length > 0 &&
+      live.playingId !== null &&
+      (pref?.mode !== 'prefer' || pref.sourceId !== live.playingId);
+    const canAuto = who.admin && sources.length > 0 && !!pref && pref.mode !== 'auto';
+    // The admin buttons have short labels, so what they do (on this server only) is said here.
+    const choice: string[] = [];
+    // The source's name, as the list above shows it (its ID only when it has no name).
+    const chosen = sources.find((s) => s.id === pref?.sourceId);
+    const name = chosen?.label ? `**${truncate(chosen.label, 60)}**` : `\`${pref?.sourceId ?? 'none'}\``;
+    if (pinned)
+      choice.push(
+        `Pinned to ${name}: only admins can switch it. If it fails, another source plays and the station shows as degraded.`,
+      );
+    else if (pref?.mode === 'prefer')
+      choice.push(`${name} is tried first. If it fails, the bot switches to another source.`);
+    if (canPrefer)
+      choice.push(
+        '**Use this source first**: try the source playing now first. If it fails, the bot still switches to another.',
+      );
+    if (canAuto) choice.push('**Choose automatically**: go back to the bot’s own choice.');
+    if (choice.length) embed.addFields({ name: 'On this server', value: choice.join('\n') });
     const row = (...c: MessageActionRowComponentBuilder[]) =>
       new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...c);
     const components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
     // Anyone who may control the radio can play this station from another usable source while it
     // plays. Only usable sources are offered, and the click is checked again on the server.
-    const pinned = pref?.mode === 'pin';
     if (who.control && (who.admin || !pinned) && live.playingId && selection.ordered.length > 1) {
       components.push(
         row(
           new StringSelectMenuBuilder()
             .setCustomId(ctx.ids.make(guildId, 'usesrc', st.id))
-            .setPlaceholder('Play from another source (until the station changes)')
+            .setPlaceholder('Switch source until the station changes')
             .addOptions(
+              // A short label a phone shows in full, and the codec and bitrate below it (about 40
+              // characters, so a phone shows that in full too; the rest is in the list above).
               selection.ordered.slice(0, 25).map((src, n) => ({
-                label: truncate(`#${n + 1} ${src.label ?? 'Source'} · ${sourceFormat(src)}`, 100),
+                label: truncate(`#${n + 1} ${src.label ?? 'Source'}`, 100),
                 value: src.id,
                 description: truncate(
-                  src.id === selection.selected?.id
-                    ? 'The best choice'
-                    : `Ranked ${n + 1} of ${selection.ordered.length}`,
+                  `${src.id === selection.selected?.id ? 'Best · ' : ''}${codecLabel(src.codec, src.profile)} · ${bitrateText(src)}`,
                   100,
                 ),
                 default: src.id === live.playingId,
@@ -731,19 +816,19 @@ export class RadioController {
           .setLabel('Check sources again')
           .setStyle(ButtonStyle.Primary),
       ];
-      if (live.playingId && (pref?.mode !== 'prefer' || pref.sourceId !== live.playingId)) {
+      if (canPrefer) {
         buttons.push(
           new ButtonBuilder()
             .setCustomId(ctx.ids.make(guildId, 'spref', st.id))
-            .setLabel('Prefer the playing source on this server')
+            .setLabel('Use this source first')
             .setStyle(ButtonStyle.Secondary),
         );
       }
-      if (pref && pref.mode !== 'auto') {
+      if (canAuto) {
         buttons.push(
           new ButtonBuilder()
             .setCustomId(ctx.ids.make(guildId, 'sauto', st.id))
-            .setLabel('Back to automatic choice')
+            .setLabel('Choose automatically')
             .setStyle(ButtonStyle.Secondary),
         );
       }
@@ -757,7 +842,7 @@ export class RadioController {
     const ctx = this.#ctx;
     if (!i.isStringSelectMenu()) return;
     const st = visibleStation(ctx, i.guildId, stationId);
-    if (!st) return this.#deny(i, 'That station is no longer available.');
+    if (!st) return this.#deny(i, GONE);
     const session = ctx.sessions.get(i.guildId);
     if (!session?.connected || session.stationId !== st.id || session.status()?.desiredState !== 'playing')
       return this.#deny(i, `${st.displayName} isn’t playing any more, so its source can’t be changed.`);
@@ -766,7 +851,7 @@ export class RadioController {
     if (ctx.guilds.getPreference(i.guildId, st.id)?.mode === 'pin' && a.level !== 'admin')
       return this.#deny(
         i,
-        `An admin has pinned ${st.displayName} to one source, so only an admin can change it.`,
+        `An admin has pinned ${st.displayName} to one source, so only an admin can switch its source.`,
       );
     // Checked again now, not trusted from the menu: it must be a usable source of this station.
     const source = ctx.sources.select(i.guildId, st.id).ordered.find((s) => s.id === i.values[0]);
@@ -787,7 +872,7 @@ export class RadioController {
         r.ok
           ? infoEmbed(
               'Source changed',
-              `${st.displayName} now plays from ${source.label ?? 'another source'} (${sourceFormat(source)}). This lasts until the station changes. If this source fails, the bot goes back to the best one by itself.`,
+              `${st.displayName} now plays from **${source.label ?? 'another source'}** until the station changes. If it fails, the bot goes back to the best source.`,
               COLOR.ok,
             )
           : errorEmbed(r.message),
@@ -812,9 +897,7 @@ export class RadioController {
     const desired = intent?.desiredStationId ? this.#ctx.stations.getStation(intent.desiredStationId) : null;
     const e = new EmbedBuilder()
       .setTitle('Radio status')
-      .setColor(
-        status?.state === 'PLAYING' ? COLOR.ok : status?.state === 'ERROR' ? COLOR.error : COLOR.neutral,
-      )
+      .setColor(stateColor(status?.state))
       .addFields(
         {
           name: 'Right now',
@@ -858,7 +941,7 @@ export class RadioController {
         : 'not measured yet';
     const where = (host: string | null | undefined) => {
       const hint = regionHint(host);
-      return hint ? ` (${hint}, from host name)` : '';
+      return hint ? ` (${hint}, guessed from the host name)` : '';
     };
 
     // Stream endpoint round trip: TCP handshakes to the exact IP the audio comes from.
@@ -880,7 +963,7 @@ export class RadioController {
 
     const liveEmbed = new EmbedBuilder()
       .setTitle(st ? `Live stats: ${st.displayName}` : 'Live stats')
-      .setColor(status?.state === 'PLAYING' ? COLOR.ok : COLOR.neutral)
+      .setColor(stateColor(status?.state))
       .setTimestamp(new Date());
     if (!status || !live?.input) {
       liveEmbed.setDescription(
@@ -908,7 +991,7 @@ export class RadioController {
                 : 'Transport: direct HTTP stream',
               `Codec: ${src ? sourceFormat(src) : 'unknown'}`,
               `Live input rate: ${kbps(inp.kbps10s)} (10 s) · ${kbps(inp.kbps60s)} (60 s) · ${(inp.bytes / 1048576).toFixed(1)} MB received`,
-              `Endpoint round trip (TCP): ${lat(streamRtt)}`,
+              `Stream server round trip (TCP): ${lat(streamRtt)}`,
             ].join('\n'),
             1024,
           ),
@@ -933,7 +1016,7 @@ export class RadioController {
               `Voice WebSocket ping: ${lat(live.voice?.ws ?? null)}`,
               `Gateway ping: ${ctx.client.ws.ping >= 0 ? `${ctx.client.ws.ping} ms` : 'not measured yet'}`,
               `Encryption: ${live.voice?.encryption ?? '—'}${live.voice?.encryptionMode ? ` · ${live.voice.encryptionMode}` : ''}`,
-              `Source failovers: ${status.failovers} · voice reconnects: ${status.reconnects} · encoder PID: ${status.encoderPid ?? '—'}`,
+              `Fallback switches: ${status.failovers} · voice reconnects: ${status.reconnects} · encoder PID: ${status.encoderPid ?? '—'}`,
             ].join('\n'),
             1024,
           ),
@@ -956,7 +1039,8 @@ export class RadioController {
       const syncText = !p.meta.sync
         ? 'no official list'
         : sync
-          ? `list synced ${sync.finishedAt.slice(0, 16).replace('T', ' ')} UTC ${sync.success ? '(ok)' : '(failed)'}`
+          ? // A Discord timestamp shows in the reader's own time zone, with the exact time on hover.
+            `list synced <t:${Math.floor(Date.parse(sync.finishedAt) / 1000)}:R> ${sync.success ? '(ok)' : '(failed)'}`
           : 'list never synced';
       return `**${p.meta.name}** (\`${p.meta.id}\`): ${cov.catalogued} stations · ${cov.usable} with a working stream · ${cov.verifiedPlayable} verified and playable · ${syncText}`;
     });
@@ -984,7 +1068,10 @@ export class RadioController {
           value: truncate(
             incidents.length
               ? incidents
-                  .map((x) => `\`${x.at.slice(11, 19)}\` ${x.code} [${x.domain}] ×${x.count}: ${x.detail}`)
+                  .map(
+                    (x) =>
+                      `<t:${Math.floor(Date.parse(x.at) / 1000)}:R> ${x.code} [${x.domain}]${x.count > 1 ? ` ×${x.count}` : ''}: ${x.detail}`,
+                  )
                   .join('\n')
               : 'None.',
             1024,
@@ -1009,9 +1096,11 @@ export class RadioController {
 
   // ------------------------------------------------------------------ queue
 
-  /** Adds "Up next" to a now-playing style embed when the queue is not empty. */
-  #withQueue(embed: EmbedBuilder, guildId: string): EmbedBuilder {
-    const q = this.#ctx.guilds.listQueue(guildId);
+  /**
+   * Adds "Up next" to a now-playing style embed when the queue is not empty. The caller reads the
+   * queue once and passes the same list to `controlRows()`.
+   */
+  #withQueue(embed: EmbedBuilder, q: readonly QueueEntry[]): EmbedBuilder {
     if (q.length === 0) return embed;
     const names = q
       .slice(0, 5)
@@ -1028,35 +1117,48 @@ export class RadioController {
       const a = this.#auth(i, 'read');
       if (!a.ok) return this.#deny(i, a.reason);
       const q = ctx.guilds.listQueue(i.guildId);
-      const current = ctx.sessions.get(i.guildId)?.stationId;
-      const now = current ? ctx.stations.getStation(current)?.displayName : null;
+      // "Playing now" only while it plays: after Stop the session still remembers the station.
+      const session = ctx.sessions.get(i.guildId);
+      const now =
+        session?.connected && ctx.guilds.getIntent(i.guildId)?.desiredState === 'playing' && session.stationId
+          ? ctx.stations.getStation(session.stationId)?.displayName
+          : null;
       const lines = q.map((e, n) => {
         const st = ctx.stations.getStation(e.stationId);
-        return `${n + 1}. ${st ? stationLine(st, ctx.sources.availability(st)) : e.stationId}${e.addedById ? ` — added by <@${e.addedById}>` : ''}`;
+        return `${n + 1}. ${st ? stationLine(st, ctx.sources.availability(st)) : e.stationId}${e.addedById ? ` · added by <@${e.addedById}>` : ''}`;
       });
       const e = new EmbedBuilder()
-        .setTitle(`Queue · ${q.length} ${q.length === 1 ? 'station' : 'stations'}`)
+        .setTitle(`Queue: ${q.length} ${q.length === 1 ? 'station' : 'stations'}`)
         .setColor(COLOR.info)
         .setDescription(
           truncate(
             lines.length ? lines.join('\n') : 'The queue is empty. Add stations with `/radio queue add`.',
             4000,
           ),
-        );
+        )
+        .setFooter({ text: DISCLAIMER });
       if (now) e.addFields({ name: 'Playing now', value: now });
       await i.reply({ embeds: [e], flags: EPHEMERAL, allowedMentions: { parse: [] } });
       return;
     }
     const a = this.#auth(i, 'control');
     if (!a.ok) return this.#deny(i, a.reason);
+    // Queue changes are public one-liners, so everyone listening sees who changed what.
     if (sub === 'clear') {
       const n = ctx.guilds.clearQueue(i.guildId);
+      if (n === 0) {
+        await i.reply({
+          embeds: [infoEmbed('Queue already empty', 'There was nothing to clear.', COLOR.neutral)],
+          flags: EPHEMERAL,
+        });
+        return;
+      }
       await i.reply({
-        embeds: [
-          infoEmbed('Queue cleared', `Removed ${n} ${n === 1 ? 'station' : 'stations'}.`, COLOR.neutral),
-        ],
-        flags: EPHEMERAL,
+        content: `<@${i.user.id}> cleared the queue (${n} ${n === 1 ? 'station' : 'stations'}).`,
+        allowedMentions: { parse: [] },
       });
+      // The panel's Skip button and "Up next" show the queue: redraw it.
+      await this.refreshPanel(i.guildId);
       return;
     }
     if (sub === 'remove') {
@@ -1065,9 +1167,10 @@ export class RadioController {
       if (!removed) return this.#deny(i, `There is no station at position ${pos}.`);
       const name = ctx.stations.getStation(removed.stationId)?.displayName ?? removed.stationId;
       await i.reply({
-        embeds: [infoEmbed('Removed from queue', `${name} was number ${pos} in the queue.`, COLOR.neutral)],
-        flags: EPHEMERAL,
+        content: `<@${i.user.id}> removed **${name}** from the queue (it was number ${pos}).`,
+        allowedMentions: { parse: [] },
       });
+      await this.refreshPanel(i.guildId);
       return;
     }
     // add
@@ -1090,20 +1193,14 @@ export class RadioController {
         st,
         null,
         (o) => i.editReply(o),
-        () => i.deferReply(),
+        () => i.deferReply({ flags: EPHEMERAL }),
       );
       return;
     }
     const position = ctx.guilds.enqueue(i.guildId, st.id, i.user.id);
     if (position === null) return this.#deny(i, 'The queue is full (25 stations).');
     await i.reply({
-      embeds: [
-        infoEmbed(
-          'Queued',
-          `**${st.displayName}** is number ${position} in the queue.${position === 1 ? ' Use /radio skip to play it now.' : ''}`,
-          COLOR.ok,
-        ),
-      ],
+      content: `<@${i.user.id}> queued **${st.displayName}** (number ${position}).${position === 1 ? ' `/radio skip` plays it now.' : ''}`,
       allowedMentions: { parse: [] },
     });
     await this.refreshPanel(i.guildId);
@@ -1124,7 +1221,20 @@ export class RadioController {
       }
       this.#ctx.guilds.removeQueueEntry(i.guildId, entry.id);
     }
-    if (!next) return this.#deny(i, 'The queue is empty. Add stations with /radio queue add.');
+    if (!next) {
+      // Nothing went wrong (the panel always offers Skip), so this is grey, not an error.
+      await i.reply({
+        embeds: [
+          infoEmbed(
+            'Nothing to skip to',
+            'The queue is empty. Add stations with /radio queue add.',
+            COLOR.neutral,
+          ),
+        ],
+        flags: EPHEMERAL,
+      });
+      return;
+    }
     const { station, entryId } = next;
     const requestedBefore = this.#ctx.guilds.getIntent(i.guildId)?.lastRequestedAt ?? null;
     const started = () => {
@@ -1135,23 +1245,14 @@ export class RadioController {
       }
     };
     try {
-      if (i.isMessageComponent()) {
-        await this.#play(
-          i,
-          station,
-          null,
-          (o) => i.editReply(o),
-          () => i.deferReply({ flags: EPHEMERAL }),
-        );
-      } else {
-        await this.#play(
-          i,
-          station,
-          null,
-          (o) => i.editReply(o),
-          () => i.deferReply(),
-        );
-      }
+      await this.#play(
+        i,
+        station,
+        null,
+        (o) => i.editReply(o),
+        () => i.deferReply({ flags: EPHEMERAL }),
+        true,
+      );
     } finally {
       started();
     }
@@ -1176,11 +1277,11 @@ export class RadioController {
         infoEmbed(
           `Added: ${station.displayName}`,
           [
-            `Stream checked: ${codecLabel(o.codec, o.profile)} · ${o.measuredBitrateKbps ?? o.codecBitrateKbps ?? '?'} kbps · ${o.sampleRateHz ?? '?'} Hz · ${o.channels ?? '?'} channel(s) · ${transportLabel(o.transport)}`,
+            `Stream checked: ${checkedLine(o)}`,
             `Station ID: \`${station.id}\` (custom, this server only).`,
-            'Custom stations are listed in their own section, after the station packs.',
+            'Play it with `/radio play`. It is listed under Custom in `/radio browse`, after the station packs.',
             o.transport === 'http-continuous' && i.options.getString('url', true).startsWith('http://')
-              ? '⚠ This stream uses plain HTTP, so it is not encrypted on its way to the bot.'
+              ? '⚠️ This stream uses plain HTTP, so it is not encrypted on its way to the bot.'
               : '',
           ]
             .filter(Boolean)
@@ -1196,17 +1297,37 @@ export class RadioController {
     if (!a.ok) return this.#deny(i, a.reason);
     const st = this.#station(i.guildId, i.options.getString('station', true));
     if (st.provider !== 'custom') return this.#deny(i, 'Only custom stations can be edited.');
-    if (i.options.getString('url')) this.#rate(this.#ctx.limits.probeGuild, i.guildId, 'stream checks');
+    const name = i.options.getString('name');
+    const url = i.options.getString('url');
+    const website = i.options.getString('website');
+    const description = i.options.getString('description');
+    if (!name && !url && website === null && description === null)
+      return this.#deny(i, 'Nothing to change. Give a new name, url, website or description.');
+    if (url) this.#rate(this.#ctx.limits.probeGuild, i.guildId, 'stream checks');
     await i.deferReply({ flags: EPHEMERAL });
-    const { station } = await this.#ctx.custom.edit(i.guildId, st.id, {
-      ...(i.options.getString('name') ? { name: i.options.getString('name')! } : {}),
-      ...(i.options.getString('url') ? { url: i.options.getString('url')! } : {}),
-      ...(i.options.getString('website') !== null ? { website: i.options.getString('website') } : {}),
-      ...(i.options.getString('description') !== null
-        ? { description: i.options.getString('description') }
-        : {}),
+    const { station, report } = await this.#ctx.custom.edit(i.guildId, st.id, {
+      ...(name ? { name } : {}),
+      ...(url ? { url } : {}),
+      ...(website !== null ? { website } : {}),
+      ...(description !== null ? { description } : {}),
     });
-    await i.editReply({ embeds: [infoEmbed('Updated', `${station.displayName} was updated.`, COLOR.ok)] });
+    const changed = [
+      name ? 'name' : null,
+      url ? 'stream URL' : null,
+      website !== null ? 'website' : null,
+      description !== null ? 'description' : null,
+    ].filter(Boolean);
+    await i.editReply({
+      embeds: [
+        infoEmbed(
+          `Updated: ${station.displayName}`,
+          [`Changed: ${changed.join(', ')}.`, report ? `Stream checked: ${checkedLine(report.outcome)}` : '']
+            .filter(Boolean)
+            .join('\n'),
+          COLOR.ok,
+        ),
+      ],
+    });
   }
 
   async #cmdRemove(i: Cmd): Promise<void> {
@@ -1216,17 +1337,32 @@ export class RadioController {
     if (st.provider !== 'custom')
       return this.#deny(i, 'Only custom stations can be removed, not stations from a station pack.');
     const session = this.#ctx.sessions.get(i.guildId);
-    if (session?.stationId === st.id) session.stop();
+    const current = session?.stationId === st.id;
+    // After a Stop the session still remembers the station, so ask whether it was really playing.
+    const desired = current ? this.#ctx.guilds.getIntent(i.guildId)?.desiredState : null;
+    const wasPlaying = desired === 'playing' || desired === 'paused_empty';
+    if (current) session!.stop();
     const ok = this.#ctx.custom.remove(i.guildId, st.id);
     const settings = this.#ctx.guilds.getSettings(i.guildId);
-    if (settings.defaultStationId === st.id)
-      this.#ctx.guilds.updateSettings(i.guildId, { defaultStationId: null });
+    const wasDefault = settings.defaultStationId === st.id;
+    if (wasDefault) this.#ctx.guilds.updateSettings(i.guildId, { defaultStationId: null });
+    // No confirm step (the admin named the station), so the reply says exactly what went with it.
     await i.reply({
       embeds: [
-        infoEmbed(
-          ok ? 'Removed' : 'Not found',
-          ok ? `${st.displayName} was removed.` : 'Nothing was removed.',
-        ),
+        ok
+          ? infoEmbed(
+              `Removed: ${st.displayName}`,
+              [
+                'It is gone from this server, with its place in favourites and the queue.',
+                wasPlaying ? 'It was playing, so the radio stopped.' : '',
+                wasDefault ? 'It was the default station, so there is no default station now.' : '',
+                '-# This can’t be undone. To get it back, add it again with `/radio add`.',
+              ]
+                .filter(Boolean)
+                .join('\n'),
+              COLOR.ok,
+            )
+          : infoEmbed('Not found', 'Nothing was removed.', COLOR.neutral),
       ],
       flags: EPHEMERAL,
     });
@@ -1239,16 +1375,37 @@ export class RadioController {
     const reports = await this.#ctx.sources.rescanStation(st.id, undefined, (done, total) => {
       if (done < total) {
         void i
-          .editReply({ embeds: [infoEmbed('Checking sources', `Checked ${done} of ${total}…`)] })
+          .editReply({
+            embeds: [infoEmbed('Checking sources', `Checked ${done} of ${total}…`, COLOR.neutral)],
+          })
           .catch(() => {});
       }
     });
+    // Sources by name, as the list below shows them (an ID only when a source has no name): a long
+    // ID in a code span overflows on a phone.
+    const labels = new Map(reports.map((r) => [r.source.id, r.source.label]));
+    const name = (id: string) => {
+      const label = labels.get(id);
+      return label ? `**${truncate(label, 60)}**` : `\`${id}\``;
+    };
     let compareNote = '';
     if (compare) {
+      // Each comparison listens to two streams for about 40 s, so say what the wait is for.
+      await i
+        .editReply({
+          embeds: [
+            infoEmbed(
+              'Comparing audio',
+              `Checked all ${reports.length}. Now comparing the sources not yet verified as this station with a verified one. Each comparison listens for about 40 seconds.`,
+              COLOR.neutral,
+            ),
+          ],
+        })
+        .catch(() => {});
       try {
         const results = await this.#ctx.sources.deepVerify(i.guildId, st.id);
         compareNote = results.length
-          ? `\n**Audio comparison:**\n${results.map((r) => `• \`${r.sourceId}\`: ${r.evidence?.detail ?? r.error}`).join('\n')}`
+          ? `\n**Audio comparison:**\n${results.map((r) => `• ${name(r.sourceId)}: ${r.evidence?.detail ?? r.error}`).join('\n')}`
           : '\nThere were no unverified sources to compare.';
       } catch (err) {
         compareNote = `\nThe audio comparison did not run: ${isRadioError(err) ? err.userMessage : 'it failed.'}`;
@@ -1258,14 +1415,18 @@ export class RadioController {
     const summary = reports
       .map(
         (r) =>
-          `• \`${r.source.id}\`: ${r.outcome.success ? `${codecLabel(r.outcome.codec, r.outcome.profile)} ${r.outcome.measuredBitrateKbps ?? '?'} kbps · identity ${IDENTITY_WORD[r.identity.status]}` : `check failed (${r.outcome.failureCode})`}`,
+          `• ${name(r.source.id)}: ${r.outcome.success ? `${codecLabel(r.outcome.codec, r.outcome.profile)} · ${bitrateText(r.outcome)} · ${CHECK_IDENTITY[r.identity.status]}` : `check failed (${r.outcome.failureCode})`}`,
       )
       .join('\n');
     // Discord's 6000-character limit covers every embed in the message together.
     const used = view.embeds.reduce((n, e) => n + embedLength(e.toJSON()), 0);
     const title = `Checked ${reports.length} ${reports.length === 1 ? 'source' : 'sources'} again`;
     view.embeds.unshift(
-      infoEmbed(title, truncate(`${summary}${compareNote}`, Math.min(4000, 5900 - used - title.length))),
+      infoEmbed(
+        title,
+        truncate(`${summary}${compareNote}`, Math.min(4000, 5900 - used - title.length)),
+        reports.every((r) => r.outcome.success) ? COLOR.ok : COLOR.warn,
+      ),
     );
     await i.editReply(view);
   }
@@ -1293,26 +1454,37 @@ export class RadioController {
     const reports = packId
       ? [await this.#ctx.catalogueSync.sync(packId, 'admin')]
       : await this.#ctx.catalogueSync.syncAll('admin');
+    // Long lists are shortened, so one pack's changes never push the rest of the report out.
+    const names = (list: string[]) =>
+      list.length > 15 ? `${list.slice(0, 15).join(', ')} and ${list.length - 15} more` : list.join(', ');
     const sections = reports.map((r) => {
-      const lines = r.ok
-        ? [
-            `**${r.packName}**: the official list has ${r.officialCount} stations.`,
-            `Added: ${r.added.length ? r.added.join(', ') : 'none'}`,
-            `Renamed: ${r.renamed.length ? r.renamed.map((x) => `${x.from} → ${x.to}`).join(', ') : 'none'}`,
-            `No longer on the official list: ${r.missing.length ? `${r.missing.join(', ')} (kept here, so favourites still work)` : 'none'}`,
-            `Back on the list: ${r.returned.length ? r.returned.join(', ') : 'none'}`,
-            r.needsSourceMapping.length
-              ? `New stations with no stream yet (they can’t play until a reviewed source is added to the pack): ${r.needsSourceMapping.join(', ')}`
-              : 'No new stations are waiting for a stream.',
-            r.unreachable.length
-              ? `Stations whose sources all failed their last check: ${r.unreachable.join(', ')}`
-              : 'No station has all of its checked sources failing.',
-          ]
-        : [
-            `**${r.packName}**: the sync failed. ${r.error}`,
-            'Nothing was removed. The list is marked as possibly out of date.',
-          ];
-      return lines.join('\n');
+      if (!r.ok)
+        return [
+          `**${r.packName}**: the sync failed. ${r.error}`,
+          'Nothing was removed. The list is marked as possibly out of date.',
+        ].join('\n');
+      // Every station a sync adds has no stream yet, so that is said once, with the names.
+      const allWaiting = r.needsSourceMapping.length === r.added.length;
+      const changes = [
+        r.added.length
+          ? `Added: ${names(r.added)}${allWaiting ? ' (no stream yet: they can’t play until a reviewed source is added to the pack)' : ''}`
+          : null,
+        !allWaiting && r.needsSourceMapping.length
+          ? `New stations with no stream yet (they can’t play until a reviewed source is added to the pack): ${names(r.needsSourceMapping)}`
+          : null,
+        r.renamed.length ? `Renamed: ${names(r.renamed.map((x) => `${x.from} → ${x.to}`))}` : null,
+        r.missing.length
+          ? `No longer on the official list: ${names(r.missing)} (kept here, so favourites still work)`
+          : null,
+        r.returned.length ? `Back on the list: ${names(r.returned)}` : null,
+      ].filter((l) => l !== null);
+      return [
+        `**${r.packName}**: the official list has ${r.officialCount} stations.`,
+        ...(changes.length ? changes : ['No stations were added, renamed, dropped or brought back.']),
+        r.unreachable.length
+          ? `Stations whose sources all failed their last check: ${names(r.unreachable)}`
+          : 'No station has all of its checked sources failing.',
+      ].join('\n');
     });
     const allOk = reports.every((r) => r.ok);
     await i.editReply({
@@ -1337,9 +1509,16 @@ export class RadioController {
     if (manual !== null) patch.manualBitrateKbps = manual;
     const settings = this.#ctx.guilds.updateSettings(i.guildId, patch);
     const restarted = 'manualBitrateKbps' in patch && this.#ctx.sessions.get(i.guildId)?.refreshEncoder();
+    // A manual bitrate is kept but unused until Quality is Manual: say so, or it looks ignored.
+    const note = restarted
+      ? REENCODE_NOTE
+      : manual !== null && settings.qualityMode !== 'manual'
+        ? `Manual bitrate saved (${manual} kbps). It is used once Quality is set to Manual.`
+        : '';
     await i.reply({
-      ...configView(this.#ctx, i.guildId, settings, 'access'),
-      ...(restarted ? { content: REENCODE_NOTE } : {}),
+      // Both options are playback settings, so the page that shows them opens when one is given.
+      ...configView(this.#ctx, i.guildId, settings, Object.keys(patch).length ? 'playback' : 'access'),
+      ...(note ? { content: note } : {}),
       flags: EPHEMERAL,
     });
   }
@@ -1352,8 +1531,10 @@ export class RadioController {
       name: `radio-bot-config-${i.guildId}.json`,
     });
     await i.reply({
-      content:
-        'This server’s settings. The file contains no tokens, and custom station URLs that include a query string are left out.',
+      content: [
+        'This server’s settings, favourites, source choices and custom stations. To load them here or on another server, use `/radio import` with this file.',
+        '-# The file contains no tokens. A custom station URL with a query string, user name or password is left out; add that station again with `/radio add` after an import.',
+      ].join('\n'),
       files: [file],
       flags: EPHEMERAL,
     });
@@ -1399,10 +1580,15 @@ export class RadioController {
             [
               ...preview.lines,
               '',
-              ...(preview.warnings.length ? ['**Warnings**', ...preview.warnings.map((w) => `⚠ ${w}`)] : []),
+              ...(preview.warnings.length
+                ? ['**Warnings**', ...preview.warnings.map((w) => `⚠️ ${w}`), '']
+                : []),
+              '-# **Apply import** changes these settings at once and can’t be undone. The buttons work for 10 minutes.',
             ].join('\n'),
             4000,
           ),
+          // Warnings need a look before Apply.
+          preview.warnings.length ? COLOR.warn : COLOR.info,
         ),
       ],
       components: [
@@ -1425,29 +1611,46 @@ export class RadioController {
     if (!a.ok) return this.#deny(i, a.reason);
     const channel = i.options.getChannel('channel') ?? i.channel;
     if (!channel?.isSendable() || channel.type === ChannelType.GuildVoice) {
-      return this.#deny(i, 'Pick a text channel for the control panel.');
+      return this.#deny(i, 'Pick a text channel for the control panel, with the channel option.');
     }
     const me = i.guild.members.me;
+    // The panel is an embed, so it needs Embed Links as well: without it the post would fail.
     if (
       me &&
       'permissionsFor' in channel &&
-      !channel.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])
+      !channel
+        .permissionsFor(me)
+        ?.has([
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.EmbedLinks,
+        ])
     ) {
-      return this.#deny(i, `I need View Channel and Send Messages in <#${channel.id}>.`);
+      return this.#deny(i, `I need View Channel, Send Messages and Embed Links in <#${channel.id}>.`);
     }
     await i.deferReply({ flags: EPHEMERAL });
     const msg = await channel.send({ ...this.#panelView(i.guildId), allowedMentions: { parse: [] } });
     const old = this.#ctx.guilds.getSettings(i.guildId);
     this.#ctx.guilds.updateSettings(i.guildId, { panelChannelId: channel.id, panelMessageId: msg.id });
+    let removedOld = false;
     if (old.panelMessageId && old.panelChannelId) {
       const oldCh = i.guild.channels.cache.get(old.panelChannelId);
-      if (oldCh?.isTextBased()) await oldCh.messages.delete(old.panelMessageId).catch(() => {});
+      if (oldCh?.isTextBased())
+        removedOld = await oldCh.messages.delete(old.panelMessageId).then(
+          () => true,
+          () => false,
+        );
     }
     await i.editReply({
       embeds: [
         infoEmbed(
           'Control panel posted',
-          `Posted in <#${channel.id}>. Every click is checked, so only people allowed to control the radio can use the buttons.`,
+          [
+            `Posted in <#${channel.id}>.${removedOld ? ' The old panel was deleted.' : ''} It updates by itself and keeps working after restarts.`,
+            // Browse, Sources and Refresh are for anyone who may use the bot; the rest need control.
+            'Each button checks the access of whoever presses it.',
+            '-# To move it, run `/radio panel` again in another channel.',
+          ].join('\n'),
           COLOR.ok,
         ),
       ],
@@ -1458,10 +1661,12 @@ export class RadioController {
     const s = this.#ctx.sessions.get(guildId);
     const status = s?.status() ?? null;
     const st = status?.stationId ? this.#ctx.stations.getStation(status.stationId) : null;
-    const embed = nowEmbed(st, status, status?.channelId ?? null).setAuthor({
+    // One queue read for both "Up next" and the Skip button.
+    const queue = this.#ctx.guilds.listQueue(guildId);
+    const embed = this.#withQueue(nowEmbed(st, status, status?.channelId ?? null), queue).setAuthor({
       name: 'Radio Bot control panel',
     });
-    return { embeds: [embed], components: controlRows(this.#ctx, guildId, st?.id ?? null, true) };
+    return { embeds: [embed], components: controlRows(this.#ctx, guildId, st?.id ?? null, true, queue) };
   }
 
   /** Re-renders (and thereby rebinds) a guild's persistent panel. Safe to call often. */
@@ -1487,22 +1692,28 @@ export class RadioController {
     const e = new EmbedBuilder()
       .setTitle('Radio Bot help')
       .setColor(COLOR.info)
-      .setDescription('Live radio in your voice channel. Every command starts with `/radio`.')
+      .setDescription(
+        // Help answers in any channel, so outside the command channels it says where the rest work.
+        ['Live radio in your voice channel. Every command starts with `/radio`.', a.ok ? null : a.reason]
+          .filter(Boolean)
+          .join('\n'),
+      )
       .addFields(
         {
           name: '🎧 Listen',
           value: lines(
             '`/radio browse`: pick a station from the list',
             '`/radio play <station>`: play a station in your voice channel',
-            '`/radio now` what is playing · `/radio stop` · `/radio leave`',
+            '`/radio now` what is playing · `/radio stop` stop playing · `/radio leave` leave the channel',
             '-# Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
+            '-# Station and queue changes, Stop and Leave are announced in the channel in one line. Everything else is shown only to you.',
           ),
         },
         {
           name: '⭐ Favourites and the default station',
           value: lines(
-            'Press **Favourite** under a playing station. Favourites come first in the `/radio play` suggestions, have their own list in Browse, and Next and Previous step through them.',
-            'The default station (set by an admin) is what `/radio join` plays, and what autostart plays when the bot starts.',
+            'Press **Favourite** under a playing station. Favourites come first in the `/radio play` suggestions and have their own list in Browse (**Show favourites**). With two or more, Next and Previous step through them while one plays.',
+            'The default station (set by an admin) is what `/radio join` plays, and what **Autostart** plays when the bot starts.',
           ),
         },
         {
@@ -1524,7 +1735,13 @@ export class RadioController {
           ? {
               name: '🛠 Admin',
               value: lines(
-                '`/radio config` · `/radio add` · `/radio edit` · `/radio remove` · `/radio source pin|prefer|auto|verify` · `/radio rescan` · `/radio sync` · `/radio export` · `/radio import` · `/radio panel`',
+                // Grouped by job, setup first, so a phone shows what to run first.
+                '`/radio config`: channels, DJ roles and quality · `/radio panel`: a control panel that stays',
+                'Custom stations: `/radio add` · `/radio edit` · `/radio remove`',
+                'Sources: `/radio source pin|prefer|auto|verify` · `/radio rescan`',
+                '-# `/radio source`: `prefer` tries a source first · `pin` also lets only admins switch it · `auto` lets the bot choose · `verify` records if a source is the right station',
+                'Packs: `/radio sync` checks them against their official lists',
+                'Settings file: `/radio export` · `/radio import`',
                 '`/radio stats`: live stream and connection figures, shown only to you',
               ),
             }
@@ -1535,8 +1752,7 @@ export class RadioController {
             },
         {
           name: '🔊 Sound',
-          value:
-            'Audio reaches Discord as 48 kHz stereo Opus at up to the station’s own bitrate (510 kbps at most). A higher bitrate can’t add detail the station’s stream doesn’t contain.',
+          value: `Audio reaches Discord as 48 kHz stereo Opus at up to the station’s own bitrate (${this.#ctx.config.maxOpusBitrateKbps} kbps at most). A higher bitrate can’t add detail the station’s stream doesn’t contain.`,
         },
       )
       .setFooter({ text: DISCLAIMER });
@@ -1564,7 +1780,7 @@ export class RadioController {
       await i.reply({
         embeds: [
           infoEmbed(
-            'Automatic selection',
+            'Choosing automatically',
             `The bot chooses the source for ${st.displayName} again, based on its own checks.`,
             COLOR.ok,
           ),
@@ -1581,7 +1797,7 @@ export class RadioController {
       if (st.provider !== 'custom' && !isOperator(this.#ctx, i.user.id)) {
         return this.#deny(
           i,
-          'A review of a station-pack source applies to every server that uses this bot, so only the bot’s operator can record it (someone in OPERATOR_USER_IDS, or the application’s owner or team).',
+          'A review of a station-pack source applies to every server that uses this bot, so only the bot owner can record it.',
         );
       }
       if (st.provider === 'custom' && st.guildId !== i.guildId)
@@ -1596,7 +1812,7 @@ export class RadioController {
       await i.reply({
         embeds: [
           infoEmbed(
-            'Identity review recorded',
+            'Source review recorded',
             `\`${source.id}\`: ${decision?.summary ?? `Verdict: ${verdict}.`} It is kept in the source’s evidence as a human review.`,
             COLOR.ok,
           ),
@@ -1611,12 +1827,18 @@ export class RadioController {
     const warn =
       selection.selected?.id === source.id
         ? ''
-        : `\n⚠ That source can’t be used right now (${selection.eligibility.find((e) => e.sourceId === source.id)?.reasons.join('; ') ?? 'reason unknown'}).${mode === 'pin' ? ' Until it recovers, the station plays from a fallback and is shown as degraded.' : ''}`;
+        : `\n⚠️ That source can’t be used right now (${selection.eligibility.find((e) => e.sourceId === source.id)?.reasons.join('; ') ?? 'reason unknown'}).${mode === 'pin' ? ' Until it works again, another source plays and the station shows as degraded.' : ''}`;
+    // Named as in the sources list (an ID only when it has no name); its format goes on its own line.
+    const name = source.label ? `**${truncate(source.label, 60)}**` : `\`${source.id}\``;
     await i.reply({
       embeds: [
         infoEmbed(
-          mode === 'pin' ? 'Source pinned' : 'Source preferred',
-          `${st.displayName} → \`${source.id}\` (${sourceFormat(source)}).${warn}`,
+          mode === 'pin' ? 'Source pinned' : 'Source tried first',
+          `${
+            mode === 'pin'
+              ? `On this server, ${st.displayName} now plays from ${name} whenever it can be used, and only admins can switch it to another source.`
+              : `On this server, ${st.displayName} now tries ${name} first. Whenever it can’t be used, the bot picks another source by itself.`
+          }\n-# ${sourceFormat(source)}${warn}`,
           warn ? COLOR.warn : COLOR.ok,
         ),
       ],
@@ -1655,8 +1877,12 @@ export class RadioController {
           const playing =
             action === 'spref' && session?.stationId === arg ? (session.status()?.source?.id ?? null) : null;
           const source = playing ? this.#ctx.stations.getSource(playing) : null;
-          if (!st || (action === 'spref' && source?.stationId !== st.id))
-            return this.#deny(i, 'That station isn’t playing from a source that can be preferred right now.');
+          if (!st) return this.#deny(i, GONE);
+          if (action === 'spref' && source?.stationId !== st.id)
+            return this.#deny(
+              i,
+              'That station isn’t playing from one of its sources right now, so there is no source to try first.',
+            );
           this.#ctx.guilds.setPreference(
             i.guildId,
             st.id,
@@ -1667,9 +1893,9 @@ export class RadioController {
           await i.reply({
             embeds: [
               infoEmbed(
-                action === 'spref' ? 'Preferred source' : 'Automatic selection',
+                action === 'spref' ? 'Source tried first' : 'Choosing automatically',
                 action === 'spref'
-                  ? `This server now prefers ${source!.label ?? 'that source'} (${sourceFormat(source!)}) for ${st.displayName}, whenever it is verified and working.`
+                  ? `On this server, ${st.displayName} now tries **${source!.label ?? 'that source'}** first. If it fails, the bot switches to another source.`
                   : `The bot chooses the source for ${st.displayName} again, based on its own checks.`,
                 COLOR.ok,
               ),
@@ -1681,7 +1907,7 @@ export class RadioController {
         case 'pick': {
           if (!i.isStringSelectMenu()) return;
           const st = visibleStation(this.#ctx, i.guildId, i.values[0] ?? '');
-          if (!st) return this.#deny(i, 'That station is no longer available.');
+          if (!st) return this.#deny(i, GONE);
           return await this.#play(
             i,
             st,
@@ -1692,7 +1918,7 @@ export class RadioController {
         }
         case 'play': {
           const st = visibleStation(this.#ctx, i.guildId, arg);
-          if (!st) return this.#deny(i, 'That station is no longer available.');
+          if (!st) return this.#deny(i, GONE);
           return await this.#play(
             i,
             st,
@@ -1767,8 +1993,14 @@ export class RadioController {
           return await this.#cmdStop(i);
         case 'leave':
           return await this.#cmdLeave(i);
-        case 'now':
-          return await this.#cmdNow(i, !this.#isPanel(i));
+        case 'now': {
+          if (!this.#isPanel(i)) return await this.#cmdNow(i, true);
+          const a = this.#auth(i, 'read');
+          if (!a.ok) return this.#deny(i, a.reason);
+          // Refresh on the panel redraws the panel itself: everyone sees it, and no reply is posted.
+          await i.update(this.#panelView(i.guildId));
+          return;
+        }
         case 'next':
         case 'prev':
           return await this.#step(i, action === 'next' ? 1 : -1);
@@ -1777,7 +2009,7 @@ export class RadioController {
           const a = this.#auth(i, 'control');
           if (!a.ok) return this.#deny(i, a.reason);
           const st = visibleStation(this.#ctx, i.guildId, arg);
-          if (!st) return this.#deny(i, 'That station is no longer available.');
+          if (!st) return this.#deny(i, GONE);
           // Each button sets one state, so a double click or an old card never undoes the other.
           const want = action === 'fav';
           const was = this.#ctx.guilds.isFavourite(i.guildId, st.id);
@@ -1788,10 +2020,19 @@ export class RadioController {
                 ? `${st.displayName} is already one of this server’s favourites.`
                 : `${st.displayName} isn’t one of this server’s favourites, so nothing changed.`
               : want
-                ? `${st.displayName} is now one of this server’s favourites. Favourites come first in the \`/radio play\` suggestions, have their own list in \`/radio browse\` (the Favourites button), and once you have two or more, Next and Previous step through them while one is playing.`
+                ? `${st.displayName} is now one of this server’s favourites. They come first in \`/radio play\`, and **Show favourites** in Browse lists them.`
                 : `${st.displayName} is no longer one of this server’s favourites.`;
+          const title =
+            was === want
+              ? want
+                ? 'Already a favourite'
+                : 'Not a favourite'
+              : want
+                ? 'Added to favourites'
+                : 'Removed from favourites';
           await i.reply({
-            embeds: [infoEmbed('Favourites', text, COLOR.ok)],
+            // Grey when nothing changed, green when it did.
+            embeds: [infoEmbed(title, text, was === want ? COLOR.neutral : COLOR.ok)],
             flags: EPHEMERAL,
           });
           // The control panel shows Favourite or Unfavourite for the playing station: redraw it.
@@ -1803,7 +2044,7 @@ export class RadioController {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
           const st = visibleStation(this.#ctx, i.guildId, arg);
-          if (!st) return this.#deny(i, 'That station is no longer available.');
+          if (!st) return this.#deny(i, GONE);
           await i.reply({
             ...this.#sourcesView(i.guildId, st, action === 'insp', this.#who(i)),
             flags: EPHEMERAL,
@@ -1814,7 +2055,7 @@ export class RadioController {
           const a = this.#auth(i, 'admin');
           if (!a.ok) return this.#deny(i, a.reason);
           const st = visibleStation(this.#ctx, i.guildId, arg);
-          if (!st) return this.#deny(i, 'That station is no longer available.');
+          if (!st) return this.#deny(i, GONE);
           return await this.#rescan(i, st, false);
         }
         case 'cfg':
@@ -1906,7 +2147,7 @@ export class RadioController {
       const ids = [...i.values].filter((id) => id !== g);
       if (field === 'djs') patch = { djRoleIds: ids };
     } else if (i.isStringSelectMenu()) {
-      page = 'playback';
+      page = field === 'member' ? 'access' : 'playback';
       const v = i.values[0];
       if (field === 'idle' && (v === '24x7' || v === 'pause_when_empty' || v === 'leave_when_empty'))
         patch = { idleMode: v };
@@ -1914,10 +2155,18 @@ export class RadioController {
         patch = { memberControlMode: v };
       if (field === 'quality' && (v === 'maximum' || v === 'balanced' || v === 'manual'))
         patch = { qualityMode: v };
+      // The switches menu: a ticked option is on, an unticked one off.
+      if (field === 'switches')
+        patch = {
+          autostart: i.values.includes('autostart'),
+          resumeOnRestart: i.values.includes('resume'),
+          voiceLock: i.values.includes('lock'),
+        };
     } else if (i.isButton() && field === 'vstatus') {
       page = 'notify';
       patch = { voiceChannelStatus: !cur.voiceChannelStatus };
     } else if (i.isButton()) {
+      // The switch buttons of settings pages sent before the switches became a menu.
       page = 'playback';
       if (field === 'autostart') patch = { autostart: !cur.autostart };
       if (field === 'resume') patch = { resumeOnRestart: !cur.resumeOnRestart };
@@ -1929,8 +2178,25 @@ export class RadioController {
     const restarted =
       ('qualityMode' in patch || 'manualBitrateKbps' in patch) && this.#ctx.sessions.get(g)?.refreshEncoder();
     if ('idleMode' in patch) this.#recheckIdle(i.guild);
-    // The note shows only with the change that caused the restart; the next update clears it.
-    await i.update({ ...configView(this.#ctx, g, settings, page), content: restarted ? REENCODE_NOTE : '' });
+    // A notice channel the bot can't post in would fail quietly later, so say so when it is chosen.
+    // Only when that menu is used, and from the cached channel and member: no request to Discord.
+    const me = i.guild.members.me;
+    const noticeCh =
+      field === 'notify' && settings.notificationChannelId
+        ? i.guild.channels.cache.get(settings.notificationChannelId)
+        : null;
+    const cantPost =
+      me &&
+      noticeCh &&
+      'permissionsFor' in noticeCh &&
+      !noticeCh.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]);
+    // The note shows only with the change that caused it; the next update clears it.
+    const content = restarted
+      ? REENCODE_NOTE
+      : cantPost
+        ? `⚠️ I can’t post in <#${noticeCh.id}> yet. Give me View Channel and Send Messages there.`
+        : '';
+    await i.update({ ...configView(this.#ctx, g, settings, page), content });
   }
 
   /** Re-applies the idle mode to the bot's current channel after the setting may have changed. */
@@ -1959,7 +2225,20 @@ export class RadioController {
       });
       return;
     }
-    await i.deferUpdate();
+    // Progress at once, and the buttons go: each custom station is checked, which takes a while,
+    // and a second click would only find the preview already used.
+    await i.update({
+      embeds: [
+        infoEmbed(
+          'Applying import…',
+          pending.data.customStations.some((c) => !c.urlRedacted)
+            ? 'Settings first, then each custom station is checked before it is added. This can take a minute.'
+            : 'Applying the settings.',
+          COLOR.neutral,
+        ),
+      ],
+      components: [],
+    });
     const channels = new Set(i.guild.channels.cache.keys());
     const roles = new Set(i.guild.roles.cache.keys());
     applyImport(i.guildId, pending.data, this.#ctx.guilds, this.#ctx.stations, channels, roles, (fn) =>
@@ -2008,7 +2287,8 @@ export class RadioController {
               .join('\n'),
             4000,
           ),
-          COLOR.ok,
+          // Some stations not added: it worked, but needs a look.
+          failed.length ? COLOR.warn : COLOR.ok,
         ),
       ],
       components: [],

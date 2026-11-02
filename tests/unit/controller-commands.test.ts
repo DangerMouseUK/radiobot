@@ -1,4 +1,11 @@
-import { type APIEmbed, AttachmentBuilder, ChannelType, type Interaction, MessageFlags } from 'discord.js';
+import {
+  type APIEmbed,
+  AttachmentBuilder,
+  ChannelType,
+  type Interaction,
+  MessageFlags,
+  PermissionFlagsBits,
+} from 'discord.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { COLOR } from '../../src/discord/ui/format.ts';
 import { exportGuild } from '../../src/import-export/config-io.ts';
@@ -101,7 +108,7 @@ describe('the entry point', () => {
     });
     expect(i.violations).toEqual([]);
     expect(methods(i)).toEqual(['deferReply', 'editReply']);
-    expect(i.text).toMatch(/Something went wrong\. The details were logged/);
+    expect(i.text).toMatch(/Something went wrong\. Try again in a moment/);
     expect(i.text).not.toMatch(/disk full/);
     expect(internalIncidents(t.metrics)).toHaveLength(1);
   });
@@ -140,13 +147,41 @@ describe('/radio play', () => {
     t.putInVoice(t.people.member, V1);
     const i = await t.command(t.people.member, { sub: 'play', strings: { station: 'My Station' } });
     expect(i.violations).toEqual([]);
-    expect(methods(i)).toEqual(['deferReply', 'editReply', 'editReply']);
-    expect(i.ephemeral).toBe(false);
+    // The card is for the person who asked; the channel gets one short public line.
+    expect(methods(i)).toEqual(['deferReply', 'editReply', 'editReply', 'followUp']);
+    expect(i.ephemeral).toBe(true);
     expect(callText(i, 1)).toMatch(/Joining <#700000000000000001> for \*\*My Station\*\*/);
+    expect(i.calls[3]!.payload).toMatchObject({
+      content: `<@${MEMBER}> started **My Station** in <#${V1}>.`,
+      allowedMentions: { parse: [] },
+    });
+    expect(i.calls[3]!.payload.flags).toBeUndefined();
     expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: st.id, channelId: V1 }]);
     expect(t.sessions.requestedBy).toEqual([MEMBER]);
     const actions = i.componentIds.map((id) => decode(t.ids, id)?.action);
-    expect(actions).toEqual(['prev', 'next', 'stop', 'leave', 'obrowse', 'now', 'fav', 'srcs', 'insp']);
+    expect(actions).toEqual(['prev', 'next', 'obrowse', 'fav', 'srcs', 'insp', 'now', 'stop', 'leave']);
+  });
+
+  it('still plays, with the private card only, when Discord refuses the public line', async () => {
+    const { t, st } = customServer();
+    t.putInVoice(t.people.member, V1);
+    const refuse = vi
+      .spyOn(FakeCommand.prototype, 'followUp')
+      .mockRejectedValueOnce(new Error('Missing Access'));
+    const i = await t.command(t.people.member, { sub: 'play', strings: { station: 'My Station' } });
+    refuse.mockRestore();
+    expect(i.violations).toEqual([]);
+    expect(t.sessions.plays.map((p) => p.stationId)).toEqual([st.id]);
+    expect(i.ephemeral).toBe(true);
+  });
+
+  it('posts no public line when the station could not start', async () => {
+    const { t } = customServer();
+    t.putInVoice(t.people.member, V1);
+    t.sessions.nextResult = { ok: false, code: 'NO_ELIGIBLE_SOURCE', message: 'No source can be used.' };
+    const i = await t.command(t.people.member, { sub: 'play', strings: { station: 'My Station' } });
+    expect(methods(i)).not.toContain('followUp');
+    expect(i.ephemeral).toBe(true);
   });
 
   it('says it is switching when the bot is already playing', async () => {
@@ -196,8 +231,13 @@ describe('/radio play', () => {
       retrying: true,
       message: 'The stream stalled.',
     };
-    expect((await play()).lastText).toMatch(
-      /Starting My Station\nThe stream stalled\.\nCheck progress with \/radio now\./,
+    const retrying = await play();
+    expect(retrying.lastText).toMatch(
+      /Starting My Station\nThe stream stalled\.\nPress \*\*Refresh\*\* to check progress\./,
+    );
+    // Refresh shows progress, Stop cancels the retry, Sources says what is wrong.
+    expect(retrying.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(
+      expect.arrayContaining(['now', 'stop', 'srcs']),
     );
 
     t.sessions.nextResult = {
@@ -217,6 +257,11 @@ describe('/radio play', () => {
     );
     expect(none.lastText).not.toMatch(/custom-my-station-2/);
     expect(none.lastText).toMatch(/I will try again automatically/);
+    // The title says what failed, and the card keeps its buttons (Stop cancels the retry).
+    expect(lastEmbed(none).title).toBe('Couldn’t play My Station');
+    expect(none.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(
+      expect.arrayContaining(['now', 'stop', 'srcs', 'obrowse']),
+    );
 
     t.sessions.nextResult = { ok: false, code: 'ACCESS_DENIED', message: 'The host refused the stream.' };
     const denied = await play();
@@ -277,7 +322,11 @@ describe('the control panel', () => {
     const i = await t.command(t.people.admin, { sub: 'panel', channel: PANEL });
     expect(i.violations).toEqual([]);
     expect(methods(i)).toEqual(['deferReply', 'editReply']);
-    expect(i.text).toMatch(/Control panel posted[\s\S]*Posted in <#800000000000000010>/);
+    expect(i.text).toMatch(
+      /Control panel posted[\s\S]*Posted in <#800000000000000010>\. The old panel was deleted\./,
+    );
+    // Browse, Sources and Refresh need less than control, so it doesn't claim that all buttons do.
+    expect(i.text).toMatch(/Each button checks the access of whoever presses it\./);
     expect(panel.sent).toHaveLength(1);
     const posted = panel.sent[0] as { allowedMentions: unknown; embeds: Array<{ toJSON(): APIEmbed }> };
     expect(posted.allowedMentions).toEqual({ parse: [] });
@@ -307,9 +356,45 @@ describe('the control panel', () => {
     muted.canSend = false;
     t.guild.members.me = { id: '900000000000000099' };
     const denied = await t.command(t.people.admin, { sub: 'panel', channel: PANEL });
-    expect(denied.text).toMatch(/I need View Channel and Send Messages in <#800000000000000010>/);
+    expect(denied.text).toMatch(
+      /I need View Channel, Send Messages and Embed Links in <#800000000000000010>/,
+    );
     expect(muted.sent).toEqual([]);
     expect(t.guilds.getSettings(GUILD).panelChannelId).toBeNull();
+  });
+
+  it('refuses a channel where it may post but not embed, since the panel is an embed', async () => {
+    const t = setup();
+    const plain = t.textChannel(PANEL);
+    plain.lacks.add(PermissionFlagsBits.EmbedLinks);
+    t.guild.members.me = { id: '900000000000000099' };
+    const i = await t.command(t.people.admin, { sub: 'panel', channel: PANEL });
+    expect(i.ephemeral).toBe(true);
+    expect(i.text).toMatch(/I need View Channel, Send Messages and Embed Links in <#800000000000000010>/);
+    expect(plain.sent).toEqual([]);
+    expect(t.guilds.getSettings(GUILD).panelChannelId).toBeNull();
+  });
+
+  it('shows what is queued, and is redrawn when the queue is cleared or shortened', async () => {
+    const { t, st } = customServer();
+    const panel = t.textChannel(PANEL);
+    t.guilds.updateSettings(GUILD, { panelChannelId: PANEL, panelMessageId: '500000000000000001' });
+    playingIn(t, V1, st.id);
+    t.guilds.enqueue(GUILD, t.addCustomStation('First Up').id, MEMBER);
+    t.guilds.enqueue(GUILD, t.addCustomStation('Second Up').id, MEMBER);
+    await t.controller.refreshPanel(GUILD);
+    const view = panel.edits.at(-1)!.view as { embeds: Array<{ toJSON(): APIEmbed }> };
+    expect(embedText(view.embeds[0]!.toJSON())).toMatch(
+      /Up next \(2 in the queue\)\n1\. First Up\n2\. Second Up/,
+    );
+    const before = panel.edits.length;
+    await t.command(t.people.admin, { group: 'queue', sub: 'remove', ints: { position: 1 } });
+    expect(panel.edits).toHaveLength(before + 1);
+    await t.command(t.people.admin, { group: 'queue', sub: 'clear' });
+    expect(panel.edits).toHaveLength(before + 2);
+    // Clearing an empty queue changes nothing, so the panel is left alone.
+    await t.command(t.people.admin, { group: 'queue', sub: 'clear' });
+    expect(panel.edits).toHaveLength(before + 2);
   });
 
   it('is updated when a station starts, and forgotten once its message is gone', async () => {
@@ -359,6 +444,19 @@ describe('/radio stop and /radio leave', () => {
     expect(t.guilds.getIntent(GUILD)?.desiredState).toBe('stopped');
   });
 
+  it('a second Stop answers privately, so it posts no second public notice', async () => {
+    const { t, st } = customServer();
+    const s = playingIn(t, V1, st.id);
+    const first = await t.command(t.people.admin, { sub: 'stop' });
+    expect(first.ephemeral).toBe(false);
+    // The session stays after Stop (the real one records the wish to stay stopped).
+    t.guilds.setIntent(GUILD, { desiredState: 'stopped' });
+    const second = await t.command(t.people.admin, { sub: 'stop' });
+    expect(second.ephemeral).toBe(true);
+    expect(second.text).toMatch(/Stopped\nNothing was playing\./);
+    expect(s.stops).toBe(2);
+  });
+
   it('leave disconnects the session, or records the wish to stay out', async () => {
     const { t, st } = customServer();
     const s = playingIn(t, V1, st.id);
@@ -367,8 +465,15 @@ describe('/radio stop and /radio leave', () => {
     expect(i.text).toMatch(/<@900000000000000002> disconnected the radio/);
 
     const fresh = setup();
-    await fresh.command(fresh.people.admin, { sub: 'leave' });
+    const away = await fresh.command(fresh.people.admin, { sub: 'leave' });
     expect(fresh.guilds.getIntent(GUILD)?.desiredState).toBe('left');
+    // Not in a channel: nothing to announce, so the answer is private.
+    expect(away.ephemeral).toBe(true);
+    expect(away.text).toMatch(/Not in a voice channel\nRadio Bot wasn’t in a voice channel\./);
+    s.connected = false;
+    const again = await t.command(t.people.admin, { sub: 'leave' });
+    expect(again.ephemeral).toBe(true);
+    expect(s.leaves).toEqual(['left', 'left']);
   });
 });
 
@@ -387,6 +492,20 @@ describe('/radio join', () => {
     const i = await t.command(t.people.admin, { sub: 'join' });
     expect(i.text).toMatch(/Too many join requests in a short time/);
     expect(t.sessions.get(GUILD)).toBeNull();
+  });
+
+  it('with no default station, offers the playback buttons and says how to set one', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const i = await t.command(t.people.admin, { sub: 'join' });
+    expect(i.ephemeral).toBe(false);
+    expect(lastEmbed(i).color).toBe(COLOR.ok);
+    expect(i.lastText).toMatch(/press \*\*Browse\*\* or use `\/radio play` to pick one/);
+    expect(i.lastText).toMatch(/Admins can set one with `\/radio config default_station`/);
+    // Browse finishes the job without typing another command.
+    expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(
+      expect.arrayContaining(['obrowse', 'next', 'stop']),
+    );
   });
 });
 
@@ -409,7 +528,7 @@ describe('/radio now, quality and status', () => {
     t.guilds.enqueue(GUILD, t.addCustomStation('Next Up').id, MEMBER);
     const i = await t.command(t.people.member, { sub: 'now' });
     expect(i.ephemeral).toBe(true);
-    expect(i.text).toMatch(/▶ My Station/);
+    expect(i.text).toMatch(/▶ Playing: My Station/);
     expect(i.text).toMatch(/Up next \(1 in the queue\)\n1\. Next Up/);
     // A queue adds the Skip button.
     expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toContain('skip');
@@ -552,7 +671,7 @@ describe('/radio stats', () => {
       'Connected to: `127.0.0.1:443`',
       'Transport: direct HTTP stream',
       'Live input rate: 128 kbps (10 s) · — (60 s) · 2.0 MB received',
-      'Endpoint round trip (TCP): not measured yet',
+      'Stream server round trip (TCP): not measured yet',
       'Opus target: 128 kbps (maximum) · voice channel setting 64 kbps (not a cap)',
       'Sent to Discord: 130 kbps (10 s) · 129 kbps (60 s)',
       'Packets to Discord: 50 per second (expect ~50) · 3000 sent on this connection',
@@ -560,7 +679,7 @@ describe('/radio stats', () => {
       'Voice WebSocket ping: 20 ms (avg 21, min 19, max 25, jitter 2 ms, 5 samples)',
       'Gateway ping: 42 ms',
       'Encryption: aead_aes256_gcm_rtpsize · dave',
-      'Source failovers: 2 · voice reconnects: 1 · encoder PID: 4321',
+      'Fallback switches: 2 · voice reconnects: 1 · encoder PID: 4321',
     ]) {
       expect(text).toContain(line);
     }
@@ -643,9 +762,23 @@ describe('/radio stats', () => {
     const after = await t.command(t.people.admin, { sub: 'stats' });
     const text = callText(after, 1);
     expect(text).toContain(`**${pack.meta.name}** (\`${pack.meta.id}\`): `);
-    expect(text).toMatch(/list synced 2026-10-30 10:00 UTC \(failed\)/);
-    expect(text).toMatch(/STREAM_STALLED \[upstream\] ×1: the stream dropped/);
+    // Discord timestamps, shown in the reader's own time zone.
+    expect(text).toContain(`list synced <t:${Date.parse('2026-10-30T10:00:00.000Z') / 1000}:R> (failed)`);
+    // A single problem has no "×1".
+    expect(text).toMatch(/<t:\d+:R> STREAM_STALLED \[upstream\]: the stream dropped/);
     expect(text).toMatch(/libopus: missing/);
+    t.metrics.incident(GUILD, 'STREAM_STALLED', 'upstream', 'the stream dropped');
+    const repeated = callText(await t.command(t.people.admin, { sub: 'stats' }), 1);
+    expect(repeated).toMatch(/<t:\d+:R> STREAM_STALLED \[upstream\] ×2: the stream dropped/);
+  });
+
+  it('is red when the stream has stopped by a problem, as /radio status is', async () => {
+    const { t, st } = customServer();
+    const s = playingIn(t, V1, st.id);
+    s.fullStatus = { state: 'ERROR', stationId: st.id, channelId: V1 };
+    s.live = { connectedSince: null, input: null, output: null, voice: null };
+    const i = await t.command(t.people.admin, { sub: 'stats' });
+    expect(i.calls[1]!.payload.embeds![0]!.toJSON().color).toBe(COLOR.error);
   });
 
   it('marks a switched-off pack as disabled', async () => {
@@ -661,7 +794,7 @@ describe('/radio queue', () => {
     const t = setup();
     const i = await t.command(t.people.member, { group: 'queue', sub: 'list' });
     const e = lastEmbed(i);
-    expect(e.title).toBe('Queue · 0 stations');
+    expect(e.title).toBe('Queue: 0 stations');
     expect(e.description).toBe('The queue is empty. Add stations with `/radio queue add`.');
     expect(i.ephemeral).toBe(true);
   });
@@ -675,20 +808,31 @@ describe('/radio queue', () => {
     playingIn(t, V1, st.id);
     const i = await t.command(t.people.member, { group: 'queue', sub: 'list' });
     const e = lastEmbed(i);
-    expect(e.title).toBe('Queue · 2 stations');
+    expect(e.title).toBe('Queue: 2 stations');
     expect(e.description).toMatch(
-      /^1\. \*\*First Up\*\* — .* — added by <@900000000000000003>\n2\. \*\*Second Up\*\* — [^\n]*$/,
+      /^1\. \*\*First Up\*\* — .* · added by <@900000000000000003>\n2\. \*\*Second Up\*\* — [^\n]*$/,
     );
     expect(e.description).not.toMatch(/2\..*added by/);
     expect(e.fields).toEqual([{ name: 'Playing now', value: 'My Station' }]);
+    // It lists stations, so it carries the disclaimer like Browse.
+    expect(e.footer?.text).toMatch(/not affiliated with or endorsed by any broadcaster/);
     expect(i.calls[0]!.payload.allowedMentions).toEqual({ parse: [] });
+  });
+
+  it('list says nothing is playing after Stop, though the session remembers the station', async () => {
+    const { t, st } = customServer();
+    t.guilds.enqueue(GUILD, t.addCustomStation('First Up').id, null);
+    playingIn(t, V1, st.id);
+    t.guilds.setIntent(GUILD, { desiredState: 'stopped' });
+    const e = lastEmbed(await t.command(t.people.member, { group: 'queue', sub: 'list' }));
+    expect(e.fields ?? []).toEqual([]);
   });
 
   it('list says "station" for one entry', async () => {
     const { t, st } = customServer();
     t.guilds.enqueue(GUILD, st.id, null);
     expect(lastEmbed(await t.command(t.people.member, { group: 'queue', sub: 'list' })).title).toBe(
-      'Queue · 1 station',
+      'Queue: 1 station',
     );
   });
 
@@ -696,9 +840,16 @@ describe('/radio queue', () => {
     const { t, st } = customServer();
     t.guilds.enqueue(GUILD, st.id, null);
     const once = await t.command(t.people.admin, { group: 'queue', sub: 'clear' });
-    expect(once.text).toMatch(/Removed 1 station\./);
+    // Everyone listening sees who cleared it, in one public line with no pings.
+    expect(once.calls[0]!.payload).toMatchObject({
+      content: `<@${ADMIN}> cleared the queue (1 station).`,
+      allowedMentions: { parse: [] },
+    });
+    expect(once.ephemeral).toBe(false);
     const twice = await t.command(t.people.admin, { group: 'queue', sub: 'clear' });
-    expect(twice.text).toMatch(/Removed 0 stations\./);
+    // Nothing changed, so only the person who asked hears about it, in grey.
+    expect(lastEmbed(twice)).toMatchObject({ title: 'Queue already empty', color: COLOR.neutral });
+    expect(twice.ephemeral).toBe(true);
     expect(t.guilds.listQueue(GUILD)).toEqual([]);
   });
 
@@ -708,7 +859,11 @@ describe('/radio queue', () => {
     t.guilds.enqueue(GUILD, st.id, null);
     t.guilds.enqueue(GUILD, other.id, null);
     const ok = await t.command(t.people.admin, { group: 'queue', sub: 'remove', ints: { position: 2 } });
-    expect(ok.text).toMatch(/Removed from queue\nOther Station was number 2 in the queue\./);
+    expect(ok.calls[0]!.payload).toMatchObject({
+      content: `<@${ADMIN}> removed **Other Station** from the queue (it was number 2).`,
+      allowedMentions: { parse: [] },
+    });
+    expect(ok.ephemeral).toBe(false);
     expect(t.guilds.listQueue(GUILD).map((e) => e.stationId)).toEqual([st.id]);
     const missing = await t.command(t.people.admin, { group: 'queue', sub: 'remove', ints: { position: 5 } });
     expect(missing.text).toMatch(/There is no station at position 5\./);
@@ -719,7 +874,8 @@ describe('/radio queue', () => {
     const { t, st } = customServer();
     t.putInVoice(t.people.admin, V1);
     const i = await t.command(t.people.admin, { group: 'queue', sub: 'add', strings: { station: st.id } });
-    expect(methods(i)).toEqual(['deferReply', 'editReply', 'editReply']);
+    expect(methods(i)).toEqual(['deferReply', 'editReply', 'editReply', 'followUp']);
+    expect(i.calls[3]!.payload.content).toBe(`<@${ADMIN}> started **My Station** in <#${V1}>.`);
     expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: st.id, channelId: V1 }]);
     expect(t.guilds.listQueue(GUILD)).toEqual([]);
   });
@@ -730,8 +886,8 @@ describe('/radio queue', () => {
     const b = t.addCustomStation('Second Up');
     playingIn(t, V1, st.id);
     const first = await t.command(t.people.admin, { group: 'queue', sub: 'add', strings: { station: a.id } });
-    expect(first.text).toMatch(
-      /\*\*First Up\*\* is number 1 in the queue\. Use \/radio skip to play it now\./,
+    expect(first.calls[0]!.payload.content).toBe(
+      `<@${ADMIN}> queued **First Up** (number 1). \`/radio skip\` plays it now.`,
     );
     expect(first.ephemeral).toBe(false);
     expect(first.calls[0]!.payload.allowedMentions).toEqual({ parse: [] });
@@ -740,7 +896,7 @@ describe('/radio queue', () => {
       sub: 'add',
       strings: { station: b.id },
     });
-    expect(second.text).toMatch(/\*\*Second Up\*\* is number 2 in the queue\.$/m);
+    expect(second.calls[0]!.payload.content).toBe(`<@${ADMIN}> queued **Second Up** (number 2).`);
     expect(t.guilds.listQueue(GUILD).map((e) => [e.stationId, e.addedById])).toEqual([
       [a.id, ADMIN],
       [b.id, ADMIN],
@@ -784,6 +940,9 @@ describe('/radio skip', () => {
     const t = setup();
     const i = await t.command(t.people.admin, { sub: 'skip' });
     expect(i.text).toMatch(/The queue is empty\. Add stations with \/radio queue add\./);
+    // Nothing went wrong, so it isn't red: the panel always offers Skip.
+    expect(lastEmbed(i)).toMatchObject({ title: 'Nothing to skip to', color: COLOR.neutral });
+    expect(i.ephemeral).toBe(true);
   });
 
   it('drops entries that can no longer play, starts the next one, and takes it off the queue', async () => {
@@ -794,7 +953,9 @@ describe('/radio skip', () => {
     t.putInVoice(t.people.admin, V1);
     const i = await t.command(t.people.admin, { sub: 'skip' });
     expect(i.violations).toEqual([]);
-    expect(i.ephemeral).toBe(false);
+    // The card is private; the channel hears "skipped to" in one line.
+    expect(i.ephemeral).toBe(true);
+    expect(i.calls.at(-1)!.payload.content).toBe(`<@${ADMIN}> skipped to **My Station** in <#${V1}>.`);
     expect(t.sessions.plays.map((p) => p.stationId)).toEqual([st.id]);
     expect(t.guilds.listQueue(GUILD)).toEqual([]);
   });
@@ -829,9 +990,13 @@ describe('custom stations', () => {
     expect(i.violations).toEqual([]);
     expect(i.calls[0]).toMatchObject({ method: 'deferReply', payload: { flags: EPHEMERAL } });
     expect(i.text).toMatch(/Added: My Station/);
-    expect(i.text).toMatch(/Stream checked: .* · 128 kbps · 44100 Hz · 2 channel\(s\) · Direct HTTP stream/);
+    // Written as every other view writes a source: the bitrate with its evidence.
+    expect(i.text).toMatch(
+      /Stream checked: MP3 · ≈128 kbps \(measured\) · 44\.1 kHz · stereo · Direct HTTP stream/,
+    );
     expect(i.text).toMatch(/Station ID: `custom:my-station` \(custom, this server only\)\./);
-    expect(i.text).toMatch(/⚠ This stream uses plain HTTP, so it is not encrypted/);
+    expect(i.text).toMatch(/Play it with `\/radio play`\./);
+    expect(i.text).toMatch(/⚠️ This stream uses plain HTTP, so it is not encrypted/);
     expect(t.customAdds).toEqual(['My Station']);
   });
 
@@ -843,6 +1008,7 @@ describe('custom stations', () => {
         profile: null,
         measuredBitrateKbps: null,
         codecBitrateKbps: null,
+        advertisedBitrateKbps: null,
         sampleRateHz: null,
         channels: null,
         transport: 'hls',
@@ -852,7 +1018,7 @@ describe('custom stations', () => {
       sub: 'add',
       strings: { name: 'My Station', url: 'https://radio.example.org/live.m3u8' },
     });
-    expect(i.text).toMatch(/ · \? kbps · \? Hz · \? channel\(s\) · HLS/);
+    expect(i.text).toMatch(/codec unknown · bitrate unknown · sample rate unknown · channels unknown · HLS/);
     expect(i.text).not.toMatch(/plain HTTP/);
   });
 
@@ -891,12 +1057,22 @@ describe('custom stations', () => {
       strings: { station: st.id, name: 'Renamed Station', description: 'Late-night music' },
     });
     expect(i.calls[0]).toMatchObject({ method: 'deferReply', payload: { flags: EPHEMERAL } });
-    expect(i.text).toMatch(/Updated\nRenamed Station was updated\./);
+    // It says what changed, as add says what it added.
+    expect(i.text).toMatch(/Updated: Renamed Station\nChanged: name, description\./);
     expect(t.customEdits).toEqual([
       { id: st.id, patch: { name: 'Renamed Station', description: 'Late-night music' } },
     ]);
     // No new URL, so none of the three stream checks was used.
     expect([0, 1, 2].map(() => t.ctx.limits.probeGuild.take(GUILD))).toEqual([0, 0, 0]);
+  });
+
+  it('edit with nothing to change is refused before anything is done', async () => {
+    const { t, st } = customServer();
+    const i = await t.command(t.people.admin, { sub: 'edit', strings: { station: st.id } });
+    expect(i.acks).toBe(1);
+    expect(i.ephemeral).toBe(true);
+    expect(i.text).toMatch(/Nothing to change\. Give a new name, url, website or description\./);
+    expect(t.customEdits).toEqual([]);
   });
 
   it('edit with a new URL and website counts as a stream check, and is rate-limited', async () => {
@@ -931,7 +1107,11 @@ describe('custom stations', () => {
     const s = playingIn(t, V1, st.id);
     t.guilds.updateSettings(GUILD, { defaultStationId: st.id });
     const i = await t.command(t.people.admin, { sub: 'remove', strings: { station: st.id } });
-    expect(i.text).toMatch(/Removed\nMy Station was removed\./);
+    // It deletes for good, so it says what went with it.
+    expect(i.text).toMatch(
+      /Removed: My Station\nIt is gone from this server, with its place in favourites and the queue\.\nIt was playing, so the radio stopped\.\nIt was the default station, so there is no default station now\.\n-# This can’t be undone/,
+    );
+    expect(lastEmbed(i).color).toBe(COLOR.ok);
     expect(i.ephemeral).toBe(true);
     expect(s.stops).toBe(1);
     expect(t.customRemoves).toEqual([st.id]);
@@ -946,6 +1126,7 @@ describe('custom stations', () => {
     t.custom.removeResult = false;
     const i = await t.command(t.people.admin, { sub: 'remove', strings: { station: st.id } });
     expect(i.text).toMatch(/Not found\nNothing was removed\./);
+    expect(lastEmbed(i).color).toBe(COLOR.neutral);
     expect(s.stops).toBe(0);
     expect(t.guilds.getSettings(GUILD).defaultStationId).toBe(other.id);
   });
@@ -975,10 +1156,25 @@ describe('/radio rescan', () => {
     expect(callText(i, 1)).toBe('Checking sources\nChecked 1 of 2…');
     const summary = i.calls[2]!.payload.embeds![0]!.toJSON();
     expect(summary.title).toBe('Checked 2 sources again');
+    // The bitrate with its evidence, and identity in the sources view's words. These sources have
+    // no name, so their IDs stand in.
     expect(summary.description).toMatch(
-      /^• `custom-my-station-1`: .* 128 kbps · identity verified\n• `custom-my-station-2`: check failed \(TIMEOUT\)$/,
+      /^• `custom-my-station-1`: MP3 · ≈128 kbps \(measured\) · verified as this station\n• `custom-my-station-2`: check failed \(TIMEOUT\)$/,
     );
+    // One check failed: amber, as the sync report is.
+    expect(summary.color).toBe(COLOR.warn);
     expect(i.calls[2]!.payload.embeds!.length).toBe(2);
+  });
+
+  it('names sources by their label in the summary, so no long ID overflows a phone', async () => {
+    const { t, st } = customServer();
+    t.rescan.reports = [
+      { ...report('custom-my-station-1', true), source: { id: 'x', label: 'Main stream' } },
+    ];
+    const i = await t.command(t.people.admin, { sub: 'rescan', strings: { station: st.id } });
+    const summary = i.calls.at(-1)!.payload.embeds![0]!.toJSON();
+    expect(summary.description).toMatch(/^• \*\*Main stream\*\*: MP3 · ≈128 kbps \(measured\)/);
+    expect(summary.color).toBe(COLOR.ok);
   });
 
   it('adds the audio comparison when asked', async () => {
@@ -997,6 +1193,8 @@ describe('/radio rescan', () => {
       strings: { station: st.id },
       bools: { compare: true },
     });
+    // The comparison takes about 40 s a source, so the wait is explained rather than frozen.
+    expect(i.text).toMatch(/Comparing audio\nChecked all 1\. Now comparing the sources not yet verified/);
     const summary = i.calls.at(-1)!.payload.embeds![0]!.toJSON();
     expect(summary.title).toBe('Checked 1 source again');
     expect(summary.description).toMatch(
@@ -1077,14 +1275,26 @@ describe('/radio sync', () => {
     expect(e.description).toBe(
       [
         `**${pack.meta.name}**: the official list has 12 stations.`,
-        'Added: New One',
+        // Every added station has no stream yet, so that is said once, not in a second list.
+        'Added: New One (no stream yet: they can’t play until a reviewed source is added to the pack)',
         'Renamed: Old Name → New Name',
         'No longer on the official list: Gone One (kept here, so favourites still work)',
         'Back on the list: Back One',
-        'New stations with no stream yet (they can’t play until a reviewed source is added to the pack): New One',
         'Stations whose sources all failed their last check: Down One',
       ].join('\n'),
     );
+  });
+
+  it('shortens long lists, so one pack never pushes the rest of the report out', async () => {
+    const t = setup();
+    const pack = t.ctx.packs.packs[0]!;
+    t.sync.syncable = [pack.meta.id];
+    const added = Array.from({ length: 20 }, (_, n) => `Station ${n + 1}`);
+    t.sync.reports.set(pack.meta.id, { officialCount: 20, added, needsSourceMapping: added });
+    const e = lastEmbed(await t.command(t.people.admin, { sub: 'sync', strings: { pack: pack.meta.id } }));
+    expect(e.description).toMatch(/Added: Station 1, .*, Station 15 and 5 more \(no stream yet/);
+    expect(e.description).not.toMatch(/Station 16/);
+    expect(e.description).toMatch(/No station has all of its checked sources failing\.$/);
   });
 
   it('syncs every pack, says when nothing changed, and reports a failure in amber', async () => {
@@ -1093,8 +1303,9 @@ describe('/radio sync', () => {
     t.sync.syncable = [pack.meta.id];
     const quiet = await t.command(t.people.admin, { sub: 'sync' });
     expect(t.sync.calls).toEqual(['*']);
+    // A quiet sync is two short lines, not a wall of "none".
     expect(lastEmbed(quiet).description).toMatch(
-      /Added: none\nRenamed: none\nNo longer on the official list: none\nBack on the list: none\nNo new stations are waiting for a stream\.\nNo station has all of its checked sources failing\./,
+      /stations\.\nNo stations were added, renamed, dropped or brought back\.\nNo station has all of its checked sources failing\.$/,
     );
 
     const other = setup();
@@ -1114,6 +1325,8 @@ describe('/radio sync', () => {
     await t.command(t.people.admin, { sub: 'sync' });
     const again = await t.command(t.people.owner, { sub: 'sync' });
     expect(again.text).toMatch(/Too many catalogue syncs in a short time/);
+    // A long wait reads in minutes, not as hundreds of seconds.
+    expect(again.text).toMatch(/Try again in \d+ min\./);
     expect(t.sync.calls).toEqual(['*']);
   });
 });
@@ -1131,8 +1344,9 @@ describe('/radio config', () => {
     expect(t.guilds.getSettings(GUILD)).toMatchObject({ defaultStationId: st.id, manualBitrateKbps: 256 });
     expect(s.encoderRefreshes).toBe(1);
     expect(i.text).toMatch(/The station restarts for a moment to use the new quality\./);
+    // The options are playback settings, so the Playback page opens and shows them.
     expect(i.text).toMatch(/Default station: My Station/);
-    expect(i.text).toMatch(/Page: Access/);
+    expect(i.text).toMatch(/Radio Bot settings: Playback/);
   });
 
   it('clears the default station when "none" is typed, in any case', async () => {
@@ -1155,6 +1369,18 @@ describe('/radio config', () => {
     await t.command(t.people.admin, { sub: 'config' });
     expect(s.encoderRefreshes).toBe(0);
   });
+
+  it('says a manual bitrate waits for Manual quality, so it does not look ignored', async () => {
+    const t = setup();
+    const i = await t.command(t.people.admin, { sub: 'config', ints: { manual_bitrate: 256 } });
+    expect(t.guilds.getSettings(GUILD).manualBitrateKbps).toBe(256);
+    expect(i.calls[0]!.payload.content).toBe(
+      'Manual bitrate saved (256 kbps). It is used once Quality is set to Manual.',
+    );
+    t.guilds.updateSettings(GUILD, { qualityMode: 'manual' });
+    const manual = await t.command(t.people.admin, { sub: 'config', ints: { manual_bitrate: 192 } });
+    expect(manual.calls[0]!.payload.content).toBeUndefined();
+  });
 });
 
 describe('/radio export', () => {
@@ -1164,6 +1390,9 @@ describe('/radio export', () => {
     const i = await t.command(t.people.admin, { sub: 'export' });
     expect(i.ephemeral).toBe(true);
     expect(i.text).toMatch(/The file contains no tokens/);
+    // What the file is for, and that it leaves out URLs with a user name or password too.
+    expect(i.text).toMatch(/use `\/radio import` with this file/);
+    expect(i.text).toMatch(/query string, user name or password is left out/);
     const [file] = i.calls[0]!.payload.files as AttachmentBuilder[];
     expect(file).toBeInstanceOf(AttachmentBuilder);
     expect(file!.name).toBe(`radio-bot-config-${GUILD}.json`);
@@ -1218,8 +1447,11 @@ describe('/radio import', () => {
     const i = await preview(t);
     expect(i.text).toMatch(/Import preview \(nothing has changed yet\)/);
     expect(i.text).toMatch(
-      /\*\*Warnings\*\*\n⚠ 1 channel ID\(s\) do not exist here and will be dropped\.\n⚠ 1 role ID\(s\)/,
+      /\*\*Warnings\*\*\n⚠️ 1 channel ID\(s\) do not exist here and will be dropped\.\n⚠️ 1 role ID\(s\)/,
     );
+    // Warnings need a look before Apply, which can't be undone.
+    expect(lastEmbed(i).color).toBe(COLOR.warn);
+    expect(i.text).toMatch(/\*\*Apply import\*\* changes these settings at once and can’t be undone/);
   });
 
   it('applies settings to the station already playing and rechecks who is listening', async () => {
@@ -1274,6 +1506,8 @@ describe('/radio import', () => {
       /Custom stations not added: Refused Station \(ACCESS_DENIED\), Broken Station \(INTERNAL\), Station 4 \(too many added at once; add it later with \/radio add\), Station 5 \(too many/,
     );
     expect(i.text).not.toMatch(/Hidden Address/);
+    // Some stations were not added: it worked, but needs a look.
+    expect(lastEmbed(i).color).toBe(COLOR.warn);
   });
 
   it('refuses a preview that has run out, even with a button that has not', async () => {
@@ -1306,7 +1540,8 @@ describe('/radio source', () => {
     const { t, st } = usable();
     t.guilds.setPreference(GUILD, st.id, 'pin', 'custom-my-station-1', OWNER);
     const i = await t.command(t.people.admin, { group: 'source', sub: 'auto', strings: { station: st.id } });
-    expect(i.text).toMatch(/Automatic selection\nThe bot chooses the source for My Station again/);
+    // The same title as the Choose automatically button's reply.
+    expect(i.text).toMatch(/Choosing automatically\nThe bot chooses the source for My Station again/);
     // Automatic is the absence of an override.
     expect(t.guilds.getPreference(GUILD, st.id)?.mode ?? 'auto').toBe('auto');
   });
@@ -1330,9 +1565,12 @@ describe('/radio source', () => {
       strings: { station: st.id, source: 'custom-my-station-1' },
     });
     const e = lastEmbed(i);
-    expect(e.title).toBe('Source preferred');
+    expect(e.title).toBe('Source tried first');
     expect(e.color).toBe(COLOR.ok);
-    expect(e.description).toMatch(/^My Station → `custom-my-station-1` \(.*\)\.$/);
+    // By its name, as the sources list shows it; the format on a line of its own (no nested brackets).
+    expect(e.description).toMatch(
+      /^On this server, My Station now tries \*\*Main stream\*\* first\. Whenever it can’t be used, the bot picks another source by itself\.\n-# MP3 · .+$/,
+    );
     expect(t.guilds.getPreference(GUILD, st.id)).toMatchObject({
       mode: 'prefer',
       sourceId: 'custom-my-station-1',
@@ -1349,7 +1587,8 @@ describe('/radio source', () => {
     const e = lastEmbed(i);
     expect(e.title).toBe('Source pinned');
     expect(e.color).toBe(COLOR.warn);
-    expect(e.description).toMatch(/⚠ That source can’t be used right now \(.+\)\. Until it recovers/);
+    expect(e.description).toMatch(/only admins can switch it to another source\./);
+    expect(e.description).toMatch(/⚠️ That source can’t be used right now \(.+\)\. Until it works again/);
     expect(t.guilds.getPreference(GUILD, st.id)?.mode).toBe('pin');
   });
 
@@ -1361,7 +1600,7 @@ describe('/radio source', () => {
       sub: 'verify',
       strings: { station: src.stationId, source: src.id, verdict: 'mismatch' },
     });
-    expect(i.text).toMatch(/only the bot’s operator can record it/);
+    expect(i.text).toMatch(/only the bot owner can record it\.$/m);
     expect(t.stations.getSource(src.id)?.identityOverride).toBeNull();
   });
 
@@ -1376,7 +1615,7 @@ describe('/radio source', () => {
       });
     const i = await verify('mismatch');
     expect(i.text).toMatch(
-      new RegExp(`Identity review recorded\\n\`${src.id}\`: .*kept in the source’s evidence`),
+      new RegExp(`Source review recorded\\n\`${src.id}\`: .*kept in the source’s evidence`),
     );
     expect(t.stations.getSource(src.id)?.identityOverride).toBe('mismatch');
     await verify('clear');
@@ -1393,12 +1632,12 @@ describe('/radio source', () => {
         strings: { station: src.stationId, source: src.id, verdict: 'verified' },
       });
     (t.ctx.client as unknown as { application: unknown }).application = { owner: { id: OWNER } };
-    expect((await verify(t.people.owner)).text).toMatch(/Identity review recorded/);
-    expect((await verify(t.people.admin)).text).toMatch(/only the bot’s operator/);
+    expect((await verify(t.people.owner)).text).toMatch(/Source review recorded/);
+    expect((await verify(t.people.admin)).text).toMatch(/only the bot owner can record it/);
     (t.ctx.client as unknown as { application: unknown }).application = {
       owner: { members: new Map([[ADMIN, {}]]) },
     };
-    expect((await verify(t.people.admin)).text).toMatch(/Identity review recorded/);
+    expect((await verify(t.people.admin)).text).toMatch(/Source review recorded/);
   });
 
   it('verify of this server’s own custom station needs no operator', async () => {
@@ -1408,7 +1647,7 @@ describe('/radio source', () => {
       sub: 'verify',
       strings: { station: st.id, source: 'custom-my-station-1', verdict: 'verified' },
     });
-    expect(i.text).toMatch(/Identity review recorded/);
+    expect(i.text).toMatch(/Source review recorded/);
     expect(t.stations.getSource('custom-my-station-1')?.identityOverride).toBe('verified');
   });
 
@@ -1450,8 +1689,10 @@ describe('/radio list, sources and inspect', () => {
     s.playingSourceId = 'custom-my-station-1';
     t.guilds.setPreference(GUILD, st.id, 'prefer', 'custom-my-station-1', OWNER);
     const i = await t.command(t.people.admin, { sub: 'inspect', strings: { station: st.id } });
-    expect(i.text).toMatch(/Server override\nprefer → `custom-my-station-1`/);
-    // It already prefers the playing source, so only Check again and Back to automatic are offered.
+    expect(i.text).toMatch(
+      /On this server\n\*\*Main stream\*\* is tried first\. If it fails, the bot switches to another source\.\n\*\*Choose automatically\*\*: go back/,
+    );
+    // It already tries the playing source first, so only Check again and Choose automatically are offered.
     expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(['rescan', 'sauto']);
   });
 
@@ -1460,8 +1701,20 @@ describe('/radio list, sources and inspect', () => {
     playingIn(t, V1, st.id).playingSourceId = 'custom-my-station-1';
     const i = await t.command(t.people.admin, { sub: 'sources', strings: { station: st.id } });
     expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(['rescan', 'spref']);
+    expect(i.text).toMatch(
+      /On this server\n\*\*Use this source first\*\*: try the source playing now first\. If it fails, the bot still switches to another\./,
+    );
     const member = await t.command(t.people.member, { sub: 'sources', strings: { station: st.id } });
     expect(member.componentIds).toEqual([]);
+    // The explanation is only for the admin buttons, which a member doesn't get.
+    expect(member.text).not.toMatch(/On this server/);
+  });
+
+  it('says nothing about a server choice when the stored preference is automatic', async () => {
+    const { t, st } = customServer();
+    t.guilds.setPreference(GUILD, st.id, 'auto', null, OWNER);
+    const i = await t.command(t.people.member, { sub: 'sources', strings: { station: st.id } });
+    expect(i.text).not.toMatch(/On this server|tried first|`none`/);
   });
 
   it('offers no buttons for a station with no sources', async () => {
@@ -1489,5 +1742,18 @@ describe('/radio browse and /radio help', () => {
     expect(i.ephemeral).toBe(true);
     expect(i.text).toMatch(/🛠 Settings\nServer admins choose channels and DJ roles/);
     expect(i.text).not.toMatch(/🛠 Admin/);
+    // Help is the one command that answers there, so it says where the others work.
+    expect(i.text).toMatch(/Radio commands are only allowed in <#800000000000000001>\. Try there instead\./);
+  });
+
+  it('help names the bitrate cap this installation uses', async () => {
+    const t = setup();
+    // An installation that lowers MAX_OPUS_BITRATE_KBPS.
+    (t.ctx.config as { maxOpusBitrateKbps: number }).maxOpusBitrateKbps = 320;
+    const i = await t.command(t.people.admin, { sub: 'help' });
+    expect(i.text).toContain('(320 kbps at most)');
+    // The admin commands are grouped by job, setup first.
+    expect(i.text).toMatch(/🛠 Admin\n`\/radio config`: channels, DJ roles and quality/);
+    expect(i.text).toMatch(/Custom stations: `\/radio add` · `\/radio edit` · `\/radio remove`/);
   });
 });

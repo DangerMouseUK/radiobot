@@ -50,7 +50,9 @@ describe('eligibility reasons', () => {
     expect(reasons({ identityStatus: 'mismatch' })).toContain(
       'plays a different station (identity mismatch)',
     );
-    expect(reasons({ verificationState: 'blocked_by_policy' })).toContain('rejected by URL safety policy');
+    expect(reasons({ verificationState: 'blocked_by_policy' })).toContain(
+      'blocked by the bot’s safety rules',
+    );
     expect(reasons({ verificationState: 'offline', lastFailureCode: 'HTTP_STATUS' })).toContain(
       'last check failed (HTTP_STATUS)',
     );
@@ -62,7 +64,9 @@ describe('eligibility reasons', () => {
     expect(
       checkEligibility(makeSource({ cooldownUntil: new Date(now - 1000).toISOString() }), now).eligible,
     ).toBe(true);
-    expect(reasons({ cooldownUntil: new Date(now + 60_000).toISOString() })[0]).toMatch(/^cooling down/);
+    expect(reasons({ cooldownUntil: new Date(now + 60_000).toISOString() })[0]).toMatch(
+      /^resting after repeated failures until/,
+    );
   });
 });
 

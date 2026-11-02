@@ -69,7 +69,10 @@ A source that is already Opus is still decoded and encoded again at the target b
 
 - the server's quality mode, and the manual bitrate if one is set;
 - the installation's ceiling, `MAX_OPUS_BITRATE_KBPS` (default 510, allowed range 32–510);
-- the source's own bitrate: the measured figure, else the figure from its codec metadata, else the figure declared in its HLS playlist or advertised in its HTTP headers. The measured figure comes first because it is what the station really sends. For MP3 the two always agree, but for AAC the codec metadata is only an estimate: in the starter pack's checks, AAC streams that measured 128 kbps reported anything from 114 to 176 kbps. A later check whose sample was too short to measure keeps the earlier measurement of the same stream. For HLS, if the stream the bot opens is a clearly higher rendition than the one its last check could load (its declared bandwidth more than 15 % above the stored figure; declared bandwidth includes a little container overhead, so erring upwards costs a few kbps, never quality), the encoder follows the rendition that is playing;
+- the source's own bitrate: the measured figure, else the figure from its codec metadata, else the figure declared in its HLS playlist (manifest) or advertised in its HTTP headers.
+  - The measured figure comes first because it is what the station really sends. For MP3 it and the codec metadata always agree, but for AAC the codec metadata is only an estimate: in the starter pack's checks, AAC streams that measured 128 kbps reported anything from 114 to 176 kbps.
+  - A later check whose sample was too short to measure keeps the earlier measurement of the same stream.
+  - For HLS, the bot may open a clearly higher version (*rendition*) of the stream than the one its last check could load: one whose declared bandwidth is more than 15 % above the stored figure. The encoder then follows the rendition that is playing. Declared bandwidth includes a little container overhead, so erring upwards costs a few kbps, never quality;
 - the source's sample rate and channel count;
 - the voice channel's bitrate setting. This is **for reporting only**. It is never used as a cap.
 
@@ -106,12 +109,12 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 - The station and the source ID.
 - **Transport:** "Direct HTTP stream" or "HLS (delivery protocol)", plus the HLS version chosen and why. HLS is how the audio is delivered; it says nothing about quality.
 - **Codec** (for example MP3, AAC-LC or HE-AAC) and container, as found by `ffprobe` when the source was checked.
-- **Bitrate,** with its evidence:
+- **Bitrate,** with its evidence, written as in every other view (for example "≈128 kbps (measured)"):
   - `measured`: audio data divided by audio duration, from the packets of a sample the bot checked;
   - `codec metadata`: the figure `ffprobe` reported for the stream;
-  - `manifest`: the bandwidth an HLS playlist declares (not checked);
-  - `advertised`: the station's `icy-br` header (not checked);
-  - `unknown`: no figure at all.
+  - `manifest, unverified`: the bandwidth an HLS playlist declares;
+  - `advertised, unverified`: the station's `icy-br` header;
+  - "unknown" when there is no figure at all.
 - The **live network rate:** data per second arriving during playback, shown after 5 s. It includes container and metadata overhead and bursts, so it is for information only.
 - **Sample rate and channels,** with the channel layout.
 
@@ -121,7 +124,7 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 - The **encoder target** in kbps and the quality mode.
 - The **voice channel bitrate setting,** labelled as not limiting the bot's stream.
 - The **measured encoder output:** the Ogg Opus data per second leaving FFmpeg, shown after 5 s. It includes the Ogg framing, and because the output uses variable bitrate it moves around the target.
-- **Encryption:** "DAVE end-to-end encrypted (privacy code …)" or "Transport-encrypted; DAVE not negotiated for this call".
+- **Encryption:** "DAVE end-to-end encrypted (privacy code …)" or "Encrypted in transit; DAVE end-to-end encryption not used for this call".
 
 **Processing**
 
@@ -130,7 +133,7 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 - Volume, normalisation, EQ and compression: off.
 - The plan's notes, which always include: "A higher Opus target cannot restore detail already lost in the source encoding."
 
-**Source decision.** Why this source was chosen. See [station-verification.md](station-verification.md#ranking-sources).
+**Why this source.** Why this source was chosen. See [station-verification.md](station-verification.md#ranking-sources).
 
 `/radio now` shows a short form of the same information. `/radio stats` (admins only, private) adds the live view:
 
@@ -153,8 +156,8 @@ These defaults are in `DEFAULT_TIMINGS` in `src/voice/session.ts`. They are the 
 | FFmpeg exits, the stream ends, the player fails, or an HLS playlist or segments fail | `FFMPEG_EXIT`, `STREAM_EOF`, `HLS_*` and so on → recovery. |
 | Recovery, first stage | Reconnect to the **same** source after about 1 s, then 3 s, then 8 s (each ±25 %). This is skipped for errors that retrying can't fix: access denied (HTTP 401/403/451), a URL or address blocked by the safety rules, encrypted HLS, a rejected content type, or the stream naming a different station when it connects. "Not found" (HTTP 404) **is** retried, because an Icecast server answers 404 for a few seconds while the station's own encoder reconnects to it. If the retries fail too, the bot fails over. |
 | The bot's own fault (FFmpeg couldn't start, an internal error) | Retried on the **same** source with the same delays, and never counted against the source. If FFmpeg can't start and the retries fail, there is no failover, since another source would fail the same way: the state becomes `ERROR`, a notice is sent, and the bot tries again every 2 min while playback is still wanted. After an internal error the bot fails over to a verified fallback once the retries fail, in case the error came from that source's data. |
-| Recovery, second stage | **Fail over.** The failed source is set aside and the next eligible source of the same station is chosen. The now-playing card says it is playing from a fallback. |
-| A source keeps failing for more than a minute (at least 4 failures in a row) | Circuit breaker: the source cools down for 10 min, then 20 and 40 min, up to 2 h, on repeated trips. A cooling source is not eligible, but when nothing else can play, the bot checks it again every 2 min, and a good check ends the cooldown. A short blip that uses up the quick retries within seconds doesn't trip it, and several servers hearing the same blip at the same moment count as one failure. |
+| Recovery, second stage | **Fail over.** The failed source is set aside and the next eligible (usable) source of the same station is chosen. The now-playing card says it is playing from a fallback. |
+| A source keeps failing for more than a minute (at least 4 failures in a row) | Circuit breaker: the bot rests (*cools down*) the source for 10 min, then 20 and 40 min, up to 2 h, on repeated trips. A cooling source is not eligible, but when nothing else can play, the bot checks it again every 2 min, and a good check ends the cooldown. A short blip that uses up the quick retries within seconds doesn't trip it, and several servers hearing the same blip at the same moment count as one failure. |
 | No eligible source at all | `ERROR` (`NO_ELIGIBLE_SOURCE`), a notice is sent, and the bot looks again after 15, 30 and 60 s, then every 2 min while playback is still wanted. |
 | Playback more than 45 s behind live | Reopens the same source at the live edge. A gap the HLS reader left when it skipped forward to the live edge doesn't count, because it is already back at live. |
 | A better source works again | **Move back.** Once a minute, a steady stream that isn't on its station's best source checks whether that source has worked again since it failed (a background check shows this). If it has, and it is a real step up (a direct stream instead of HLS, clearly better measured quality, or the source an admin chose), the bot moves back to it. That is a brief cut, so it happens at most once every 10 minutes, and never when a listener chose the source that is playing. If the better source fails again before it has played steadily for 30 s, the bot goes straight back to the source that was working, without retrying, and waits twice as long before trying that source again (20 min, then 40 min, up to 4 h). |

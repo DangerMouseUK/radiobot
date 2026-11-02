@@ -356,9 +356,13 @@ export class HlsReader extends Readable {
         this.#stats.playlistFailures++;
         playlistFailures++;
         if (playlistFailures >= 5) {
-          throw new RadioError('HLS_PLAYLIST_FAILED', 'The HLS playlist could not be refreshed.', {
-            cause: err,
-          });
+          throw new RadioError(
+            'HLS_PLAYLIST_FAILED',
+            'The HLS playlist stopped loading, so the stream could not continue.',
+            {
+              cause: err,
+            },
+          );
         }
         await delay(Math.min(1000 * playlistFailures, 5000), undefined, { signal: this.#abort.signal }).catch(
           () => {},
@@ -411,7 +415,7 @@ export class HlsReader extends Readable {
           if (segmentFailuresInRow > 3) {
             throw new RadioError(
               'HLS_SEGMENT_FAILED',
-              'Several HLS segments in a row could not be downloaded.',
+              'Several pieces (segments) of the HLS stream in a row could not be downloaded.',
             );
           }
           continue;
@@ -599,7 +603,7 @@ async function openHls(
   if (media.encryption)
     throw new RadioError('HLS_ENCRYPTED', 'This HLS stream is encrypted and cannot be played.');
   if (media.segments.length === 0)
-    throw new RadioError('PLAYLIST_INVALID', 'The HLS playlist has no segments.');
+    throw new RadioError('PLAYLIST_INVALID', 'The HLS playlist lists no audio to play.');
   const reader = new HlsReader(client, mediaUrl, stats, media, opts.hlsLiveEdgeSegments);
   const strip = (c: RenditionChoice) => ({ bitrateKbps: c.bitrateKbps, reason: c.reason, codecs: c.codecs });
   const info: InputInfo = {

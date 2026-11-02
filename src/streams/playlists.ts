@@ -167,7 +167,7 @@ export function parseHls(text: string, base: URL): HlsMaster | HlsMedia {
       }
     }
     if (variants.length === 0 && audio.length === 0) {
-      throw new RadioError('PLAYLIST_INVALID', 'The HLS master playlist has no usable entries.');
+      throw new RadioError('PLAYLIST_INVALID', 'The HLS playlist lists no streams the bot can use.');
     }
     return { type: 'master', variants, audio };
   }

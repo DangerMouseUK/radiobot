@@ -1,56 +1,70 @@
 # Troubleshooting
 
-Most problems show up as a **reason code**: a short name in capitals, such as `NO_ELIGIBLE_SOURCE` or `ADDRESS_BLOCKED`, that says what went wrong. Reason codes appear in the logs, in `/radio stats` (under *Recent incidents*, labelled with where the fault lies: `upstream` for the station's side, `discord`, `bot`, `operator` for the person running the bot, or `user`), in `/radio inspect` as a source's last failure, and in some error replies. This page explains each one; the full list is in `src/shared/errors.ts`. Radio Bot is unofficial and is not affiliated with or endorsed by any broadcaster; see [rights-and-disclaimer.md](rights-and-disclaimer.md).
+Most problems come with a **reason code**: a short name in capitals, such as `NO_ELIGIBLE_SOURCE` or `ADDRESS_BLOCKED`, that says what went wrong. You will find reason codes:
 
-Installed with the installer? Start with `radio-bot status` and `radio-bot logs`, and see the beginner's table in [install.md → If something goes wrong](install.md#if-something-goes-wrong). Problems with the `radio-bot` command itself are under [The radio-bot command](#the-radio-bot-command). The commands below written as `docker compose …` also work from the `~/radio-bot` folder (use `sudo docker compose …` if Docker needs `sudo` on your machine).
+- in some of the bot's error replies;
+- in `/radio inspect`, as a source's last failure;
+- in `/radio stats`, under *Recent problems*. Each one is labelled with where the fault lies: `upstream` (the station's side), `discord`, `bot`, `operator` (the person running the bot) or `user`;
+- in the logs.
+
+This page explains what each code means and what to do about it. The full list is in `src/shared/errors.ts`. Radio Bot is unofficial and is not affiliated with or endorsed by any broadcaster; see [rights-and-disclaimer.md](rights-and-disclaimer.md).
+
+Installed with the installer? Start with `radio-bot status` and `radio-bot logs`, and see the beginner's table in [install.md → If something goes wrong](install.md#if-something-goes-wrong). Problems with the `radio-bot` command itself are under [The radio-bot command](#the-radio-bot-command). Commands on this page that start with `docker compose …` also work in the `~/radio-bot` folder of an installer-made install (put `sudo` in front if Docker needs it on your machine).
 
 ## Tools
 
 | Tool | What it tells you |
 |---|---|
-| `/radio status` | Connection state, desired state and station, the current source, and the last problem. It also says when playback was not resumed after a restart because *Resume after restart* is off. |
-| `/radio now` / `/radio quality` | What is playing, the source format and verification, the Discord output target, the channel's bitrate setting (not a cap), the observed rates, and whether DAVE is in use. |
-| `/radio sources <station>` | Every candidate (up to 10), which one is selected and the fallback, and **why each other one is not eligible**. |
-| `/radio inspect <station>` | As above, plus the redacted endpoint, every bitrate figure, probe and failure times, the last failure code, health, start-up time and provenance. Admins also get a **Check sources again** button. |
-| `/radio stats` (Administrators; private, with Refresh and Close) | **Live stream**: session state and source, requested and redirected host (with a region hint from the host name), connected IP and port, HLS segments, codec, input rate over 10 s and 60 s and data received, and round trip to the stream endpoint by TCP handshake. **Output**: Opus target, channel setting (not a cap), Ogg Opus rate, packets per second to Discord (about 50), and late packets since joining with the longest gap. **Discord**: voice server host (with a region hint) and IP, the channel's RTC region, voice WebSocket ping with jitter, gateway ping, encryption/DAVE, and this server's failovers, voice reconnects and encoder PID, plus the last FFmpeg warnings. **Bot health**: uptime and memory; the event-loop delay over the last minute (20 ms or more means voice packets may have left late); active streams and probes against their limits; FFmpeg processes (active, spawned, reaped) and whether `libopus` is present; the stream User-Agent in use; database schema version; per-pack catalogue coverage and last list sync; recent coalesced incidents. |
-| Logs | `radio-bot logs`, or `docker compose logs -f radio-bot`, or `journalctl -u radio-bot -f` on a systemd install. Set `LOG_LEVEL=debug` for state transitions and the voice dependency report, and `trace` for everything. Return to `info` afterwards. |
-| Probe from the CLI | `docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe <pack>:<station>` (or `--probe --pack-id <pack>`) prints raw probe results for pack stations. |
+| `/radio status` | Whether the bot is connected, what it was last asked to do and with which station, the source it is using, and the last problem. It also says when playback didn't start again after a restart because *Resume after restart* is off. |
+| `/radio now` / `/radio quality` | What is playing, the source's format and whether it is verified, the bitrate the bot sends to Discord, the channel's bitrate setting (which doesn't limit the bot), the data rates measured while playing, and whether DAVE encryption is in use. |
+| `/radio sources <station>` | Each of the station's sources (up to 10), which one is chosen and which is the fallback, and **why each of the others can't be used**. |
+| `/radio inspect <station>` | As above, plus each source's address (with any secret parts hidden), every bitrate figure, when it was last checked and last failed, the last failure code, its health, start-up time and where the address came from. Admins also get a **Check sources again** button. |
+| `/radio stats` | Admins only. A private live panel with Refresh and Close buttons, in four parts: Stream input, Output to Discord, Discord connection and Bot health. See [What `/radio stats` shows](#what-radio-stats-shows) below. |
+| Logs | `radio-bot logs`, or `docker compose logs -f radio-bot`, or `journalctl -u radio-bot -f` on a systemd install. Set `LOG_LEVEL=debug` for more detail (state changes and the voice dependency report), or `trace` for everything. Set it back to `info` afterwards. |
+| Check a source from the command line | `docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe <pack>:<station>` (or `--probe --pack-id <pack>`) checks pack stations and prints the raw results. |
+
+### What `/radio stats` shows
+
+- **Stream input:** the session's state and source; the host asked for and the host it redirected to (with a region guessed from the host name); the IP address and port connected to; HLS segments; the codec; the input rate over 10 s and 60 s and the data received; and the round trip to the stream's server, timed by TCP handshake.
+- **Output to Discord:** the Opus target; the channel's bitrate setting (not a limit); the Ogg Opus rate; packets per second to Discord (about 50); and late packets since the bot joined, with the longest gap.
+- **Discord connection:** the voice server's host (with a region guess) and IP address; the channel's RTC region; the voice WebSocket ping and its jitter; the gateway ping; encryption and DAVE; this server's failovers, voice reconnects and encoder process ID; and the last FFmpeg warnings.
+- **Bot health:** uptime and memory; the event-loop delay over the last minute (20 ms or more means voice packets may have left late); active streams and source checks against their limits; FFmpeg processes (running, started, cleaned up) and whether `libopus` is present; the stream User-Agent in use; the database schema version; each pack's station counts and last list sync; and recent incidents, with repeats grouped together.
 
 ## Commands don't appear
 
-- **Commands are guild commands.** They are registered for each server when the bot starts (`REGISTER_COMMANDS_ON_START=true`, the default) and when it joins a new server. Check the logs for `slash commands registered` or `command registration failed for guild`.
-- **`DISCORD_DEV_GUILD_ID` is set.** Commands are then registered only in that server, both at start-up and when the bot joins servers. Clear it and restart to register in every server.
-- **The bot was invited without the `applications.commands` scope.** Re-invite it with the link from `radio-bot invite`, or the URL in [install.md](install.md#3-invite-the-bot-to-your-server). You don't need to kick it first.
-- **You deleted the commands by hand.** Registration is skipped while the stored definition hash is unchanged. Force it with `docker compose exec radio-bot node dist/scripts/register-commands.js`, optionally followed by a guild ID.
-- **The Discord client is caching an old command list.** Restart the client, or press Ctrl+R on desktop.
-- **The command is visible but says "Radio Bot only works inside servers".** `/radio` is guild-only; it doesn't work in DMs.
+- **Commands are added server by server.** The bot adds `/radio` to each server when it starts (`REGISTER_COMMANDS_ON_START=true`, the default) and when it joins a new server. Check the logs for `slash commands registered` or `command registration failed for guild`.
+- **`DISCORD_DEV_GUILD_ID` is set.** The bot then adds its commands only to that one server, both at start-up and when it joins servers. Clear the setting and restart to add them everywhere.
+- **The bot was invited without the `applications.commands` scope.** Invite it again with the link from `radio-bot invite`, or the URL in [install.md](install.md#3-invite-the-bot-to-your-server). You don't need to kick it first.
+- **You deleted the commands by hand.** The bot only sends its commands to Discord again when they have changed, so it won't notice. Force it with `docker compose exec radio-bot node dist/scripts/register-commands.js`, optionally followed by a server ID.
+- **Your Discord app is showing an old command list.** Restart the app, or press Ctrl+R on desktop.
+- **The command is visible but says "Radio Bot only works inside servers".** `/radio` works only in servers, not in direct messages.
 
 ## "Radio commands are only allowed in #…"
 
-The server has a command-channel allowlist (`/radio config` → Access). Use one of those channels, or the text chat of an approved voice channel. Admins aren't affected by this restriction.
+An admin has limited radio commands to some text channels (`/radio config` → Access). Use one of the channels the message names, or the text chat of an approved voice channel. Admins aren't affected by this limit.
 
 ## "Only DJs and administrators…" / "Join a voice channel first…" / "The radio is in use in #…"
 
-These come from the listener control mode. See [permissions.md](permissions.md#listener-control-mode). With the default `same_channel` mode, a member must be in a voice channel, and can only control the bot when it is idle or already in their channel.
+These mean the server limits who can control the radio (the *listener control mode*). See [permissions.md](permissions.md#listener-control-mode). With the default `same_channel` mode, a listener must be in a voice channel, and can only control the bot when it is idle or already in their channel. An admin can change the mode, or give someone a DJ role.
 
 ## The bot doesn't join or play
 
 | Reason code | Meaning | What to do |
 |---|---|---|
-| `VOICE_PERMISSION` | One of: the target isn't a standard voice channel (stage channels aren't supported); it isn't on the server's approved list; the bot lacks View Channel, Connect or Speak in it; or the channel is full. The message names which. | Fix the channel's permission overwrites for the bot's role, add the channel to the approved list, or pick another channel. |
-| `VOICE_CONNECT_TIMEOUT` | The voice connection didn't become ready within 20 s. | Usually a network problem: outbound **UDP** to Discord voice is blocked, there is a firewall or VPN in the way, or the host has no IPv4 route. Check the host or VM firewall. Run with `LOG_LEVEL=debug`. |
+| `VOICE_PERMISSION` | The bot can't use that voice channel. The message says which of these it is: it isn't a standard voice channel (stage channels aren't supported); it isn't on the server's list of approved voice channels; the bot lacks View Channel, Connect or Speak there; or the channel is full. | Give the bot's role View Channel, Connect and Speak in that channel (channel settings → Permissions), add the channel to the approved list in `/radio config` → Access, or pick another channel. |
+| `VOICE_CONNECT_TIMEOUT` | The voice connection wasn't ready within 20 s. | Usually a network problem on the bot's host: outgoing **UDP** traffic to Discord voice is blocked, a firewall or VPN is in the way, or the host has no IPv4 connection. Check the host's (or VM's) firewall. For more detail, run with `LOG_LEVEL=debug`. |
 | `VOICE_CHANNEL_GONE` | The channel was deleted, or the bot is no longer in that server. | Choose another channel. |
 | `VOICE_KICKED` | A moderator disconnected the bot. | Deliberate: the bot won't rejoin or autostart. Use `/radio play` to start again. |
 | `VOICE_DISCONNECTED` | The voice connection dropped and couldn't be rebuilt after several quick attempts (spread over about 2 min). The bot says so once, then keeps trying every 2 min while playback is wanted, so the station comes back by itself after a Discord outage. | Check connectivity, and Discord's status page. Wait for it to reconnect, or `/radio stop` to stop it trying. |
-| `STREAM_LIMIT` | The installation is already streaming to `MAX_ACTIVE_GUILD_STREAMS` servers. The limit also applies when a server resumes from pause, retries or reconnects; the bot then posts one notice and tries again about every 2 minutes. | Wait for another server to stop, or raise the limit in `.env` if your hardware allows. |
-| `RATE_LIMITED` | "Too many … in a short time. Try again in N s." A per-user or per-server rate limit was hit (see [permissions.md](permissions.md#rate-limits)). | Wait the number of seconds shown. |
+| `STREAM_LIMIT` | The bot is already playing in as many servers as `MAX_ACTIVE_GUILD_STREAMS` allows (3 by default). The limit also applies when a server resumes from pause, retries or reconnects; the bot then posts one notice and tries again about every 2 minutes. | Wait for another server to stop, or raise the limit in `.env` if your hardware can take it. |
+| `RATE_LIMITED` | "Too many … in a short time. Try again in N s." (or "N min" for longer waits). A per-user or per-server rate limit was hit (see [permissions.md](permissions.md#rate-limits)). | Wait the time shown. |
 | `CUSTOM_STATION_LIMIT` | The server already has `MAX_CUSTOM_STATIONS_PER_GUILD` custom stations. | Remove one with `/radio remove`, or raise the limit. |
 | `CANCELLED` | A newer command replaced this one before it finished (for example, a second `/radio play` while the first was still connecting), or a probe was stopped. | Nothing to fix: the newer command wins. |
 | `INTERNAL` | Something the bot didn't expect, or an action that doesn't apply (for example "This pack has no official list to sync with."). The message says which. | If the message doesn't explain it, check `radio-bot logs` (or `docker compose logs`) for the error and report it as a bug. |
 
 ### DAVE / encryption
 
-The bot joins with DAVE end-to-end encryption enabled (`daveEncryption: true`), and the `@snazzah/davey` dependency is bundled in the image. `/radio quality` shows either "DAVE end-to-end encrypted (privacy code …)" or "Transport-encrypted; DAVE not negotiated for this call". Both are normal: DAVE is negotiated per call.
+DAVE is Discord's end-to-end encryption for voice calls. The bot joins with DAVE switched on (`daveEncryption: true`), and the library it needs, `@snazzah/davey`, is included in the image. `/radio quality` shows either "DAVE end-to-end encrypted (privacy code …)" or "Encrypted in transit; DAVE end-to-end encryption not used for this call". Both are normal: Discord decides for each call whether DAVE is used.
 
 If the voice connection fails consistently after a Discord-side protocol change:
 
@@ -60,7 +74,7 @@ If the voice connection fails consistently after a Discord-side protocol change:
 
 ## "No verified, working source is available" (`NO_ELIGIBLE_SOURCE`)
 
-None of the station's sources passed the eligibility gate. The reply lists up to four sources with their reasons. `/radio sources <station>` shows all of them:
+A station can have several *sources* (stream addresses). The bot plays one only when it has checked that the source works and that it really carries this station, and nobody has switched it off. This message means none of the station's sources can be used right now, so nothing is played. (The bot never plays a different station instead.) The reply lists up to four sources with the reason each one can't be used, and `/radio sources <station>` shows all of them:
 
 | Reason shown | Meaning | What to do |
 |---|---|---|
@@ -68,9 +82,9 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 | last check failed (CODE) | The last check failed. See the probe codes below. `/radio sources` shows how many checks failed in a row and when the next automatic one is. | Wait: failing sources are re-checked with a growing wait (about 10 min, 1 h, 6 h, 12 h, then once a day), and playback is retried after 15, 30 and 60 s, then every 2 min while it is wanted. Or rescan, which checks at once. A source that has had no successful check for a week is **paused** ("Paused: no successful check for over a week…") and is only tested again when an admin rescans. |
 | not verified as this station | The check worked, but nothing confirms that this feed carries this station. | An admin can compare it with `/radio rescan <station> compare:true`. The operator (or, for a custom station, a server admin) can review it with `/radio source verify`. See [station-verification.md](station-verification.md#identity-rules). |
 | plays a different station (identity mismatch) | The stream names itself as a different catalogue station, or an operator marked it as a mismatch. | Deliberate: the bot never plays a mismatched feed for this station. |
-| cooling down after repeated failures until … | The circuit breaker tripped: the source kept failing in playback for more than a minute. | Wait: if no other source can play, the bot checks this one again every 2 min and plays it as soon as a check works. Otherwise the cooldown ends by itself (10 min, doubling up to 2 h). Or fix the upstream. |
-| disabled: … | Disabled in the manifest, or by the operator via `DISABLED_SOURCE_IDS` / `DISABLED_STATION_IDS`. | Intentional. See [rights-and-disclaimer.md](rights-and-disclaimer.md#takedown-procedure). |
-| rejected by URL safety policy | The source resolves to a blocked address or uses a disallowed URL. | See `ADDRESS_BLOCKED` below. |
+| resting after repeated failures until … | The source kept failing during playback for more than a minute, so the bot is resting it for a while. | Wait: if no other source can play, the bot checks this one again every 2 min and plays it as soon as a check works. Otherwise the rest ends by itself (10 min, doubling each time up to 2 h). If you run the stream, fix it. |
+| disabled: … | Switched off in the station pack, or by the person running the bot with `DISABLED_SOURCE_IDS` / `DISABLED_STATION_IDS`. | Intentional. See [rights-and-disclaimer.md](rights-and-disclaimer.md#takedown-procedure). |
+| blocked by the bot's safety rules | The source's address isn't allowed, leads to a blocked address, or the stream is encrypted. | See `ADDRESS_BLOCKED` and `HLS_ENCRYPTED` below. |
 | codec not verified | The check didn't confirm what kind of audio the stream carries. | Admins: run `/radio rescan <station>`. |
 | blocked by rights/takedown policy | The operator has blocked this source after a rights request. | Intentional. See [rights-and-disclaimer.md](rights-and-disclaimer.md#takedown-procedure). |
 | skipped because it just failed | It failed a moment ago, so the bot is trying the others first. | Nothing: it can be tried again on the next attempt. |
@@ -79,9 +93,11 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 
 ## Probe and stream errors
 
+These codes come from checking a stream (a *probe*) or playing it. Most of them are problems on the station's side. During playback the bot reacts by itself: it retries the same source where that can help, then switches to another verified source of the same station if there is one. Usually there is nothing for you to do except wait, or try again later.
+
 | Code | Meaning |
 |---|---|
-| `ACCESS_DENIED` | The stream host refused access with HTTP 401, 403 or 451, for the stream itself or for an HLS playlist or segment. This can mean geo-restriction, rights restriction, or a host that only serves certain clients. Retrying the same source is pointless, so the bot moves straight to a fallback.<br><br>By default the bot identifies as FFmpeg's network library, `Lavf/<version>` from the installed FFmpeg. Many hosts that refuse unknown clients accept that, because it is a standard media player's network stack. Check the value in use in `/radio stats`. If you changed `STREAM_USER_AGENT`, clear it to return to FFmpeg's own.<br><br>The bot does not imitate a web browser, sends no `Referer`, and never uses signed or tokenised URLs. A host that still refuses is respected. |
+| `ACCESS_DENIED` | The stream host refused access with HTTP 401, 403 or 451, for the stream itself or for an HLS playlist or segment. This can mean the stream is only for listeners in certain countries, is restricted for rights reasons, or is only served to certain apps. Retrying the same source wouldn't help, so the bot moves straight to a fallback.<br><br>By default the bot identifies as FFmpeg's network library, `Lavf/<version>` from the installed FFmpeg. Many hosts that refuse unknown clients accept that, because it is a standard media player's network stack. Check the value in use in `/radio stats`. If you changed `STREAM_USER_AGENT`, clear it to return to FFmpeg's own.<br><br>The bot does not imitate a web browser, sends no `Referer`, and never uses signed or tokenised URLs. A host that still refuses is respected. |
 | `NOT_FOUND` | The address no longer exists (HTTP 404 or 410): the mount was removed or renamed. During playback a 404 is first retried on the same source, because an Icecast server answers 404 for a few seconds while the station's own encoder reconnects; if it keeps failing, playback fails over. A check that finds it gone re-checks it after 12 h, then daily, in case it returns. If it stays gone, the pack's maintainer should disable it (`enabled: false` with a `disabledReason`). |
 | `HTTP_STATUS` | The stream server answered with another non-2xx status, such as 5xx. |
 | `HTTP_TIMEOUT` / `HTTP_ERROR` | The server didn't respond in time, or the connection failed. A check waits up to 15 s for the server's first response, and playback up to 10 s. |
@@ -107,31 +123,34 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 | `URL_PORT_NOT_ALLOWED` | Ports below 1024 other than 80 and 443, and common internal-service ports (SSH, databases, Docker API and so on), are refused. Ports such as 8000 and 8080 are allowed. |
 | `URL_HOST_NOT_ALLOWED` | `localhost`, single-label names, and suffixes such as `.local`, `.lan`, `.internal` or `.home.arpa` are refused. |
 | `URL_TOO_LONG` | Over 2048 characters. |
-| `ADDRESS_BLOCKED` | The host resolves to a private, loopback, link-local, CGNAT, multicast or reserved address (IPv4 or IPv6), or a redirect leads to one. This is the SSRF protection, and it can't be switched off. A stream on your own LAN can't be added. |
+| `ADDRESS_BLOCKED` | The host resolves to a private, loopback, link-local, CGNAT, multicast or reserved address (IPv4 or IPv6), or a redirect leads to one. This stops anyone using the bot to reach machines on its own network (see [SSRF](permissions.md#custom-station-safety-ssrf)), and it can't be switched off. So a stream on your own home or office network can't be added. |
 
-A custom station is only saved if the probe succeeds. Otherwise the reply says "Nothing was added". `/radio edit` with a new URL keeps the old URL if the new one fails.
+A custom station is only saved if the bot's check of its stream succeeds. Otherwise the reply says "Nothing was added". `/radio edit` with a new URL keeps the old URL if the new one fails.
 
 ## Playback stops, stutters or switches source
 
 | Code | Meaning |
 |---|---|
-| `STREAM_STALLED` | No encoder output for 15 s while playing, or no first audio within 20 s. The bot retries the same source (after about 1, 3 and 8 s), then fails over. See [audio-quality.md](audio-quality.md#recovery-and-continuity). |
+| `STREAM_STALLED` | No audio came out of the encoder for 15 s while playing, or none arrived within 20 s of starting. The bot retries the same source (after about 1, 3 and 8 s), then fails over. See [audio-quality.md](audio-quality.md#recovery-and-continuity). |
 | `STREAM_EOF` | The station closed the stream. Live radio shouldn't end, so this is treated as a fault and recovered. A probe also fails with `STREAM_EOF` when a direct stream ends within its sample window, which is typical of a short "station offline" file. |
 | `FFMPEG_EXIT` | The encoder exited. The message includes the last FFmpeg error lines, redacted. |
 | `IDENTITY_MISMATCH` | When the bot connected, the stream named itself (`icy-name`) as a *different* catalogue station. The source is marked as a mismatch, and the bot fails over to another verified source. An admin can re-compare it with `/radio rescan <station> compare:true`; the operator (or, for a custom station, a server admin) can review it with `/radio source verify`. |
 
-- "The usual source failed, so the radio is playing from a fallback (…)", and **Degraded** in `/radio now`, mean the best source failed and a verified alternative is playing. The original is retried after its cooldown.
+- "The radio is now playing from a fallback source (…)", and "Playing from a fallback" in `/radio now`, mean the best source failed and another verified source of the same station is playing. The bot moves back to the usual source by itself once a check shows that it works again (see [audio-quality.md → Recovery and continuity](audio-quality.md#recovery-and-continuity)).
 - If a notification channel is set, the first notice of each kind is posted, and repeats within 5 minutes are summarised in one follow-up message.
-- **The voice channel status doesn't show what's playing:** the bot needs **Set Voice Channel Status** in that voice channel. Invites made with the current link include it; for an older invite, re-invite the bot with `radio-bot invite` or give its role the permission. Check that `/radio config` → Notifications shows **Voice channel status: on**. The status follows the stream's titles, so it shows only the station during adverts or on stations that send no titles.
-- **Short drops followed by a speed-up, with no error logged:** Discord's player is catching up after voice packets arrived late. Check **Late packets** under Output to Discord in `/radio stats`: a longest gap of about 55 ms or more is enough to hear. Then check the event-loop delay under Bot health. If the worst delay is 20 ms or more (flagged in the panel, and logged as a warning at 50 ms), the bot's host was too busy to send packets on time: give it more CPU, or run fewer streams. On a one-core host, other scheduled jobs (stats collectors, `docker stats` loggers, backups) cause most of these: move them off the box, run them less often, or use a lighter tool. To match a delay to its cause, set `LOG_LEVEL=debug`: each minute's worst delay and every interaction, with its CPU time, are logged. On a systemd install the unit already gives the bot a higher CPU priority (`Nice=-5`). If the delay stays low, the packets left on time and were delayed on the network between the host and Discord, or between Discord and the listener.
-- **Frequent stalls on HLS** usually mean a slow or overloaded segment host. HLS only plays when no direct stream of the station is eligible. Check `/radio sources` to see why the direct streams are excluded: for example a failed probe, a cooldown, an operator disable, or an admin pin to the HLS source.
-- **No song or show title, or the title disappears for a while:** titles come only from the stream's own ICY metadata. Many stations send none, HLS sources never carry one, and the bot hides a title the station clears or replaces with a placeholder (such as "Unknown" or "Advert"), so the line comes back with the next real title. Accented characters from older servers are decoded as Windows-1252 when the text is not valid UTF-8.
-- **Audio quality is lower than expected:** check `/radio quality`. The source's own codec and bitrate are the real limit. The Opus target comes from the server's quality mode: `maximum` matches the source's own bitrate up to `MAX_OPUS_BITRATE_KBPS` (510 by default), and `balanced` uses 128 kbps or less. A target equal to the source's bitrate is intended, not a downgrade. The voice channel's bitrate setting is shown but is not used as a cap; what a listener's client receives above that setting has not been measured.
+- **The voice channel status doesn't show what's playing:** the bot needs **Set Voice Channel Status** in that voice channel. Invites made with the current link include it; for an older invite, re-invite the bot with `radio-bot invite` or give its role the permission. Check that `/radio config` → Notices shows **Voice channel status: on**. The status follows the stream's titles, so it shows only the station during adverts or on stations that send no titles.
+- **Short drops followed by a speed-up, with no error logged:** voice packets reached Discord late, and Discord's player is catching up. To find out why:
+  1. In `/radio stats`, look at **Late packets** under Output to Discord. A longest gap of about 55 ms or more is enough to hear.
+  2. Then look at the event-loop delay under Bot health. If the worst delay is 20 ms or more (flagged in the panel, and logged as a warning at 50 ms), the bot's host was too busy to send packets on time. Give it more CPU, or run fewer streams. On a one-core host, most of these come from other scheduled jobs (stats collectors, `docker stats` loggers, backups): move them to another machine, run them less often, or use a lighter tool. To match a delay to its cause, set `LOG_LEVEL=debug`: each minute's worst delay is logged, and so is every interaction, with the CPU time used while it ran. On a systemd install the unit already gives the bot a higher CPU priority (`Nice=-5`).
+  3. If the delay stays low, the packets left on time and were held up on the network, between the host and Discord or between Discord and the listener.
+- **Frequent stalls on HLS** usually mean the server that delivers its segments is slow or overloaded. (*HLS* sends audio as a series of short files instead of one continuous stream.) HLS only plays when no direct stream of the station can be used. Check `/radio sources` to see why the direct streams are left out: for example a failed check, a rest after repeated failures, a source switched off by the person running the bot, or an admin pin to the HLS source.
+- **No song or show title, or the title disappears for a while:** titles come only from the text the station sends inside its stream (ICY metadata). Many stations send none, and HLS sources never carry one. When the station clears the title or replaces it with a placeholder (such as "Unknown" or "Advert"), the bot hides it, and the line comes back with the next real title. Accented characters from older servers are read as Windows-1252 when the text is not valid UTF-8.
+- **Audio quality is lower than expected:** check `/radio quality`. The station's own stream (its codec and bitrate) is the real limit: the bot can't add detail the station doesn't send. The bitrate the bot sends to Discord (its *Opus target*) comes from the server's quality mode: `maximum` matches the source's own bitrate up to `MAX_OPUS_BITRATE_KBPS` (510 by default), and `balanced` uses 128 kbps or less. A target equal to the source's bitrate is intended, not a downgrade. The voice channel's bitrate setting is shown but doesn't limit the bot; what a listener's Discord app receives above that setting has not been measured.
 
 ## FFmpeg problems
 
 - **`FFMPEG_SPAWN`**, or the log line "FFmpeg/FFprobe not available — install FFmpeg or set FFMPEG_PATH/FFPROBE_PATH": the binary wasn't found. This is a fault on the bot's side, so it never counts against the station's source: the bot retries the same source instead of switching to a fallback. In Docker it comes from the image, so leave `FFMPEG_PATH` and `FFPROBE_PATH` unset (they are commented out in `.env.example`). Outside Docker, install FFmpeg or point the variables at it.
-- **"FFmpeg was found but has no libopus encoder; playback will fail."**, or `/radio stats` showing `libopus NO`: your FFmpeg build lacks `libopus`. Use the Docker image, or an FFmpeg build compiled with `--enable-libopus` (check with `ffmpeg -hide_banner -encoders | grep libopus`). Probes still work without it, but playback doesn't.
+- **"FFmpeg was found but has no libopus encoder; playback will fail."**, or `/radio stats` showing `libopus: missing`: your FFmpeg build lacks `libopus`. Use the Docker image, or an FFmpeg build compiled with `--enable-libopus` (check with `ffmpeg -hide_banner -encoders | grep libopus`). Probes still work without it, but playback doesn't.
 - **FFmpeg process count keeps growing** in `/radio stats` while nothing is playing: file a bug with the counts and your logs. Every pipeline and probe process is supposed to be reaped.
 
 ## Start-up failures
@@ -150,14 +169,20 @@ A custom station is only saved if the probe succeeds. Otherwise the reply says "
 ## Catalogue sync
 
 - **"…: the sync failed. …"**: the pack's official list couldn't be fetched, or looked implausible (fewer than 10 names, or fewer than half the pack's stations for small packs). Nothing changed, and existing entries are kept. `/radio list pack:<pack>` shows "list may be out of date" if no sync has succeeded within three intervals.
-- **"No enabled station pack has an official list to sync with."**: none of the enabled packs declares `sync` in its `pack.json`.
-- **"That pack is not enabled or has no official list to sync with."**: the pack you named is disabled, or doesn't declare `sync`.
-- **"Needs a reviewed source mapping before it can play"**: a new station appeared on the official list. The sync deliberately never collects stream URLs, so someone has to add the station's sources to the pack's `sources.json` through a reviewed change.
-- **"No longer listed"**: the station was kept (marked `missing_from_official`), and favourites are intact.
+- **"None of the enabled station packs has an official list to check against."**: none of the enabled packs declares `sync` in its `pack.json`.
+- **"That pack is either not enabled or has no official list to check against."**: the pack you named is disabled, or doesn't declare `sync`.
+- **"Added: … (no stream yet: they can't play until a reviewed source is added to the pack)"**: new stations appeared on the official list. The sync deliberately never collects stream URLs, so someone has to add the station's sources to the pack's `sources.json` through a reviewed change.
+- **"No longer on the official list: … (kept here, so favourites still work)"**: the station was kept (marked `missing_from_official`), and favourites are intact.
+- Long lists show the first 15 names and how many more there are.
 
 ## After a restart nothing plays
 
-This is by design unless the server opted in. With *Resume after restart* on, the last desired station resumes. With *Autostart* on, plus a default station and a preferred voice channel, the default starts. An explicit `/radio stop`, `/radio leave` or a moderator kick always prevents automatic playback. `/radio status` explains when resume was skipped.
+That is normal: after a restart the bot stays silent unless one of these is switched on for the server in `/radio config`:
+
+- With *Resume after restart* on, the station that was playing (or paused in an empty channel) starts again.
+- With *Autostart* on, plus a default station and a preferred voice channel, the default station starts.
+
+A `/radio stop`, a `/radio leave` or a moderator disconnecting the bot always prevents automatic playback. `/radio status` says when the bot didn't resume.
 
 ## Importing settings
 
@@ -174,7 +199,7 @@ This is by design unless the server opted in. With *Resume after restart* on, th
 | `Docker is installed but not running.` | Start Docker Desktop, or run `sudo systemctl start docker`, then try again. |
 | `Docker Compose … is too old; Radio Bot needs 2.24 or newer.` | Update Docker. `compose.yaml` uses an optional settings file, which older Compose releases reject. |
 | `Radio Bot stopped while starting. The lines above say why.` | Read the log lines printed above it. A wrong token or Application ID is the most common cause: fix them with `radio-bot config`. |
-| `Radio Bot hasn't reported in after 90 seconds.` | The bot is running but hasn't reported itself healthy (connected to Discord, database working, FFmpeg ready). Check `radio-bot logs` and the host's connection to Discord. |
+| `Radio Bot still isn't ready after 90 seconds.` | The bot is running but hasn't reported itself healthy (connected to Discord, database working, FFmpeg ready). Check `radio-bot logs` and the host's connection to Discord. |
 | `Files in … were edited, so updating could overwrite them.` | Move your changes into `compose.override.yaml`, run the `git … checkout -- .` command the message shows (it discards the edits), and update again. |
 | `Couldn't reach GitHub to check for updates.` | The host can't reach GitHub. Check its connection and try again. |
 | `Couldn't back up the database, so nothing was changed.` (during `update`) | The update stopped before changing anything. The lines above say why; fix that, or check `radio-bot logs`, then try again. |

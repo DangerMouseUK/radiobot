@@ -61,7 +61,7 @@ DISCORD_APPLICATION_ID=123456789012345678
 Useful optional values:
 
 ```dotenv
-# Register /radio only in this guild (handy while testing)
+# Register /radio only in this server (handy while testing)
 DISCORD_DEV_GUILD_ID=
 # Your Discord user ID: allows you to record identity reviews for station-pack sources
 OPERATOR_USER_IDS=
@@ -119,28 +119,27 @@ What the shipped `compose.yaml` sets up:
 
 ## 4. First run in Discord
 
-Commands are registered as **guild** commands, so `/radio` appears straight away in every server the bot is in. If you set `DISCORD_DEV_GUILD_ID`, **only that server** gets them, at start-up and when the bot joins servers. Clear it to register everywhere.
+Commands are registered as **server** (guild) commands, so `/radio` appears straight away in every server the bot is in. If you set `DISCORD_DEV_GUILD_ID`, **only that server** gets them, at start-up and when the bot joins servers. Clear it to register everywhere.
 
 As a bot admin (the server owner, or a member with Discord's **Administrator** permission; Manage Server alone is not enough):
 
-1. Run **`/radio config`**. It is ephemeral, so only you see it.
-   - **Access page:** command channels, approved voice channels and *DJ roles*. Leaving a list empty means no restriction. There is no admin-role setting.
+1. Run **`/radio config`**. Only you see its replies.
+   - **Access page:** command channels, approved voice channels, *DJ roles*, and who else can play or stop (listeners in the same channel by default, only DJs and admins, or anyone). Leaving a list empty means no restriction. There is no admin-role setting.
    - **Playback page:**
-     - idle mode (`leave_when_empty` is the default, `pause_when_empty`, or `24x7`);
-     - who can play or stop (listeners in the same channel by default, only DJs and admins, or anyone);
-     - quality mode (`maximum`, `balanced` or `manual`);
-     - the preferred voice channel, plus *Autostart*, *Resume after restart* and *Lock to preferred channel*.
-   - **Notifications page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and a switch for showing what's playing as the voice channel status (on by default; needs the optional Set Voice Channel Status permission).
+     - idle mode (*Leave* is the default, *Pause*, or *Keep playing (24/7)*);
+     - quality mode (*Maximum*, *Balanced* or *Manual*);
+     - the preferred voice channel, and one menu for the *Autostart*, *Resume after restart* and *Channel lock* switches (a ticked switch is on).
+   - **Notices page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and the *Voice channel status* switch, which shows what's playing as the voice channel's status (on by default; needs the optional Set Voice Channel Status permission).
    - Set a default station with `/radio config default_station:` and a manual Opus target with `/radio config manual_bitrate:`.
 2. Join a voice channel and run **`/radio play`**, then start typing a station's name and pick it from the list, or use **`/radio browse`**.
 3. Run **`/radio quality`** to see the source, the Discord output and the processing report.
 4. Optionally, post a persistent control panel with **`/radio panel channel:#radio`**.
 
-The first time a station is played, its sources are probed, which can add a few seconds. Until then, pack stations show as **Unverified** in the browser.
+The first time a station is played, the bot checks (probes) its sources, which can add a few seconds. Until then, pack stations show as **Unverified** in the browser.
 
 ## Data volume
 
-Everything that has to persist is in `/app/data`:
+Everything the bot keeps is in `/app/data`:
 
 | Path | Contents |
 |---|---|
@@ -148,7 +147,7 @@ Everything that has to persist is in `/app/data`:
 | `backups/` | Automatic pre-migration backups (`radio-bot-pre-v<N>-…`, the newest 5 are kept) and manual backups (`radio-bot-manual-…`, the newest 10 are kept). Each kind rotates on its own, so one never evicts the other. Copy any backup you want to keep off the host |
 | `health.json` | Heartbeat for the healthcheck, rewritten every 30 s |
 
-Nothing else needs to persist. The bundled station packs (`catalog/packs/`) ship inside the image and are re-seeded into the database on each start. Runtime evidence and guild data are preserved when that happens.
+Nothing else needs keeping. The bundled station packs (`catalog/packs/`) ship inside the image and are loaded into the database again on each start. Reloading them loses nothing the bot has learnt about each source, and no server's data.
 
 **Your own station packs:** the image's root filesystem is read-only, so put extra packs inside the data volume, for example `/app/data/packs/<pack-id>/`, and set `EXTRA_PACKS_DIR=/app/data/packs`. Restart the container to load changes. A pack that fails validation stops start-up with a message naming the file and field. The authoring guide is [catalog/README.md](../catalog/README.md).
 

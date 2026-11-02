@@ -34,7 +34,7 @@ The PRD (§14) sets a release gate: a broadcaster's stream being freely listenab
 **If you operate an instance, you are responsible for it.** Think about how you will use it.
 
 - **Personal or private self-hosting**, for example you and a few friends in a private server, is the scenario the project was designed for. Even then, check the station's terms and the law where you live and where your listeners are.
-- **Public distribution of a playable station pack**, a public inviteable bot, or relaying to large or commercial communities is materially different. Before doing any of that:
+- **Publishing a playable station pack**, running a bot that anyone can invite, or relaying to large or commercial communities is a very different situation. Before doing any of that:
   - Ask the broadcaster (or the relevant station) whether third-party Discord rebroadcast is permitted, and record their reply and any conditions.
   - Check the collecting-society licensing that applies to online streams and simulcasts in your territory. For the UK, see [PPL: playing music on radio and online](https://www.ppluk.com/licensing/playing-music-on-radio/) and [GOV.UK: licences to use music online and on mobile](https://www.gov.uk/find-licences/licences-use-music-online-mobile). Other countries have equivalent bodies, such as SACEM and SCPP in France.
   - Read Discord's [copyright and trademark policy](https://discord.com/safety/copyright-trademark-policy-explainer). It forbids unauthorised streaming of copyrighted content.
@@ -51,7 +51,7 @@ If permission for a pack's sources cannot be obtained, the software is still use
 If you represent a broadcaster or rights holder and want a station, a source or a name removed from one of the project's bundled station packs:
 
 1. **Contact the maintainers privately.** Use the repository's **Security → Report a vulnerability** form (GitHub private reporting), with "Takedown request" in the title, or the maintainer contact on the repository profile. Include the station or source IDs or names, and who you represent. Please don't post takedown requests as public issues if they contain personal contact details.
-2. **The maintainers will acknowledge the request** and, where it is from the rights holder or their representative, **remove the affected entries**. A source is removed by deleting it from the pack's `sources.json` (`catalog/packs/<pack-id>/sources.json`), or by setting `enabled: false` with a `disabledReason`. A station is removed by deleting it from the pack's `stations.json` where appropriate, and a whole pack by deleting its folder. The change is published in a new release. Seeding **disables** any pack source that disappears from its manifest, so an upgraded instance stops using it automatically. Stations whose pack is no longer loaded are hidden. The removal is recorded in `CHANGELOG.md` and the pack's `SOURCE_PROVENANCE.md`.
+2. **The maintainers will acknowledge the request** and, where it is from the rights holder or their representative, **remove the affected entries**. A source is removed by deleting it from the pack's `sources.json` (`catalog/packs/<pack-id>/sources.json`), or by setting `enabled: false` with a `disabledReason`. A station is removed by deleting it from the pack's `stations.json` where appropriate, and a whole pack by deleting its folder. The change is published in a new release. When an upgraded instance starts, it **disables** any pack source that is no longer in the pack's files, so it stops using that source automatically. Stations whose pack is no longer loaded are hidden. The removal is recorded in `CHANGELOG.md` and the pack's `SOURCE_PROVENANCE.md`.
 3. **Earlier releases and self-hosted copies** are controlled by their operators, not the maintainers. The maintainers will mention the takedown in the release notes so that operators can act.
 
 This is a volunteer project and there is no guaranteed response time, but takedown requests are given priority over other work.
@@ -70,7 +70,7 @@ Station and source IDs are shown in `/radio list` and `/radio inspect`. If a ser
 
 ## Privacy policy for a self-hosted instance
 
-Radio Bot runs on your hardware, under your Discord application. **You, the operator, are the data controller for your instance.** The project's maintainers receive no data from it. The bot sends no telemetry, has no analytics SDK and doesn't forward crash reports. `TELEMETRY_ENABLED=true` is refused at start-up.
+Radio Bot runs on your hardware, under your Discord application. **You, the operator, are the data controller for your instance**: you decide what happens to the data it keeps, and you are responsible for it. The project's maintainers receive no data from it. The bot sends no telemetry, has no analytics SDK and doesn't forward crash reports. `TELEMETRY_ENABLED=true` is refused at start-up.
 
 ### What is stored (SQLite file in the data volume)
 

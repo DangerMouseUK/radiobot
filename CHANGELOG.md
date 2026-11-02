@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Plainer English across the bot, the `radio-bot` command and the docs, for people who are new to Discord bots or to running a server. Buttons, menus, replies and error messages now say what happens rather than how it works inside. No command or option was renamed. The most visible changes:
+  - The control panel and now-playing buttons are in rows of two or three, so every row fits a phone screen: **Previous**, **Next** and **Skip**; **Browse** and **Favourite**; **Sources** and **Inspect**; then **Refresh**, **Stop** and **Leave**. **Skip** no longer shows a count (it is blurple while something is queued, and "Up next" lists the queue). **Stop** is no longer red, because it deletes nothing. The now-playing card shows the stream in one full-width field instead of three narrow columns.
+  - `/radio config` shows only the page you're on, and each page ends with the page buttons (**Access**, **Playback**, **Notices**). **Who else can control the radio** moved to the Access page, next to the other access settings. **Autostart**, **Resume after restart** and **Channel lock** (formerly **Lock to preferred channel**) are now one menu that says what each does, because three buttons didn't fit a phone. Menu options have short names, with the detail underneath. `/radio config default_station:` or `manual_bitrate:` opens the Playback page, where the change shows.
+  - Browse's favourites button says what it does: **Show favourites (n)** or **Show all stations**.
+  - The source menu under `/radio sources` lists each source by name, with its codec and bitrate underneath, so a phone doesn't cut it off. Source IDs moved out of the headings into Inspect. `/radio now` shows the bitrate with its evidence, such as "(measured)", as `/radio sources` does.
+  - On `/radio sources`, **Prefer the playing source on this server** is now **Use this source first**, and **Back to automatic choice** is now **Choose automatically**. A new "On this server" line above the buttons says what they do, and which source this server tries first or is pinned to. If that source fails, the bot still switches to another one.
+  - `/radio source prefer` and `pin` replies say what changes on the server, and `/radio help` explains the `source` commands.
+  - Source reasons and states use everyday words: "resting after repeated failures" instead of "cooling down" or "paused", "blocked by the bot's safety rules" instead of "rejected by URL safety policy", and "Why this source" instead of "Source decision".
+  - Error messages for custom stations, imports and start-up settings say what went wrong and what to do, for example "must be a Discord ID (17 to 20 digits)" instead of "must be a Discord snowflake ID".
+  - The `radio-bot` command's messages are plainer and say what to do next. For example, the pull step says it downloads about 1 GB, and "hasn't reported in" is now "still isn't ready after 90 seconds".
+  - The README, the install guides, troubleshooting, permissions and the other docs explain the terms they use and are easier to follow.
+  - A UI pass over every view: each colour means one thing everywhere; the now-playing card says **▶ Playing:**, **Stopped:** or **Paused:** in words and drops stale errors and empty figures after Stop; a failed or retrying play keeps its buttons; the panel shows "Up next" and follows queue changes; a second Stop answers privately; Browse and `/radio list` page 20 stations the same way; every bitrate shows its evidence; `/radio panel` checks Embed Links; and the import preview, `/radio sync`, `/radio remove`, `/radio stats` and `/radio help` say more exactly what they did.
+  - The same things are public everywhere. A station change is announced in the channel in one line ("@name switched to **My Station**"), from `/radio play`, Skip, Previous, Next, Browse or a favourite. The now-playing card goes only to the person who asked. `queue remove` and `queue clear` are now public one-liners, like `queue add`. **Refresh** on the control panel redraws the panel itself instead of sending you a private copy.
+
 ## [1.1.0] - 2026-11-02
 
 ### Fixed

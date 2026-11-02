@@ -11,7 +11,7 @@ import {
 import type { LoopDelaySummary } from '../../observability/event-loop.ts';
 import { redactUrl } from '../../shared/redact.ts';
 import { truncate } from '../../shared/text.ts';
-import { codecLabel } from '../../streams/probe.ts';
+import { codecLabel, type ProbeOutcome } from '../../streams/probe.ts';
 import {
   CONCLUSION_TEXT,
   checkEligibility,
@@ -20,12 +20,18 @@ import {
 } from '../../streams/ranking.ts';
 import { isPaused, nextAutomaticCheck } from '../../streams/source-service.ts';
 import type { SessionStatus } from '../../voice/session.ts';
-import { STATE_LABEL } from '../../voice/state-machine.ts';
+import { isAudioActive, type PlaybackState, STATE_LABEL } from '../../voice/state-machine.ts';
 
 /** Stream metadata comes from the station, so it is shown as plain text, never as links or headings. */
 const streamText = (text: string) =>
   escapeMarkdown(text, { heading: true, bulletedList: true, numberedList: true, maskedLink: true });
 
+/**
+ * One meaning per colour, in every view:
+ * ok: done, or playing · neutral: nothing changed, nothing playing, or still in progress ·
+ * warn: done or running, but something needs a look (partial, retrying, recovering, a decision) ·
+ * error: refused or failed · info: something you asked to see (lists, help, settings, reports).
+ */
 export const COLOR = {
   ok: 0x2e9e6a,
   warn: 0xd99a1e,
@@ -33,6 +39,14 @@ export const COLOR = {
   info: 0x3b6fd1,
   neutral: 0x6b7280,
 } as const;
+
+/** A playback state's colour, the same in every view: playing green, a fault red, recovering amber, else grey. */
+export function stateColor(state: PlaybackState | null | undefined): number {
+  if (state === 'PLAYING') return COLOR.ok;
+  if (state === 'ERROR') return COLOR.error;
+  if (state === 'RECOVERING' || state === 'FAILING_OVER') return COLOR.warn;
+  return COLOR.neutral;
+}
 
 export const DISCLAIMER = 'Radio Bot is unofficial and not affiliated with or endorsed by any broadcaster.';
 
@@ -46,8 +60,8 @@ const VERIFICATION_LABEL: Record<VerificationState, string> = {
   eligible: 'working',
   unverified: 'working, but not verified as this station',
   degraded: 'working with decode errors',
-  blocked_by_policy: 'blocked by the URL safety rules',
-  cooldown: 'paused after repeated failures',
+  blocked_by_policy: 'blocked by the bot’s safety rules',
+  cooldown: 'resting after repeated failures',
   offline: 'last check failed',
   retired: 'retired',
 };
@@ -80,34 +94,63 @@ export function transportLabel(t: string | null | undefined): string {
   return 'Unknown transport';
 }
 
-/** "MP3 · ≈128 kbps (measured) · 44.1 kHz · stereo" with explicit unknowns (NFR-12). */
-export function sourceFormat(s: StationSource): string {
+/**
+ * "≈128 kbps (measured)": the bitrate with its evidence, written the same way in every view (NFR-12).
+ * It takes a stored source or the outcome of a check just made.
+ */
+export function bitrateText(
+  s: Pick<StationSource, 'measuredBitrateKbps' | 'codecBitrateKbps' | 'advertisedBitrateKbps' | 'transport'>,
+): string {
   const br = effectiveBitrate(s);
+  if (br.kbps === null) return 'bitrate unknown';
   const evidence =
     s.measuredBitrateKbps !== null
       ? 'measured'
       : s.codecBitrateKbps !== null
         ? 'codec metadata'
-        : s.advertisedBitrateKbps !== null
-          ? s.transport === 'hls'
-            ? 'manifest, unverified'
-            : 'advertised, unverified'
-          : '';
+        : s.transport === 'hls'
+          ? 'manifest, unverified'
+          : 'advertised, unverified';
+  return `≈${Math.round(br.kbps)} kbps (${evidence})`;
+}
+
+/** "MP3 · ≈128 kbps (measured) · 44.1 kHz · stereo" with explicit unknowns (NFR-12). */
+export function sourceFormat(s: StationSource): string {
   const parts = [
     codecLabel(s.codec, s.profile) === 'unknown'
       ? `codec not measured${s.codecHint ? ` (hint: ${s.codecHint})` : ''}`
       : codecLabel(s.codec, s.profile),
-    br.kbps !== null ? `≈${Math.round(br.kbps)} kbps (${evidence})` : 'bitrate unknown',
+    bitrateText(s),
     s.sampleRateHz ? `${(s.sampleRateHz / 1000).toFixed(1)} kHz` : 'sample rate unknown',
     s.channels
       ? s.channels === 1
         ? 'mono'
         : s.channels === 2
           ? 'stereo'
-          : `${s.channels} ch`
+          : `${s.channels} channels`
       : 'channels unknown',
   ];
   return parts.join(' · ');
+}
+
+/** "MP3 · ≈128 kbps (measured) · 44.1 kHz · stereo · Direct HTTP stream": a check just made (NFR-12). */
+export function checkedLine(o: ProbeOutcome): string {
+  const codec = codecLabel(o.codec, o.profile);
+  const rate = o.sampleRateHz ? `${(o.sampleRateHz / 1000).toFixed(1)} kHz` : 'sample rate unknown';
+  const ch = o.channels
+    ? o.channels === 1
+      ? 'mono'
+      : o.channels === 2
+        ? 'stereo'
+        : `${o.channels} channels`
+    : 'channels unknown';
+  return [
+    codec === 'unknown' ? 'codec unknown' : codec,
+    bitrateText(o),
+    rate,
+    ch,
+    transportLabel(o.transport),
+  ].join(' · ');
 }
 
 export function identityLine(s: StationSource): string {
@@ -134,26 +177,21 @@ export function stationLine(st: Station, a: StationAvailability, current = false
   return `${current ? '▶ ' : ''}**${st.displayName}** — ${availabilityBadge(a)}${st.provider === 'custom' ? ' · custom' : ''}`;
 }
 
-/** "Direct MP3 · ≈128 kbps": what the station sends, at a glance (the full figures are in Sources). */
+/** "Direct MP3 · ≈128 kbps (measured)": what the station sends, at a glance (the rest is in Sources). */
 function streamSummary(s: StationSource): string {
-  const br = effectiveBitrate(s);
   const how = s.transport === 'hls' ? 'HLS' : s.transport === 'http-continuous' ? 'Direct' : '';
-  return [
-    `${how} ${codecLabel(s.codec, s.profile)}`.trim(),
-    br.kbps !== null ? `≈${Math.round(br.kbps)} kbps` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  return [`${how} ${codecLabel(s.codec, s.profile)}`.trim(), bitrateText(s)].join(' · ');
 }
 
 /** Why this source plays, in one plain sentence (the full reasoning is under Sources). */
 const CHOICE_TEXT: Record<SelectionResult['conclusion'], string> = {
   'higher-quality-verified': 'The best measured quality of this station’s sources.',
-  'no-higher-quality-source-verified': 'Its sources carry the same audio; this one streams most simply.',
+  'no-higher-quality-source-verified':
+    'Its sources carry the same audio. Sources shows how this one was chosen.',
   'not-conclusively-determined':
-    'No measured quality difference (different codecs aren’t compared), so the station pack’s order decided.',
+    'Which source sounds better was not conclusively determined. Sources shows how this one was chosen.',
   'higher-quality-source-ranked-lower':
-    'A source that measures higher ranks lower, because of how it is delivered, its reliability or an admin’s choice.',
+    'Another source measures higher but comes later, because of how it is delivered, its reliability or an admin’s choice.',
   'single-source': 'The only usable source right now.',
   'no-eligible-source': 'No usable source right now.',
 };
@@ -175,29 +213,45 @@ export function nowEmbed(
       .setColor(COLOR.neutral);
   }
   const playing = status.state === 'PLAYING';
-  e.setTitle(playing ? `▶ ${st.displayName}` : `${STATE_LABEL[status.state]}: ${st.displayName}`).setColor(
-    playing ? COLOR.ok : status.state === 'ERROR' ? COLOR.error : COLOR.warn,
-  );
+  const active = isAudioActive(status.state);
+  // In the channel but not streaming: say whether a listener stopped it or it is waiting for one.
+  const resting = status.state === 'CONNECTED' ? status.desiredState : null;
+  const label =
+    resting === 'stopped' ? 'Stopped' : resting === 'paused_empty' ? 'Paused' : STATE_LABEL[status.state];
+  // The state is in words as well as in the colour and the ▶, so it never relies on either alone.
+  e.setTitle(`${playing ? '▶ ' : ''}${label}: ${st.displayName}`).setColor(stateColor(status.state));
   const lines: string[] = [];
   if (status.nowPlaying) {
     lines.push(`🎵 **${streamText(truncate(status.nowPlaying.title, 200))}**`);
     lines.push(`-# From the station’s stream, updated ${ts(status.nowPlaying.receivedAt)}`);
-  } else {
+  } else if (active) {
     lines.push('-# The station isn’t sending a song or show title right now.');
+  } else if (resting === 'stopped') {
+    lines.push('Nothing is playing. Press **Browse** or use `/radio play` to start again.');
+  } else if (resting === 'paused_empty') {
+    lines.push('Paused while nobody is in the voice channel. It plays again when someone joins.');
   }
-  if (!playing && status.lastError) lines.push(`⚠️ ${status.lastError.message}`);
-  if (status.selection?.degraded) lines.push('⚠️ Playing from a fallback: the usual source isn’t working.');
-  e.setDescription(lines.join('\n'));
+  // Only while the bot is still meant to play: after Stop, an old error is no longer news.
+  if (!playing && status.desiredState === 'playing' && status.lastError)
+    lines.push(`⚠️ ${status.lastError.message}`);
+  if (active && status.selection?.degraded)
+    lines.push('⚠️ Playing from a fallback: the usual source isn’t working.');
+  // discord.js rejects an empty description, and a card with nothing to say has none.
+  if (lines.length > 0) e.setDescription(lines.join('\n'));
+  if (!active) {
+    // Nothing is streaming, so the stream and output facts would only be dashes.
+    if (voiceChannelId) e.addFields({ name: 'Channel', value: `<#${voiceChannelId}>`, inline: true });
+    return e;
+  }
   const s = status.source;
-  e.addFields(
-    { name: 'Channel', value: voiceChannelId ? `<#${voiceChannelId}>` : '—', inline: true },
-    { name: 'Station stream', value: s ? streamSummary(s) : '—', inline: true },
-    {
-      name: 'To Discord',
-      value: status.plan ? `Opus · ${status.plan.targetKbps} kbps` : '—',
-      inline: true,
-    },
-  );
+  // One full-width field: in three side-by-side columns a phone wrapped the stream onto 5 lines.
+  e.addFields({
+    name: 'Stream',
+    value: [
+      s ? streamSummary(s) : '—',
+      `To Discord: ${status.plan ? `Opus · ${status.plan.targetKbps} kbps` : '—'}${voiceChannelId ? ` · in <#${voiceChannelId}>` : ''}`,
+    ].join('\n'),
+  });
   if (s) {
     const verified =
       s.identityStatus === 'verified' ? '✅ Verified as this station' : '❔ Not yet verified as this station';
@@ -245,7 +299,7 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
         `Station: **${st.displayName}** · source \`${s.id}\``,
         `Transport: ${transportLabel(status.inputTransport ?? s.transport)}${status.hls?.chosen ? ` — rendition: ${status.hls.chosen.reason}` : ''}`,
         `Codec: ${codecLabel(s.codec, s.profile)} · container ${s.container ?? 'unknown'}`,
-        `Bitrate: ${br.kbps !== null ? `≈${Math.round(br.kbps)} kbps` : 'unknown'} (evidence: ${s.bitrateConfidence.replace('-', ' ')})${status.observedInputKbps !== null ? ` · live network rate ≈${status.observedInputKbps} kbps` : ''}`,
+        `Bitrate: ${br.kbps !== null ? bitrateText(s) : 'unknown'}${status.observedInputKbps !== null ? ` · live network rate ≈${status.observedInputKbps} kbps` : ''}`,
         `Sample rate: ${s.sampleRateHz ? `${s.sampleRateHz} Hz` : 'unknown'} · Channels: ${s.channels ?? 'unknown'}${s.channelLayout ? ` (${s.channelLayout})` : ''}`,
       ].join('\n'),
     },
@@ -263,7 +317,7 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
       name: 'Processing',
       value: [
         s.codec === 'opus'
-          ? 'Transcode: yes. The Opus source is decoded and encoded again once for Discord (zero-transcode passthrough is not used in v1). The voice library adds no second encode.'
+          ? 'Transcode: yes. The Opus source is decoded and encoded again once for Discord (the bot never passes a stream through unchanged). The voice library adds no second encode.'
           : `Transcode: yes, exactly one lossy encode (${codecLabel(s.codec, s.profile)} → Opus). The voice library adds no second encode.`,
         `Resampling: ${p.resampled ? `${s.sampleRateHz} Hz → 48000 Hz (required by Discord)` : 'none'}`,
         'Volume/normalisation/EQ/compression: off',
@@ -273,7 +327,7 @@ export function qualityEmbed(st: Station | null, status: SessionStatus | null): 
   );
   if (status.selection) {
     e.addFields({
-      name: 'Source decision',
+      name: 'Why this source',
       value: truncate(
         [CONCLUSION_TEXT[status.selection.conclusion], ...status.selection.explanation].join('\n'),
         1024,
@@ -296,7 +350,7 @@ export function failingLine(s: StationSource, nextCheck: number): string {
 /** A paused source: why it stopped being checked, and how to test it again. */
 export function pausedLine(s: StationSource): string {
   const code = s.lastFailureCode ? `, last ${s.lastFailureCode}` : '';
-  return `Paused: no successful check for over a week (${s.consecutiveFailures} failed in a row${code}). It is no longer checked automatically; use Check sources again to test it.`;
+  return `Paused: no successful check for over a week (${s.consecutiveFailures} failed in a row${code}). It is no longer checked automatically; an admin can test it with **Check sources again**.`;
 }
 
 export function sourcesEmbed(
@@ -324,8 +378,9 @@ export function sourcesEmbed(
   );
   // Discord rejects an embed whose title, description, fields and footer exceed 6000 characters
   // in total, so detailed views of stations with many sources stop adding fields before that. The
-  // margin leaves room for what callers add: the server override field and a re-check summary.
-  let budget = 5600 - (e.data.title?.length ?? 0) - (e.data.footer?.text.length ?? 0) - description.length;
+  // margin leaves room for what callers add: the "On this server" field (up to about 400
+  // characters) and a re-check summary, which fits itself into what is left.
+  let budget = 5400 - (e.data.title?.length ?? 0) - (e.data.footer?.text.length ?? 0) - description.length;
   // Usable sources first, in the order the bot ranks them; then the rest, which can't be used.
   const rank = new Map(selection.ordered.map((s, i) => [s.id, i + 1]));
   const ranked = [
@@ -349,13 +404,16 @@ export function sourcesEmbed(
     const place = rank.has(s.id) ? `#${rank.get(s.id)} ` : '';
     const lines = [
       `${transportLabel(s.transport === 'unknown' ? s.transportHint : s.transport)} · ${sourceFormat(s)}`,
-      detailed
-        ? identityLine(s)
-        : s.identityStatus === 'verified'
-          ? '✅ Verified as this station'
-          : s.identityStatus === 'mismatch'
-            ? '❌ Plays a different station'
-            : '❔ Not yet verified as this station',
+      // The same marker in Sources and Inspect, so the two views scan alike.
+      `${s.identityStatus === 'verified' ? '✅' : s.identityStatus === 'mismatch' ? '❌' : '❔'} ${
+        detailed
+          ? identityLine(s)
+          : s.identityStatus === 'verified'
+            ? 'Verified as this station'
+            : s.identityStatus === 'mismatch'
+              ? 'Plays a different station'
+              : 'Not yet verified as this station'
+      }`,
       elig.eligible
         ? `✅ Can be used · ${VERIFICATION_LABEL[s.verificationState]}`
         : `❌ Can’t be used: ${truncate(elig.reasons.join('; '), 200)}`,
@@ -365,14 +423,16 @@ export function sourcesEmbed(
     else if (nextCheck !== null) lines.push(failingLine(s, nextCheck));
     if (detailed) {
       lines.push(
-        `Endpoint: \`${truncate(redactUrl(s.url), 120)}\`${s.effectiveHost ? ` → ${s.effectiveHost}` : ''}`,
+        `ID: \`${s.id}\``,
+        `Stream URL: \`${truncate(redactUrl(s.url), 120)}\`${s.effectiveHost ? ` → ${s.effectiveHost}` : ''}`,
         `Bitrates: advertised ${s.advertisedBitrateKbps ?? '—'} · codec ${s.codecBitrateKbps ?? '—'} · measured ${s.measuredBitrateKbps ?? '—'} kbps`,
         `Last checked ${ts(s.lastProbeAt)} · last worked ${ts(s.lastSuccessAt)} · last failed ${ts(s.lastFailureAt)}${s.lastFailureCode ? ` (${s.lastFailureCode})` : ''}`,
         `Health ${Math.round(s.healthScore)}/100 · start-up ${s.startupMs !== null ? `${s.startupMs} ms` : '—'}${s.icyName ? ` · stream name "${truncate(s.icyName, 60)}"` : ''}`,
         `Where it came from: ${PROVENANCE_LABEL[s.provenance]}${s.rightsStatus !== 'unreviewed' ? ` · rights: ${s.rightsStatus}` : ''}`,
       );
     }
-    const name = truncate(`${place}${s.label ?? 'Source'} \`${s.id}\`${role}`, 256);
+    // No ID in the heading: a long code span overflows on a phone. Inspect shows it in the details.
+    const name = truncate(`${place}${s.label ?? s.id}${role}`, 256);
     const value = truncate(lines.join('\n'), 1024);
     if (name.length + value.length > budget - 80) {
       omitted += shown.length - index;
@@ -383,7 +443,7 @@ export function sourcesEmbed(
   }
   if (omitted > 0) {
     e.addFields({
-      name: `${omitted} more source(s) not shown`,
+      name: `${omitted} more ${omitted === 1 ? 'source' : 'sources'} not shown`,
       value: 'Discord limits how much one message can hold.',
     });
   }
@@ -392,10 +452,13 @@ export function sourcesEmbed(
 }
 
 export function errorEmbed(message: string, title = 'Couldn’t do that'): EmbedBuilder {
-  return new EmbedBuilder()
-    .setColor(COLOR.error)
-    .setTitle(`⚠️ ${title}`)
-    .setDescription(truncate(message, 2000));
+  return (
+    new EmbedBuilder()
+      .setColor(COLOR.error)
+      // No ⚠️ here: red and the title say it is an error, and ⚠️ means "a warning" everywhere else.
+      .setTitle(title)
+      .setDescription(truncate(message, 2000))
+  );
 }
 
 export function infoEmbed(title: string, message: string, color: number = COLOR.info): EmbedBuilder {

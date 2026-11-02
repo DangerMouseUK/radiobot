@@ -67,7 +67,9 @@ describe('configuration parsing', () => {
   });
 
   it('rejects unrecognised booleans and names the variable', () => {
-    expect(() => load({ AUTO_RESUME_DEFAULT: 'maybe' })).toThrow(/AUTO_RESUME_DEFAULT: expected a boolean/);
+    expect(() => load({ AUTO_RESUME_DEFAULT: 'maybe' })).toThrow(
+      /AUTO_RESUME_DEFAULT: must be true or false/,
+    );
   });
 
   it.each([
@@ -100,7 +102,7 @@ describe('configuration parsing', () => {
   it('validates Discord IDs and treats an empty dev guild as unset', () => {
     expect(load({ DISCORD_DEV_GUILD_ID: '' }).devGuildId).toBeNull();
     expect(load({ DISCORD_DEV_GUILD_ID: '223456789012345678' }).devGuildId).toBe('223456789012345678');
-    expect(() => load({ DISCORD_DEV_GUILD_ID: 'my-server' })).toThrow(/snowflake/);
+    expect(() => load({ DISCORD_DEV_GUILD_ID: 'my-server' })).toThrow(/Discord ID/);
     expect(() => load({ DISCORD_APPLICATION_ID: 'replace-with-your-application-id' })).toThrow(
       /DISCORD_APPLICATION_ID/,
     );

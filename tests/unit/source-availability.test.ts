@@ -129,7 +129,7 @@ describe('operator kill switches', () => {
       ['a-1', false],
       ['a-2', true],
     ]);
-    expect(t.service.sourcesFor(a.id)[0]!.disabledReason).toMatch(/operator/);
+    expect(t.service.sourcesFor(a.id)[0]!.disabledReason).toBe('switched off by the bot owner');
     expect(t.service.isStationDisabled(b.id)).toBe(true);
     expect(t.service.availability(b)).toBe('unavailable');
     expect(t.service.select('g', b.id).selected).toBeNull();

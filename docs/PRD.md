@@ -156,11 +156,11 @@ Provenance details for each station are recorded in the pack folder's `SOURCE_PR
 - A pack may declare an official list in `pack.json` (`sync: { adapter, url }`). The generic `CatalogueSync` fetches that list through the safe HTTP client, and a named **adapter** (`src/catalogue/sync-adapters.ts`) extracts station names and stable IDs:
   - `webradio-apidata`, used by the starter pack, reads a webradio list embedded in a station website's page (a `webradios[]` array in its `var apidata` JSON) and ignores, and never stores, any short-lived signed play URLs on that page;
   - `json-name-list` reads a plain JSON list of `{ id, name }`.
-- Runs on its own jittered schedule for each enabled pack that declares a list (daily by default; `CATALOG_SYNC_INTERVAL_HOURS` from 6 hours to 30 days, each waited out in full), and on admin request (`/radio sync [pack]`), with rate limits.
+- Runs on its own jittered schedule for each enabled pack that declares a list (daily by default; `CATALOG_SYNC_INTERVAL_HOURS` can be set from 6 hours to 30 days, and even the longest interval is waited out in full), and on admin request (`/radio sync [pack]`), with rate limits.
 - Scheduled syncs run as background work: one at a time with background source checks, and never during a stream's first 30 s. The list is parsed off the main thread and changes are written in short steps (parts of 50). A list with more than 5,000 names is refused.
 - Renames are detected by stable ID (or a single clearly similar name); the station keeps its ID and favourites, and the old name becomes an alias.
 - Stations no longer listed are marked *missing from official list* but kept. New names are added as catalogued-only and reported as needing a reviewed source mapping.
-- A failed or implausible fetch changes nothing. A list is implausible when it has fewer than 10 names, or fewer than half the pack's stations for small packs. The pack's list is flagged as possibly stale.
+- A failed or implausible fetch changes nothing. A list is implausible when it has fewer than 10 names, or fewer than half the pack's stations for small packs. When no sync has succeeded within three intervals, the pack's list is flagged as possibly stale.
 - The sync report lists added, renamed, missing, returned and unreachable stations.
 - Stream sources are never discovered automatically; new mappings are added to the pack's `sources.json` by review.
 
@@ -265,7 +265,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 ### FR-010 — Station browser and controls (P0/P1)
 
 - `/radio browse`: paged, filterable, ephemeral station picker.
-- Controls: Previous/Next station (within the current station's pack, in pack order, or through favourites), Stop, Leave, Browse stations, Refresh, Favourite or Unfavourite, Sources, Inspect. **Skip (n queued)** appears when stations are queued, and always on the persistent panel. **Favourite** only adds and **Unfavourite** only removes, so a second click or an older message never undoes the first; each says so when nothing needed to change.
+- Controls, in rows of two or three so each fits a phone screen: Previous and Next (the next station within the current station's pack, in pack order, or through favourites); Browse, Favourite or Unfavourite; Sources, Inspect; Refresh, Stop, Leave. **Skip** appears when stations are queued, and always on the persistent panel. **Favourite** only adds and **Unfavourite** only removes, so a second click or an older message never undoes the first; each says so when nothing needed to change.
 - **Station queue.** Radio never ends, so the queue advances only on skip.
   - `/radio queue add <station>` plays the station at once if nothing is playing; otherwise it appends it, up to 25 stations.
   - `/radio queue list`, `/radio queue remove <position>` and `/radio queue clear` manage the queue.

@@ -101,7 +101,7 @@ Nothing is written anywhere else. Back up `/var/lib/radio-bot/` like any other a
   cd /opt/radio-bot && sudo DATABASE_PATH=/var/lib/radio-bot/radio-bot.sqlite node dist/scripts/backup.js
   ```
 
-- **Settings for each Discord server:** use `/radio config` in that server to set channels, roles and idle mode.
+- **Settings for each Discord server:** use `/radio config` in that server to choose channels and DJ roles, and what happens when everyone leaves the voice channel.
 
 ## Upgrading
 

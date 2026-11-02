@@ -200,6 +200,8 @@ export class FakeTextChannel {
   readonly deleted: string[] = [];
   /** Whether the bot has View Channel and Send Messages here. */
   canSend = true;
+  /** Other permissions the bot lacks here (Embed Links, say). */
+  readonly lacks = new Set<bigint>();
   /** An error code to throw from messages.edit (10008 = unknown message). */
   editError: number | null = null;
   readonly id: string;
@@ -223,7 +225,9 @@ export class FakeTextChannel {
     return true;
   }
   permissionsFor() {
-    return { has: () => this.canSend };
+    return {
+      has: (p: bigint | bigint[]) => this.canSend && ![p].flat().some((x) => this.lacks.has(x)),
+    };
   }
   async send(p: unknown) {
     this.sent.push(p);
