@@ -1,7 +1,7 @@
 # Radio Bot — Product Requirements Document
 
-**Document version:** 1.0 (as built for release 1.0.0)
-**Date:** 31 October 2026
+**Document version:** 1.0, written as built for release 1.0.0 and kept in line with the code since
+**First written:** 31 October 2026
 **Status:** Implemented. Open release gates are listed in §18 and §20.
 **Product type:** Self-hosted Discord voice bot for live internet radio
 **Licence:** MIT for the project's own code (see §14)
@@ -156,7 +156,7 @@ Provenance details for each station are recorded in the pack folder's `SOURCE_PR
 - A pack may declare an official list in `pack.json` (`sync: { adapter, url }`). The generic `CatalogueSync` fetches that list through the safe HTTP client, and a named **adapter** (`src/catalogue/sync-adapters.ts`) extracts station names and stable IDs:
   - `webradio-apidata`, used by the starter pack, reads a webradio list embedded in a station website's page (a `webradios[]` array in its `var apidata` JSON) and ignores, and never stores, any short-lived signed play URLs on that page;
   - `json-name-list` reads a plain JSON list of `{ id, name }`.
-- Runs on one jittered daily schedule per syncable enabled pack (configurable), and on admin request (`/radio sync [pack]`), with rate limits.
+- Runs on its own jittered schedule for each enabled pack that declares a list (daily by default; `CATALOG_SYNC_INTERVAL_HOURS` from 6 hours to 30 days, each waited out in full), and on admin request (`/radio sync [pack]`), with rate limits.
 - Renames are detected by stable ID (or a single clearly similar name); the station keeps its ID and favourites, and the old name becomes an alias.
 - Stations no longer listed are marked *missing from official list* but kept. New names are added as catalogued-only and reported as needing a reviewed source mapping.
 - A failed or implausible fetch changes nothing. A list is implausible when it has fewer than 10 names, or fewer than half the pack's stations for small packs. The pack's list is flagged as possibly stale.
@@ -225,7 +225,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - FFmpeg decodes the source and encodes **once** with libopus: 48 kHz, stereo, 20 ms frames, VBR, music mode, compression level 10, in Ogg pages of 100 ms.
 - The Ogg Opus stream is handed to `@discordjs/voice` as `StreamType.OggOpus`, which only demuxes it: no second encode, no inline volume.
 - Target bitrate:
-  - `maximum` (default) = the source's own bitrate (codec metadata, then measured, then manifest or advertised), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
+  - `maximum` (default) = the source's own bitrate (measured, then codec metadata, then manifest or advertised, rounded up to a whole kbps so it is never below the source), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
   - `balanced` = 128 kbps, or the source's bitrate when lower;
   - `manual` = an admin-set value from 32 kbps up to `MAX_OPUS_BITRATE_KBPS`.
 - The voice channel's bitrate setting is **reported but not used as a cap**. The setting applies to members' voices, not to a bot's stream, and the plan notes when the target is above it. What a listener receives has **not been measured** (§18).
@@ -240,6 +240,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - Detects stream end, FFmpeg exit, missing audio progress, failed HLS segments and playlists, voice disconnection and a feed that starts identifying as another station.
 - Reconnects the same source with jittered backoff (about 1, 3 and 8 s), then fails over to the next eligible source, then reports an error and retries every 2 minutes while playback is still wanted.
 - A source with 4 consecutive failures (the first plus every retry) cools down (10 minutes, doubling to 2 hours).
+- A failure in the bot's own domain (FFmpeg failing to start, an internal error) says nothing about the source: it is retried on the same source and never counts against it. If FFmpeg can't start and those retries run out, the bot reports an error and tries again after 2 minutes, with no failover, since any source would fail the same way. An unexpected internal error may be specific to that source's data, so once its retries run out the bot fails over to a verified fallback.
 - Desired state (playing, stopped, left, kicked, paused) is stored separately from runtime state. An explicit stop or leave is never overridden.
 - Every FFmpeg process and network input is closed on switch, stop, leave, server removal and shutdown.
 - Notices to a configured channel are coalesced (one per kind per 5 minutes, with a count).
@@ -260,7 +261,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 ### FR-010 — Station browser and controls (P0/P1)
 
 - `/radio browse`: paged, filterable, ephemeral station picker.
-- Controls: Previous/Next station (within the current station's pack, in pack order, or through favourites), Stop, Leave, Refresh, Favourite, Sources, Inspect. **Skip (n queued)** appears when stations are queued, and always on the persistent panel, which also has a **Browse stations** button.
+- Controls: Previous/Next station (within the current station's pack, in pack order, or through favourites), Stop, Leave, Browse stations, Refresh, Favourite or Unfavourite, Sources, Inspect. **Skip (n queued)** appears when stations are queued, and always on the persistent panel. **Favourite** only adds and **Unfavourite** only removes, so a second click or an older message never undoes the first; each says so when nothing needed to change.
 - **Station queue.** Radio never ends, so the queue advances only on skip.
   - `/radio queue add <station>` plays the station at once if nothing is playing; otherwise it appends it, up to 25 stations.
   - `/radio queue list`, `/radio queue remove <position>` and `/radio queue clear` manage the queue.
@@ -348,7 +349,7 @@ One top-level `/radio` command, registered per server.
 | `/radio source verify <station> <source> <verdict>` | Admin (custom stations); Admin who is also an Operator (pack sources) | Record an identity review |
 | `/radio help` | Everyone | Short help |
 
-**Button and menu rules:** component IDs are HMAC-signed, bound to the server, and expire (10–30 minutes; panel buttons are persistent). The signature only proves the control is genuine; every click is authorised again on the server.
+**Button and menu rules:** component IDs are HMAC-signed, bound to the server, and expire (10–30 minutes, counted in whole minutes; panel buttons are persistent). The signature only proves the control is genuine; every click is authorised again on the server. Every ID fits Discord's 100-character limit by design, whatever the station: actions have at most 7 characters and arguments at most 65, the length of the longest station ID. Buttons sent by 1.0.5 and earlier say they have expired.
 
 ---
 
@@ -379,7 +380,7 @@ One top-level `/radio` command, registered per server.
 7. Discard the sample.
 8. Decide identity (FR-005) and store the evidence.
 
-**Budgets:** 22 s per basic probe (of which up to 15 s waiting for the server's first response); about 40 s per audio comparison (90 s total); 2 concurrent probes per installation and 1 per host, and background checks one at a time; working sources are re-probed after 24 h, and a failing source backs off (about 10 min, 1 h, 6 h, 12 h, then once a day, starting at 12 h when the address is gone with HTTP 404/410). When someone wants a station and none of its sources works, its failing sources are re-checked despite the back-off, at most every 10 min within a day of last working, then hourly. A source with no successful check for 7 days (and at least 5 failed checks in a row) is **paused**: it is no longer checked automatically at all, in the background or for a play, until an admin runs `/radio rescan` (or a pack update gives it a new address). A temporary outage of hours or days never pauses a source. A check someone is waiting for interrupts a background check on the same host; the interrupted check records nothing and runs again later.; the name sync runs daily for each pack that declares an official list. Nothing samples all stations continuously.
+**Budgets:** 22 s per basic probe (of which up to 15 s waiting for the server's first response); about 40 s per audio comparison (90 s total); 2 concurrent probes per installation by default (`MAX_CONCURRENT_PROBES`) and 1 per host, and background checks one at a time; working sources are re-probed after 24 h, and a failing source backs off (about 10 min, 1 h, 6 h, 12 h, then once a day, starting at 12 h when the address is gone with HTTP 404/410). When someone wants a station and none of its sources works, its failing sources are re-checked despite the back-off, at most every 10 min within a day of last working, then hourly. A source with no successful check for 7 days (and at least 5 failed checks in a row) is **paused**: it is no longer checked automatically at all, in the background or for a play, until an admin runs `/radio rescan` (or a pack update gives it a new address). A temporary outage of hours or days never pauses a source. A check someone is waiting for interrupts a background check on the same host; the interrupted check records nothing and runs again later. The name sync runs daily by default for each pack that declares an official list. Nothing samples all stations continuously.
 
 ### 7.4 Selection
 
@@ -389,7 +390,7 @@ See FR-006. Selection runs on every play and failover. The transport tier is app
 
 Two sources are decoded at the same time to 8 kHz mono for about **40 s** each, within 90 s. HLS is opened 1 segment from live for comparisons.
 
-The bot computes a signed log-energy flux envelope at 100 frames/s. It trims the first and last second (removing a decode-start artefact that otherwise lined unrelated stations up at lag 0) and clips outliers. It then cross-correlates the two envelopes over **±30 s**, requiring at least **15 s** of overlap.
+The bot computes a signed log-energy flux envelope at 100 frames/s. It trims the first and last second (removing a decode-start artefact that otherwise lined unrelated stations up at lag 0) and clips outliers. It then cross-correlates the two envelopes over **±30 s**, requiring at least **15 s** of overlap. Decoding runs in FFmpeg at the lowest CPU priority; the correlation runs in small slices that give the event loop back in between, so a comparison never holds up voice packets.
 
 A match needs a correlation of at least **0.3** and a peak prominence of at least **5** standard deviations. A uniqueness ratio is reported but not used, because repetitive dance music makes it unreliable.
 
@@ -430,7 +431,7 @@ As in FR-007. `maximum` encodes at the source's own bitrate, up to `MAX_OPUS_BIT
 
 ### 8.4 Buffering and live delay
 
-Buffers are bounded (HLS reader 512 KB high-water mark, 16 MB segment cap). HLS starts three segments from the live edge and resynchronises if it falls out of the live window or sequence numbers reset. If playback drifts more than 45 s behind live, the stream restarts at the live edge.
+Buffers are bounded (HLS reader 512 KB high-water mark, 16 MB segment cap). HLS starts three segments from the live edge and resynchronises if it falls out of the live window or sequence numbers reset. A playlist that is only a little behind what was already sent (a stale copy from another server of the same CDN) is ignored until the next poll, so no audio is sent twice. Each segment, and each fMP4 start-up (init) section, is tried twice before it counts as failed. If playback drifts more than 45 s behind live, the stream restarts at the live edge.
 
 ### 8.5 Process lifecycle
 
@@ -489,13 +490,13 @@ Admin = the server owner, or a member with Discord's **Administrator** permissio
 
 ### 10.3 Abuse resistance
 
-Rate limits: station switches 6 per user and 12 per server per 30 s; rescans 3 per server per 10 minutes; adding stations 5 per server per hour; sync 2 per server per hour and 1 per installation per 10 minutes; component clicks 20 per user per 20 s. Rapid repeated switches are superseded rather than queued. Installation-wide caps: active streams (default 3) and concurrent probes (default 2).
+Rate limits: station switches and joins 6 per user and 12 per server per 30 s; stream checks (rescans and custom-station URL changes) 3 per server per 10 minutes; adding stations 5 per server per hour; sync 2 per server per hour and 1 per installation per 10 minutes; imports 5 per server per 10 minutes (with one pending import preview per server); component clicks 20 per user per 20 s. Rapid repeated switches are superseded rather than queued. Installation-wide caps: active streams (default 3) and concurrent probes (default 2).
 
 ---
 
 ## 11. Data model
 
-SQLite (`node:sqlite`) with versioned SQL migrations in `migrations/`.
+SQLite (`node:sqlite`) with versioned SQL migrations in `migrations/`: 0001 creates the schema, 0002 adds the voice channel status setting, and 0003 and 0004 add indexes (for the hourly clean-up of old probe results, and for the favourites, queue and source-preference columns that point to stations and sources).
 
 ### 11.1 Tables
 
@@ -536,8 +537,8 @@ SQLite (`node:sqlite`) with versioned SQL migrations in `migrations/`.
 | Validation | Zod |
 | Logging | Pino |
 | Lint/format | Biome |
-| Tests | Vitest (unit tests and real-FFmpeg integration tests) |
-| CI | GitHub Actions: tests, lint, Docker build, CodeQL, dependency audit, secret scanning; release images to GHCR |
+| Tests | Vitest (unit tests and real-FFmpeg integration tests, with V8 coverage reports); a bash end-to-end test of the installer and manager |
+| CI | GitHub Actions: type check, lint, catalogue validation, tests, build, shellcheck and the installer test, Docker build and smoke test, CodeQL, dependency audit, secret scanning; release images to GHCR after the same checks |
 
 Dependencies and the base image are pinned to exact versions.
 
@@ -563,17 +564,22 @@ Command handlers never build FFmpeg commands or fetch stream URLs themselves; th
 ```text
 radiobot/
 ├── README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, LICENSE
+├── AGENTS.md, CLAUDE.md      instructions for coding agents (CLAUDE.md imports AGENTS.md)
+├── install.sh                one-line installer: clones the repository, then runs `radio-bot.sh install`
 ├── .env.example, Dockerfile, compose.yaml, package.json, pnpm-lock.yaml
+├── biome.json, tsconfig.json, tsconfig.build.json, vitest.config.ts, .gitleaks.toml
 ├── .github/workflows/        ci.yml, release.yml, security.yml
 ├── catalog/                  README.md (pack authoring guide)
 │   └── packs/<pack-id>/      pack.json, stations.json, sources.json, SOURCE_PROVENANCE.md, evidence/
 ├── deploy/systemd/           radio-bot.service
 ├── docs/                     PRD.md and user/operator guides
 ├── migrations/               versioned SQL
-├── scripts/                  register-commands, healthcheck, backup, validate-catalogue
+├── scripts/                  register-commands, healthcheck, backup, validate-catalogue;
+│                             radio-bot.sh (the `radio-bot` command for Docker Compose installs)
 ├── src/                      app, config, discord, catalogue, streams, audio, voice,
 │                             persistence, import-export, observability, shared
-└── tests/                    unit/, integration/ (synthetic, rights-free audio only)
+└── tests/                    unit/, integration/ (synthetic, rights-free audio only),
+                              lifecycle/ (installer and manager against a fake Docker)
 ```
 
 ### 12.4 Deployment profiles
@@ -664,7 +670,7 @@ Diagnostics attribute faults to upstream, Discord, the bot, the operator or the 
 
 ### 17.1 Unit tests (automated)
 
-Station IDs, search and alias collisions; eligibility, fidelity comparison, pin/prefer/fallback; URL policy across IPv4, IPv6, IPv4-mapped, NAT64, 6to4, redirects, DNS rebinding and internal names; permission matrix; signed components; desired-state transitions and boot policy; migrations, backups and retention; import/export validation and redaction; identity rules and audio correlation; the session state machine with simulated failures (recovery, failover, stalls, kicks, idle modes, overlapping requests).
+Station IDs, search and alias collisions; eligibility, fidelity comparison, pin/prefer/fallback; URL policy across IPv4, IPv6, IPv4-mapped, NAT64, 6to4, redirects, DNS rebinding and internal names; permission matrix; signed components; desired-state transitions and boot policy; migrations, backups and retention; import/export validation and redaction; identity rules and audio correlation; the session state machine with simulated failures (recovery, failover, stalls, kicks, idle modes, overlapping requests); the HLS reader (retries, stale playlists, resynchronisation); catalogue-sync scheduling; the bot status, voice channel status and late-packet count. `pnpm test:coverage` reports how much of `src/` and `scripts/` the tests run, file by file.
 
 ### 17.2 Stream integration tests (automated)
 
@@ -682,6 +688,10 @@ Probe each bundled pack's sources on the release candidate's network; confirm la
 
 All 63 starter-pack names present with stable IDs; every pack validates (`node scripts/validate-catalogue.ts` in CI; `--pack <dir>` for one folder); sync handles additions, renames and removals without losing favourites; the live official list is reviewed before each release.
 
+### 17.6 Installer tests (automated, Linux)
+
+`tests/lifecycle/run.sh` runs `install.sh` and the `radio-bot` command (install, status, update, backup, restore, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it, together with `shellcheck`, on every pull request and push to `main`, and before every release.
+
 ---
 
 ## 18. Delivery status and roadmap
@@ -697,7 +707,7 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 **Open release gates for 1.0.0:**
 
 - **Starter pack: 3 of 63 stations confirmed playable by live probe.** The flagship and two other stations were confirmed (the probe report is in the pack folder's `evidence/`). Audio correlation also supports identity for two of the three, while the third was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed.
-- One live Discord test, and no 72-hour soak test. On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played the starter pack's flagship station in a voice channel, where it was heard in the Discord client. It used the direct MP3 source at 128 kbps and one Opus encode at 128 kbps, and DAVE end-to-end encryption was negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live.
+- One live Discord test (1 November 2026), and no 72-hour soak test. With the minimum permissions, the starter pack's flagship station played in a voice channel and was heard in the Discord client: the direct MP3 source at 128 kbps, one Opus encode at 128 kbps, and DAVE end-to-end encryption negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live.
 - The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
 - Resource use measured for a single stream only; no multi-stream, long-run or ARM measurements.
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate a listener receives has **not been measured**.

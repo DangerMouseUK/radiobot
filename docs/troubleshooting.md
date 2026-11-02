@@ -1,8 +1,8 @@
 # Troubleshooting
 
-Most problems surface as a **reason code**, for example `NO_ELIGIBLE_SOURCE` or `ADDRESS_BLOCKED`. Reason codes appear in logs, in `/radio stats` (under *Recent incidents*, tagged with a fault domain: `upstream`, `discord`, `bot`, `operator` or `user`), in `/radio inspect` as a source's last failure, and in some error replies. The full list is in `src/shared/errors.ts`. Radio Bot is unofficial and is not affiliated with or endorsed by any station named on this page; see [rights-and-disclaimer.md](rights-and-disclaimer.md).
+Most problems show up as a **reason code**: a short name in capitals, such as `NO_ELIGIBLE_SOURCE` or `ADDRESS_BLOCKED`, that says what went wrong. Reason codes appear in the logs, in `/radio stats` (under *Recent incidents*, labelled with where the fault lies: `upstream` for the station's side, `discord`, `bot`, `operator` for the person running the bot, or `user`), in `/radio inspect` as a source's last failure, and in some error replies. This page explains each one; the full list is in `src/shared/errors.ts`. Radio Bot is unofficial and is not affiliated with or endorsed by any broadcaster; see [rights-and-disclaimer.md](rights-and-disclaimer.md).
 
-Installed with the installer? Start with `radio-bot status` and `radio-bot logs`, and see the beginner's table in [install.md → If something goes wrong](install.md#if-something-goes-wrong). The commands below written as `docker compose …` also work from the `~/radio-bot` folder (use `sudo docker compose …` if Docker needs `sudo` on your machine).
+Installed with the installer? Start with `radio-bot status` and `radio-bot logs`, and see the beginner's table in [install.md → If something goes wrong](install.md#if-something-goes-wrong). Problems with the `radio-bot` command itself are under [The radio-bot command](#the-radio-bot-command). The commands below written as `docker compose …` also work from the `~/radio-bot` folder (use `sudo docker compose …` if Docker needs `sudo` on your machine).
 
 ## Tools
 
@@ -13,7 +13,7 @@ Installed with the installer? Start with `radio-bot status` and `radio-bot logs`
 | `/radio sources <station>` | Every candidate (up to 10), which one is selected and the fallback, and **why each other one is not eligible**. |
 | `/radio inspect <station>` | As above, plus the redacted endpoint, every bitrate figure, probe and failure times, the last failure code, health, start-up time and provenance. Admins also get a **Check sources again** button. |
 | `/radio stats` (Administrators; private, with Refresh and Close) | **Live stream**: session state and source, requested and redirected host (with a region hint from the host name), connected IP and port, HLS segments, codec, input rate over 10 s and 60 s and data received, and round trip to the stream endpoint by TCP handshake. **Output**: Opus target, channel setting (not a cap), Ogg Opus rate, packets per second to Discord (about 50), and late packets since joining with the longest gap. **Discord**: voice server host (with a region hint) and IP, the channel's RTC region, voice WebSocket ping with jitter, gateway ping, encryption/DAVE, and this server's failovers, voice reconnects and encoder PID, plus the last FFmpeg warnings. **Bot health**: uptime and memory; the event-loop delay over the last minute (20 ms or more means voice packets may have left late); active streams and probes against their limits; FFmpeg processes (active, spawned, reaped) and whether `libopus` is present; the stream User-Agent in use; database schema version; per-pack catalogue coverage and last list sync; recent coalesced incidents. |
-| Logs | `docker compose logs -f radio-bot`. Set `LOG_LEVEL=debug` for state transitions and the voice dependency report, and `trace` for everything. Return to `info` afterwards. |
+| Logs | `radio-bot logs`, or `docker compose logs -f radio-bot`, or `journalctl -u radio-bot -f` on a systemd install. Set `LOG_LEVEL=debug` for state transitions and the voice dependency report, and `trace` for everything. Return to `info` afterwards. |
 | Probe from the CLI | `docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe <pack>:<station>` (or `--probe --pack-id <pack>`) prints raw probe results for pack stations. |
 
 ## Commands don't appear
@@ -64,13 +64,16 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 
 | Reason shown | Meaning | What to do |
 |---|---|---|
-| not yet probed | No probe has run yet. A probe normally runs automatically when you play. | Admins: run `/radio rescan <station>`. |
-| last probe failed (CODE) | The last probe failed. See the probe codes below. `/radio sources` shows how many checks failed in a row and when the next automatic one is. | Wait: failing sources are re-checked with a growing wait (about 10 min, 1 h, 6 h, 12 h, then once a day), and playback is retried every 2 min while it is wanted. Or rescan, which checks at once. A source that has had no successful check for a week is **paused** ("Paused: no successful check for over a week…") and is only tested again when an admin rescans. |
-| station identity not verified | The probe worked, but nothing confirms that this feed carries this station. | An admin can compare it with `/radio rescan <station> compare:true`. The operator (or, for a custom station, a server admin) can review it with `/radio source verify`. See [station-verification.md](station-verification.md#identity-rules). |
-| identity mismatch | The stream names itself as a different catalogue station, or an operator marked it as a mismatch. | Deliberate: the bot never plays a mismatched feed for this station. |
+| not checked yet | No check has run yet. A probe normally runs automatically when you play. | Admins: run `/radio rescan <station>`. |
+| last check failed (CODE) | The last check failed. See the probe codes below. `/radio sources` shows how many checks failed in a row and when the next automatic one is. | Wait: failing sources are re-checked with a growing wait (about 10 min, 1 h, 6 h, 12 h, then once a day), and playback is retried every 2 min while it is wanted. Or rescan, which checks at once. A source that has had no successful check for a week is **paused** ("Paused: no successful check for over a week…") and is only tested again when an admin rescans. |
+| not verified as this station | The check worked, but nothing confirms that this feed carries this station. | An admin can compare it with `/radio rescan <station> compare:true`. The operator (or, for a custom station, a server admin) can review it with `/radio source verify`. See [station-verification.md](station-verification.md#identity-rules). |
+| plays a different station (identity mismatch) | The stream names itself as a different catalogue station, or an operator marked it as a mismatch. | Deliberate: the bot never plays a mismatched feed for this station. |
 | cooling down after repeated failures until … | The circuit breaker tripped after 4 consecutive playback failures. | Wait for the cooldown (10 min, doubling up to 2 h), or fix the upstream. |
 | disabled: … | Disabled in the manifest, or by the operator via `DISABLED_SOURCE_IDS` / `DISABLED_STATION_IDS`. | Intentional. See [rights-and-disclaimer.md](rights-and-disclaimer.md#takedown-procedure). |
 | rejected by URL safety policy | The source resolves to a blocked address or uses a disallowed URL. | See `ADDRESS_BLOCKED` below. |
+| codec not verified | The check didn't confirm what kind of audio the stream carries. | Admins: run `/radio rescan <station>`. |
+| blocked by rights/takedown policy | The operator has blocked this source after a rights request. | Intentional. See [rights-and-disclaimer.md](rights-and-disclaimer.md#takedown-procedure). |
+| skipped because it just failed | It failed a moment ago, so the bot is trying the others first. | Nothing: it can be tried again on the next attempt. |
 
 "…is catalogued, but no stream source is known for it yet" means the station has no enabled source at all. This happens, for example, with a station newly added by `/radio sync`. Nothing else is played in its place. Someone has to add a reviewed source mapping to the pack's `sources.json` (see [catalog/README.md](../catalog/README.md) and [CONTRIBUTING.md](../CONTRIBUTING.md#catalogue-changes)).
 
@@ -78,10 +81,10 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 
 | Code | Meaning |
 |---|---|
-| `ACCESS_DENIED` | The stream host refused access with HTTP 401, 403 or 451, for the stream itself or for an HLS playlist or segment. This can mean geo-restriction, rights restriction, or a host that only serves certain clients. Retrying the same source is pointless, so the bot moves straight to a fallback.<br><br>By default the bot identifies as FFmpeg's network library, `Lavf/<version>` from the installed FFmpeg. Many hosts that refuse unknown clients accept that, because it is a standard media player's network stack; the starter pack's host is one of them. Check the value in use in `/radio stats`. If you changed `STREAM_USER_AGENT`, clear it to return to FFmpeg's own.<br><br>The bot does not imitate a web browser, sends no `Referer`, and never uses signed or tokenised URLs. A host that still refuses is respected. |
+| `ACCESS_DENIED` | The stream host refused access with HTTP 401, 403 or 451, for the stream itself or for an HLS playlist or segment. This can mean geo-restriction, rights restriction, or a host that only serves certain clients. Retrying the same source is pointless, so the bot moves straight to a fallback.<br><br>By default the bot identifies as FFmpeg's network library, `Lavf/<version>` from the installed FFmpeg. Many hosts that refuse unknown clients accept that, because it is a standard media player's network stack. Check the value in use in `/radio stats`. If you changed `STREAM_USER_AGENT`, clear it to return to FFmpeg's own.<br><br>The bot does not imitate a web browser, sends no `Referer`, and never uses signed or tokenised URLs. A host that still refuses is respected. |
 | `NOT_FOUND` | The address no longer exists (HTTP 404 or 410): the mount was removed or renamed. The source is re-checked after 12 h, then daily, in case it returns; playback fails over to another source at once instead of retrying it. If it stays gone, the pack's maintainer should disable it (`enabled: false` with a `disabledReason`). |
 | `HTTP_STATUS` | The stream server answered with another non-2xx status, such as 5xx. |
-| `HTTP_TIMEOUT` / `HTTP_ERROR` | The server didn't respond in time, or the connection failed. For example, one of the starter pack flagship's HLS addresses redirected and then never answered in the 31 Oct 2026 probe. |
+| `HTTP_TIMEOUT` / `HTTP_ERROR` | The server didn't respond in time, or the connection failed. A check waits up to 15 s for the server's first response, and playback up to 10 s. |
 | `DNS_FAILED` | The host name didn't resolve. |
 | `REDIRECT_LIMIT` | More than 5 redirects. |
 | `CONTENT_TYPE_REJECTED` | The URL serves HTML, JSON or an image, not audio. This often means a station's web page was given instead of its stream URL. |
@@ -92,7 +95,7 @@ None of the station's sources passed the eligibility gate. The reply lists up to
 | `BODY_TOO_LARGE` | A playlist, segment or response exceeded its size cap. |
 | `NO_AUDIO_STREAM` | Almost no data arrived, or `ffprobe` found no audio stream. |
 | `DECODE_FAILED` | FFmpeg couldn't decode at least 0.5 s of the sample. |
-| `PROBE_FAILED` / `PROBE_TIMEOUT` | `ffprobe` couldn't analyse the sample, or the 15 s probe budget ran out (including while following redirects or playlists). |
+| `PROBE_FAILED` / `PROBE_TIMEOUT` | `ffprobe` couldn't analyse the sample, or the check's 22 s time limit ran out (including while following redirects or playlists). |
 
 ## URL rejected when adding a custom station
 
@@ -127,7 +130,7 @@ A custom station is only saved if the probe succeeds. Otherwise the reply says "
 
 ## FFmpeg problems
 
-- **`FFMPEG_SPAWN`**, or the log line "FFmpeg/FFprobe not available — install FFmpeg or set FFMPEG_PATH/FFPROBE_PATH": the binary wasn't found. In Docker it comes from the image, so leave `FFMPEG_PATH` and `FFPROBE_PATH` unset (they are commented out in `.env.example`). Outside Docker, install FFmpeg or point the variables at it.
+- **`FFMPEG_SPAWN`**, or the log line "FFmpeg/FFprobe not available — install FFmpeg or set FFMPEG_PATH/FFPROBE_PATH": the binary wasn't found. This is a fault on the bot's side, so it never counts against the station's source: the bot retries the same source instead of switching to a fallback. In Docker it comes from the image, so leave `FFMPEG_PATH` and `FFPROBE_PATH` unset (they are commented out in `.env.example`). Outside Docker, install FFmpeg or point the variables at it.
 - **"FFmpeg was found but has no libopus encoder; playback will fail."**, or `/radio stats` showing `libopus NO`: your FFmpeg build lacks `libopus`. Use the Docker image, or an FFmpeg build compiled with `--enable-libopus` (check with `ffmpeg -hide_banner -encoders | grep libopus`). Probes still work without it, but playback doesn't.
 - **FFmpeg process count keeps growing** in `/radio stats` while nothing is playing: file a bug with the counts and your logs. Every pipeline and probe process is supposed to be reaped.
 
@@ -138,7 +141,8 @@ A custom station is only saved if the probe succeeds. Otherwise the reply says "
 | `Invalid configuration: …` (exit code 78) | A missing or invalid environment variable. The message names it. For example, `DISCORD_APPLICATION_ID` must be a 17–20-digit ID. |
 | `TELEMETRY_ENABLED=true is not supported` | Remove the variable or set it to `false`. |
 | `Migration … was modified after being applied (checksum mismatch)` | A migration file was edited. Restore the original. Schema changes need a new migration. |
-| `Database has migrations newer than this build` | You started an older image against a newer database. Run the newer image, or restore a pre-migration backup from `data/backups/`. |
+| `Database has migrations newer than this build` | You started an older version against a database that a newer version has already migrated. Run the newer version again, or restore the `radio-bot-pre-v<N>-…` backup the newer version took just before it migrated. With the installer, follow [install.md → Going back to an earlier version](install.md#going-back-to-an-earlier-version). By hand, the backups are in the `backups` folder next to the database (`/app/data/backups/` in Docker, `/var/lib/radio-bot/backups/` with systemd). |
+| `diagnostics endpoint unavailable; carrying on without it` (a warning, not a failure) | `DIAGNOSTICS_PORT` is already in use. The bot carries on without the diagnostics endpoint; choose another port, or leave the variable empty. |
 | `…/pack.json is invalid`, `duplicate station slug …`, `"…" is used by both …`, `source … references unknown station …`, `Two packs use the id …` | A station pack is invalid, either a bundled one after a local edit or one in `EXTRA_PACKS_DIR`. The message names the pack, file and field. Run `pnpm validate-catalogue --pack <dir>` (after `pnpm build`). See [catalog/README.md](../catalog/README.md). |
 | The container keeps restarting with `Fatal: …` about the token, or the healthcheck reports `not connected to Discord` | Wrong or reset token (reset it in the Developer Portal and update `.env`, or run `radio-bot config`), or no outbound access to Discord. |
 | The healthcheck reports `ffmpeg unavailable or missing libopus` | Outside Docker: install FFmpeg with `libopus`, or point `FFMPEG_PATH`/`FFPROBE_PATH` at a build that has it (`ffmpeg -hide_banner -encoders \| grep libopus`). The Docker image always has it. |
@@ -154,6 +158,31 @@ A custom station is only saved if the probe succeeds. Otherwise the reply says "
 ## After a restart nothing plays
 
 This is by design unless the server opted in. With *Resume after restart* on, the last desired station resumes. With *Autostart* on, plus a default station and a preferred voice channel, the default starts. An explicit `/radio stop`, `/radio leave` or a moderator kick always prevents automatic playback. `/radio status` explains when resume was skipped.
+
+## Importing settings
+
+- **"This import preview expired. Run /radio import again."**: a preview lasts 10 minutes, and each server has only one at a time, so a newer `/radio import` replaces the older preview and its buttons stop working.
+- **"Too many imports in a short time"** (`RATE_LIMITED`): a server can run `/radio import` five times in ten minutes. The file must be at most 256 KB. Custom stations re-added by an import count towards the limit on adding custom stations, and any over it are listed as "not added" so you can add them later with `/radio add`.
+- **Custom stations "were left out of the export"**: their URLs had a query string or a user name, which could hold a secret, so the export redacted them. Add them again with `/radio add`.
+- **Custom-station favourites or a custom default station are missing from the file:** that is deliberate. Exports leave them out, and an import keeps the ones the server already has.
+
+## The radio-bot command
+
+| Message | What to do |
+|---|---|
+| `Docker is not installed.` | On Linux, let the installer install it (answer `y`), or install Docker Engine yourself. On a Mac or Windows PC, install Docker Desktop (see [install.md](install.md#2-install-radio-bot)). |
+| `Docker is installed but not running.` | Start Docker Desktop, or run `sudo systemctl start docker`, then try again. |
+| `Docker Compose … is too old; Radio Bot needs 2.24 or newer.` | Update Docker. `compose.yaml` uses an optional settings file, which older Compose releases reject. |
+| `Radio Bot stopped while starting. The lines above say why.` | Read the log lines printed above it. A wrong token or Application ID is the most common cause: fix them with `radio-bot config`. |
+| `Radio Bot hasn't reported in after 90 seconds.` | The bot is running but hasn't reported itself healthy (connected to Discord, database working, FFmpeg ready). Check `radio-bot logs` and the host's connection to Discord. |
+| `Files in … were edited, so updating could overwrite them.` | Move your changes into `compose.override.yaml`, run the `git … checkout -- .` command the message shows (it discards the edits), and update again. |
+| `Couldn't reach GitHub to check for updates.` | The host can't reach GitHub. Check its connection and try again. |
+| `Couldn't back up the database, so nothing was changed.` (during `update`) | The update stopped before changing anything. The lines above say why; fix that, or check `radio-bot logs`, then try again. |
+| `The last update to … didn't finish` (from `update` or `status`) | An earlier update switched versions but stopped before the bot ran the new one, for example because the download failed. `radio-bot update` finishes it. |
+| `Radio Bot isn't running, so no new backup can be made.` (from `backup`) | Expected when the bot can't start. The backups it made earlier are still copied to the `backups` folder. If it then says `Couldn't copy the backups out of the bot's data`, the bot hasn't made any backups yet. `There is no Radio Bot container to copy backups from` means the bot has never been started on this install: run `radio-bot start`. |
+| `… isn't a Radio Bot backup (a .sqlite file), so nothing was changed.` (from `restore`) | The file isn't a SQLite database. Choose a `.sqlite` file from the `backups` folder. |
+| `The backup wasn't restored. Radio Bot has been started again with the data it had.` | Copying the backup in failed, and nothing was changed. The lines above say why. |
+| `The backup may or may not have been restored; to be sure, run the same restore again.` | You pressed Ctrl+C while the backup was being copied in. The copy may have finished just before. Radio Bot has been started again either way; running the same `radio-bot restore` again makes sure. |
 
 ## Getting help
 

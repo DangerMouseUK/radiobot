@@ -28,12 +28,14 @@ export interface SourceBitrate {
 }
 
 /**
- * The bitrate the encoder follows: the codec's own declared rate when known (a CBR stream's exact
- * figure), then the measured rate, then the manifest or advertised one.
+ * The bitrate the encoder follows: the measured rate (the audio data the station really sends,
+ * averaged over the probe sample), then the codec metadata, then the manifest or advertised one.
+ * Codec metadata comes second because for AAC ffprobe estimates it and it can be well off in
+ * either direction (176.4 or 113.7 kbps for streams that measure 128.1).
  */
 export function sourceBitrate(s: StationSource): SourceBitrate | null {
-  if (s.codecBitrateKbps) return { kbps: s.codecBitrateKbps, evidence: 'codec metadata' };
   if (s.measuredBitrateKbps) return { kbps: s.measuredBitrateKbps, evidence: 'measured' };
+  if (s.codecBitrateKbps) return { kbps: s.codecBitrateKbps, evidence: 'codec metadata' };
   if (s.advertisedBitrateKbps) {
     return {
       kbps: s.advertisedBitrateKbps,
@@ -88,11 +90,12 @@ export function planEncoder(i: EncoderInput): EncoderPlan {
     default:
       target = Math.min(ceiling, source?.kbps ?? ceiling);
   }
-  target = Math.max(OPUS_MIN_KBPS, Math.round(target));
+  // Rounded up, never down, so a fractional source rate (128.1) is never encoded below itself.
+  target = Math.max(OPUS_MIN_KBPS, Math.ceil(target));
   if (i.qualityMode !== 'manual' || i.manualBitrateKbps === null) {
     if (source === null) {
       notes.push(`The source's bitrate is unknown, so the encoder uses ${target} kbps.`);
-    } else if (target === Math.max(OPUS_MIN_KBPS, Math.round(source.kbps))) {
+    } else if (target === Math.max(OPUS_MIN_KBPS, Math.ceil(source.kbps))) {
       notes.push(`The encoder follows the source's ${source.kbps} kbps (${source.evidence}).`);
     } else if (target < source.kbps) {
       const why =

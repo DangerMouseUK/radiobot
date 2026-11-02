@@ -78,6 +78,8 @@ check "warns only once" test "$(grep -c "is playing in 2 servers" <<<"$out")" = 
 check "saves the old version's logs" bash -c 'ls "$1"/logs/radio-bot-v1.0.0-*.log' _ "$RADIO_BOT_DIR"
 check "removes the previous image" grep -q "docker image rm ghcr.io/dangermouseuk/radio-bot:v1.0.0$" "$T/state/calls.log"
 check "keeps the running image" grep -q "^ghcr.io/dangermouseuk/radio-bot:v1.0.1 " "$T/state/images"
+check "copies the update's backup out of the container" test -f "$RADIO_BOT_DIR/backups/radio-bot-manual-x.sqlite"
+check "forgets the update once the new version is healthy" test ! -e "$RADIO_BOT_DIR/.update-pending"
 echo "ghcr.io/dangermouseuk/radio-bot:v0.9.0 sha256:v0.9.0" >>"$T/state/images"
 finish() { bash "$RADIO_BOT_DIR/scripts/radio-bot.sh" __finish-update v1.0.0 </dev/null 2>&1 | strip; }
 out=$(FAKE_CRASH=1 finish)
@@ -96,14 +98,48 @@ chmod 000 "$RADIO_BOT_DIR/logs"
 out=$(finish)
 chmod 700 "$RADIO_BOT_DIR/logs"
 check "finishes the update even when the log can't be saved" has "$out" "Updated v1.0.0"
+out=$(FAKE_UP_FAIL=1 finish)
+check "an update an older script started is remembered if it stops halfway" test -s "$RADIO_BOT_DIR/.update-pending"
+out=$(finish)
+check "and forgotten once it finishes" test ! -e "$RADIO_BOT_DIR/.update-pending"
 echo "local edit" >>"$RADIO_BOT_DIR/README.md"
 out=$(radio-bot update 2>&1 | strip)
 check "refuses to update over edited files" has "$out" "were edited"
 git -C "$RADIO_BOT_DIR" checkout -q -- .
+out=$(radio-bot update v9.9.9 2>&1 | strip)
+check "says when a version doesn't exist" has "$out" "Version v9.9.9 was not found."
+check "a failed switch leaves the version alone" test "$(radio-bot version)" = v1.0.1
+check "a failed switch isn't taken for an unfinished update" test ! -e "$RADIO_BOT_DIR/.update-pending"
+
+echo "interrupted update"
+echo "# next" >>"$T/origin/CHANGELOG.md"
+git -C "$T/origin" -c user.email=t@example.org -c user.name=test commit -qam v1.0.2
+git -C "$T/origin" tag v1.0.2
+out=$(FAKE_UP_FAIL=1 radio-bot update 2>&1 | strip)
+check "an interrupted update has switched version" test "$(radio-bot version)" = v1.0.2
+check "an interrupted update leaves the old version running" grep -q "radio-bot:v1.0.1 " "$T/state/current"
+out=$(radio-bot status 2>&1 | strip)
+check "status says the update didn't finish" has "$out" "the last update to v1.0.2 didn't finish"
+rm -f "$RADIO_BOT_DIR/.update-pending"
+out=$(radio-bot status 2>&1 | strip)
+check "status spots an unfinished update from the running image" has "$out" "didn't finish"
+out=$(radio-bot update 2>&1 | strip)
+check "update says it is finishing the last update" has "$out" "The last update to v1.0.2 didn't finish"
+check "update finishes an interrupted update" has "$out" "Updated v1.0.1 → v1.0.2"
+check "runs the new version once finished" grep -q "radio-bot:v1.0.2 " "$T/state/current"
+out=$(radio-bot update 2>&1 | strip)
+check "nothing to do once the update has finished" has "$out" "Already on the newest version (v1.0.2)."
 
 echo "backup and crash detection"
+rm -rf "$RADIO_BOT_DIR/backups"
 out=$(radio-bot backup 2>&1 | strip)
 check "copies backups out" test -f "$RADIO_BOT_DIR/backups/radio-bot-manual-x.sqlite"
+radio-bot stop >/dev/null 2>&1
+rm -rf "$RADIO_BOT_DIR/backups"
+out=$(radio-bot backup 2>&1 | strip)
+check "says a stopped bot can't make a new backup" has "$out" "no new backup can be made"
+check "copies earlier backups out of a stopped bot" test -f "$RADIO_BOT_DIR/backups/radio-bot-manual-x.sqlite"
+radio-bot start >/dev/null 2>&1
 out=$(FAKE_CRASH=1 radio-bot restart 2>&1 | strip)
 check "explains a crash on start" has "$out" "stopped while starting"
 check "shows the bot's error" has "$out" "invalid token"
@@ -113,11 +149,19 @@ out=$(FAKE_COMPOSE_VERSION=2.20.3 radio-bot status 2>&1 | strip)
 check "refuses Compose older than 2.24" has "$out" "Docker Compose 2.20 is too old"
 
 echo "restore"
-touch "$HOME/old.sqlite"
-out=$(cd "$HOME" && printf 'y
-' | tty_run "radio-bot restore old.sqlite")
+printf 'SQLite format 3\000and the rest of the database' >"$HOME/old.sqlite"
+out=$(cd "$HOME" && printf 'y\n' | tty_run "radio-bot restore old.sqlite")
 check "restores a file named relative to the current folder" has "$out" "Restored."
 check "mounts the chosen file" grep -qF "$HOME/old.sqlite:/restore.sqlite:ro" "$T/state/calls.log"
+printf 'not a database\n' >"$HOME/notes.txt"
+stops=$(grep -c "compose stop" "$T/state/calls.log")
+out=$(radio-bot restore "$HOME/notes.txt" 2>&1 | strip)
+check "refuses a file that isn't a backup" has "$out" "notes.txt isn't a Radio Bot backup"
+check "stops nothing for a file that isn't a backup" test "$(grep -c "compose stop" "$T/state/calls.log")" = "$stops"
+out=$(printf 'y\n' | tty_run "FAKE_RUN_FAIL=1 radio-bot restore $HOME/old.sqlite")
+check "explains a failed restore" has "$out" "The backup wasn't restored. Radio Bot has been started again"
+check "starts the bot again after a failed restore" test -f "$T/state/running"
+check "a failed restore ends by starting the bot" test "$(grep "compose " "$T/state/calls.log" | tail -n 1)" = "docker compose up -d"
 
 echo "reinstall"
 out=$(tty_run "bash $T/origin/install.sh" </dev/null)

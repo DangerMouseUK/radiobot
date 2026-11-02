@@ -8,11 +8,15 @@ ENV CI=true
 RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
 # --ignore-scripts: the ffmpeg-static dev dependency's download is only for local tests.
-RUN pnpm install --frozen-lockfile --ignore-scripts
+# pnpm's store (its default path for root) is a BuildKit cache, so rebuilds don't download every
+# package again. Only the build stage sees it; the image gets the same node_modules as before.
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+  pnpm install --frozen-lockfile --ignore-scripts
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 COPY scripts ./scripts
-RUN pnpm run build && pnpm prune --prod --ignore-scripts
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+  pnpm run build && pnpm prune --prod --ignore-scripts
 
 FROM ${NODE_IMAGE} AS runtime
 # Debian's FFmpeg includes libopus (required) and is LGPL/GPL-licensed; see docs/rights-and-disclaimer.md.
@@ -35,7 +39,8 @@ VOLUME ["/app/data"]
 LABEL org.opencontainers.image.title="Radio Bot" \
       org.opencontainers.image.description="Unofficial, self-hosted Discord internet-radio bot" \
       org.opencontainers.image.licenses="MIT"
+# At the lowest CPU priority, so the check can't delay voice packets on a one-core host.
 HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
-  CMD ["node", "dist/scripts/healthcheck.js"]
+  CMD ["nice", "-n", "19", "node", "dist/scripts/healthcheck.js"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist/src/index.js"]

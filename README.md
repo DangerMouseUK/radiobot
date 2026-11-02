@@ -16,12 +16,12 @@ Stations come from **station packs**: folders of plain JSON you can review, add 
 
 - **Station packs.** Drop a folder of three JSON files into `catalog/packs/` or your own `EXTRA_PACKS_DIR` and its stations appear. One environment variable switches whole packs on or off.
 - **Evidence before bitrate.** Every candidate stream is probed with `ffprobe` and a decode check, and its identity is checked against its provenance, its stream metadata and, optionally, an audio comparison. The bot plays the *correct* station first and the best-sounding source second, and `/radio sources` tells you why it chose what it did.
-- **One encode, at the station's own quality.** FFmpeg decodes once and encodes once with `libopus` at the source's bitrate, up to 510 kbps (48 kHz stereo, music mode). A 320 kbps station goes out at 320 kbps, and a 128 kbps one isn't padded out to waste bandwidth. `@discordjs/voice` only demuxes the result. There is no normalisation, EQ or limiting, and the voice channel's bitrate setting is not used as a cap.
+- **One encode, at the station's own quality.** FFmpeg decodes once and encodes once with `libopus` at the source's bitrate, up to 510 kbps (48 kHz stereo, music mode). A 320 kbps station goes out at 320 kbps, and a 128 kbps one isn't padded out to waste bandwidth. `@discordjs/voice` only unpacks the result (demuxes it) and sends it on. There is no normalisation, EQ or limiting, and the voice channel's bitrate setting is not used as a cap.
 - **Automatic recovery.** A watchdog spots stalls and retries with backoff. If that fails, the bot switches to another verified source and puts sources that keep failing into a cooldown. It also rebuilds lost voice connections and catches up with the live stream when it falls behind.
 - **Now playing.** The current song or show title, when the stream sends one, appears in `/radio now` and on the control panel. The bot's own Discord status shows it too ("Listening to Station Name · Artist - Title"), and so does the status of the voice channel it's playing in ("📻 Station Name · Artist - Title").
 - **Queue and skip.** Line up stations with `/radio queue` and move on with `/radio skip` or the **Skip** button.
 - **Private live stats.** `/radio stats` shows administrators the input and output bitrate, the redirect host and region, and ping and jitter to both the stream server and Discord's voice server. Only they can see the message, and they can dismiss it.
-- **Secure by default.** The bot asks for the minimum Discord permissions and no privileged intents. All stream traffic goes through an SSRF-safe HTTP client, and FFmpeg reads only from stdin. Every button and command is authorised on the server side each time it is used. There is no telemetry.
+- **Secure by default.** The bot asks for the minimum Discord permissions and no privileged intents. All stream traffic goes through an HTTP client that refuses private and internal network addresses (SSRF protection), and FFmpeg reads only from its standard input, never from a URL. Every button and command is authorised on the server side each time it is used. There is no telemetry.
 - **Simple to run.** One process and one SQLite file. It needs outbound internet access only: no inbound port, domain, reverse proxy, Redis or PostgreSQL.
 
 ## Contents
@@ -72,12 +72,13 @@ From then on, the `radio-bot` command looks after it:
 | Command | Does |
 |---|---|
 | `radio-bot status` · `radio-bot logs` | Version, health and available updates · the live log |
-| `radio-bot update` | Updates to the newest release: warns you first if the bot is playing, backs up the database, keeps the old version's last 500 log lines and removes old images |
-| `radio-bot backup` · `radio-bot restore <file>` | Copy the database out · put a copy back |
+| `radio-bot update` | Updates to the newest release: warns you first if the bot is playing, backs up the database to `backups/`, keeps the old version's last 500 log lines and removes old images. Run it again to finish an update that stopped halfway |
+| `radio-bot backup` · `radio-bot restore <file>` | Copy the database out (or, if the bot won't start, the backups it already made) · put a copy back |
 | `radio-bot config` | Edit installation settings, then restart to apply them |
+| `radio-bot start` · `stop` · `restart` · `invite` | Control the bot · print the invite link again |
 | `radio-bot uninstall` | Remove it, optionally keeping a copy of your data |
 
-If you'd rather run Docker Compose yourself: `git clone`, `cp .env.example .env`, set `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`, then `docker compose up -d --build`. [docs/install-docker.md](docs/install-docker.md) covers this in full. The database lives in the `radio-bot_radio-bot-data` volume, and a backup is taken automatically before any migration changes it.
+`radio-bot help` lists every command. If you'd rather run Docker Compose yourself: `git clone`, `git checkout` the newest release tag, `cp .env.example .env`, set `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`, then `docker compose up -d`. [docs/install-docker.md](docs/install-docker.md) covers this in full. The database lives in the `radio-bot_radio-bot-data` volume, and a backup is taken automatically before any migration changes it.
 
 ## Other ways to deploy
 
@@ -117,14 +118,14 @@ Step-by-step instructions are in [docs/install.md](docs/install.md#1-create-your
   https://discord.com/oauth2/authorize?client_id=APPLICATION_ID&scope=bot%20applications.commands&permissions=281474979908608
   ```
 
-`/radio` is registered as a **guild** command in each server the bot is in, so it appears immediately. Registration happens at start-up and whenever the bot joins a new server, and it is skipped when nothing has changed. The command works only in servers, not in DMs.
+`/radio` is registered as a **guild** (server) command in each server the bot is in, so it appears immediately. Registration happens at start-up and whenever the bot joins a new server, and it is skipped when nothing has changed. The command works only in servers, not in DMs.
 
 ## Commands
 
 Everything is under `/radio`. There are three access levels:
 
 - **Read:** anyone, in an allowed command channel.
-- **Control:** admins and DJ roles, plus listeners if the server's listener-control mode allows it (`none`, `same_channel` or `any`).
+- **Control:** admins and DJ roles, plus listeners if the server's listener-control mode allows it: `same_channel` (the default: listeners who are in a voice channel, and only in the bot's channel while it is in use), `none` or `any`. See [docs/permissions.md](docs/permissions.md).
 - **Admin:** the server owner, or members with Discord's **Administrator** permission. Nothing else grants admin: not Manage Server, and there is no admin-role setting.
 
 Replies that only concern you are ephemeral (only you see them).
@@ -133,12 +134,12 @@ Replies that only concern you are ephemeral (only you see them).
 
 | Command | Level | What it does |
 |---|---|---|
-| `/radio play <station> [channel]` | Control | Plays a station in your voice channel (or `channel`), or switches to it. An ambiguous name shows a picker; the bot never guesses. |
+| `/radio play <station> [channel]` | Control | Plays a station in your voice channel (or `channel`), or switches to it. DJs and admins can name any channel; with the default listener control, listeners can only name the one they are in. An ambiguous name shows a picker; the bot never guesses. |
 | `/radio browse [pack] [category] [search]` | Read | Paged station picker, grouped by pack, with this server's custom stations last. Picking a station plays it (needs Control). |
 | `/radio list [scope] [pack] [page]` | Read | Station list with status and IDs: pack stations (`scope:packs`, optionally one `pack`), this server's `custom` stations, or `favourites`. |
 | `/radio now` | Read | What's playing, at a glance: the song or show title from the stream, then the channel, the station's stream and what goes to Discord side by side, and one line on why this source plays (and the fallback), with control buttons and what's up next. The full figures are under Sources, Inspect and `/radio quality`. |
 | `/radio stop` | Control | Stops the audio. The bot stays in the channel for 5 minutes (or indefinitely in 24/7 mode) and cancels auto-resume. |
-| `/radio join [channel]` | Control | Joins a voice channel, and starts the default station if one is set. |
+| `/radio join [channel]` | Control | Joins a voice channel, and starts the default station if one is set. After `/radio stop`, with the bot still in the channel, it starts the default station again. |
 | `/radio leave` | Control | Disconnects. The bot won't rejoin until someone plays something. |
 
 ### Queue
@@ -158,8 +159,8 @@ Radio never ends, so the queue moves only when you skip.
 | Command | Level | What it does |
 |---|---|---|
 | `/radio quality` | Read | Input and output report: source codec, bitrate evidence, sample rate and channels; Opus target, the channel's bitrate setting (shown as "not a cap"), observed output, encryption and resampling. |
-| `/radio sources <station>` | Read | The station's sources, best first, with what plays now, the fallback, and why each one can or can't be used. While it plays, anyone with Control can switch to another usable source until the station changes. Admins also get re-probe, *Prefer the playing source on this server* and *Back to automatic choice* buttons. |
-| `/radio inspect <station>` | Read | Everything in `sources`, plus the redacted endpoint, every bitrate figure, probe and failure times, health, start-up time and provenance. Admins also get a re-probe button. |
+| `/radio sources <station>` | Read | The station's sources, best first, with what plays now, the fallback, and why each one can or can't be used. While it plays, anyone with Control can switch to another usable source until the station changes. Admins also get *Check sources again*, *Prefer the playing source on this server* and *Back to automatic choice* buttons. |
+| `/radio inspect <station>` | Read | Everything in `sources`, plus the redacted endpoint, every bitrate figure, probe and failure times, health, start-up time and provenance. Admins also get a *Check sources again* button. |
 | `/radio status` | Read | Connection state, the desired station and the last problem. |
 | `/radio stats` | Admin | A private live panel with **Refresh** and **Close** buttons, described below. |
 | `/radio help` | Read | Short help. Admins also see the admin commands. |
@@ -176,24 +177,24 @@ Radio never ends, so the queue moves only when you skip.
 | Command | Level | What it does |
 |---|---|---|
 | `/radio config [default_station] [manual_bitrate]` | Admin | Interactive settings: command and voice channel allowlists, DJ roles, idle mode, listener control, quality mode, preferred channel, channel lock, autostart, resume after restart, the notice channel, and whether the voice channel status shows what's playing. |
-| `/radio add <name> <url> …` | Admin | Adds a custom station for this server. The URL must pass the SSRF policy and a live probe before it is accepted. |
-| `/radio edit <station> …` | Admin | Edits a custom station. A new URL is probed first, and the old one is kept if the probe fails. |
+| `/radio add <name> <url> [website] [description] [category] [language]` | Admin | Adds a custom station for this server. The URL must pass the SSRF policy and a live probe before it is accepted. |
+| `/radio edit <station> [name] [url] [website] [description]` | Admin | Edits a custom station. A new URL is probed first, and the old one is kept if the probe fails. |
 | `/radio remove <station>` | Admin | Removes a custom station. Pack stations can't be removed. |
 | `/radio rescan <station> [compare]` | Admin | Re-probes a station's sources (rate-limited). `compare:true` also runs an audio comparison of about 40 s against the verified source. |
 | `/radio sync [pack]` | Admin | Reconciles station names with each pack's official list (or just `pack`). Reports added, renamed, missing and unreachable stations. |
 | `/radio export` | Admin | Downloads this server's settings as JSON. No secrets are included, and custom URLs with query strings are redacted. |
-| `/radio import <file>` | Admin | Validates an export and previews the changes. Nothing is applied until you confirm. |
+| `/radio import <file>` | Admin | Validates an export and previews the changes. Nothing is applied until you press **Apply import** within 10 minutes. Each server has one preview at a time (a new import replaces it), and five imports per 10 minutes. This server's custom-station favourites and custom default station are kept. |
 | `/radio panel [channel]` | Admin | Posts a persistent control panel that survives restarts. Its buttons still check permissions on every click. |
 | `/radio source pin <station> <source>` | Admin | Always uses this source. If it becomes ineligible, playback is marked Degraded and uses a fallback. |
 | `/radio source prefer <station> <source>` | Admin | Uses this source whenever it is eligible, and automatic selection otherwise. |
 | `/radio source auto <station>` | Admin | Returns the station to evidence-based selection. |
 | `/radio source verify <station> <source> <verdict>` | Admin (+ Operator for pack sources) | Records an identity review (`verified`, `mismatch` or `clear`). Admins can review their own server's custom stations. A review of a pack source affects every server, so the admin must also be an operator: listed in `OPERATOR_USER_IDS`, or the application owner (or a member of its team). |
 
-**Buttons** on now-playing messages and the control panel: Previous station, Next station, Stop, Leave, Browse stations, Refresh, Favourite, Sources and Inspect. **Skip (n queued)** appears when the queue isn't empty, and is always on the panel. The station list from Browse has a **Favourites** button that shows only this server's favourites, and back.
+**Buttons** on now-playing messages and the control panel: Previous station, Next station, Stop, Leave, Browse stations, Refresh, Favourite (or Unfavourite, when the station already is one), Sources and Inspect. **Skip (n queued)** appears when the queue isn't empty, and is always on the panel. The station list from Browse has a **Favourites** button that shows only this server's favourites, and back.
 
 **Favourites and the default station** do different jobs:
 
-- **Favourites** are this server's shortlist. Anyone who can control the radio adds or removes one with the **Favourite** button under a playing station. They come first in the `/radio play` suggestions, have their own list (the Favourites button in Browse, or `/radio list scope:favourites`), and when there are two or more, Next and Previous step through them while one is playing.
+- **Favourites** are this server's shortlist. Anyone who can control the radio adds one with the **Favourite** button under a playing station, and removes it with **Unfavourite**. They come first in the `/radio play` suggestions, have their own list (the Favourites button in Browse, or `/radio list scope:favourites`), and when there are two or more, Next and Previous step through them while one is playing.
 - **The default station** is the one station the bot starts by itself, set by an admin with `/radio config default_station` (choose **No default station** to clear it). `/radio join` plays it, and autostart plays it in the preferred voice channel when the bot starts. It also comes first in the `/radio play` suggestions.
 
 > `/radio` uses all 25 top-level options that Discord allows, which is why `queue` and `source` are subcommand groups.
@@ -258,7 +259,7 @@ Settings come from environment variables, usually through `.env`; [`.env.example
 | `OPERATOR_USER_IDS` | empty | Discord user IDs, separated by commas or spaces, allowed to record identity reviews for pack sources. The application owner (or its team) is always allowed. |
 | `PROBE_HISTORY_LIMIT` | `30` | Probe results kept per source (1–1000). |
 | `PROBE_HISTORY_DAYS` | `30` | Maximum age of stored probe results, in days (1–365). |
-| `DIAGNOSTICS_PORT` | empty (off) | Optional JSON endpoint (`/healthz`, `/diagnostics`), bound to `127.0.0.1` only. |
+| `DIAGNOSTICS_PORT` | empty (off) | Optional JSON endpoint (`/healthz`, `/diagnostics`), bound to `127.0.0.1` only. If the port is in use, the bot logs a warning and runs without it. |
 | `TELEMETRY_ENABLED` | `false` | Must stay `false`. Radio Bot has no telemetry, and `true` is refused at start-up. |
 
 ## How it works
@@ -273,7 +274,7 @@ Settings come from environment variables, usually through `.env`; [`.env.example
 - **Choosing a source.** Every source is probed within a time budget. A few seconds are captured in memory, `ffprobe` reads codec, sample rate, channels and packet sizes, a decode check confirms the audio is valid, and the sample is discarded. A source is eligible only if its identity is verified, it is healthy and it isn't in cooldown. Direct streams are always preferred: HLS is a **last-resort tier**, used only when no direct stream is eligible, because segmented delivery starts more slowly and recovers less smoothly. Within a tier, sources are ranked by evidence, and never across codecs by bitrate alone. See [docs/station-verification.md](docs/station-verification.md).
 - **Talking to stream hosts.** The bot identifies itself as FFmpeg's network library (`Lavf/<version>`), which is what decodes the audio. It does not imitate a web browser and sends no `Referer`. A host that still refuses (HTTP 401, 403 or 451) is reported as `ACCESS_DENIED`.
 - **Recovery.** The watchdog declares a stall after 15 s without audio. The bot retries the same source with jittered backoff (about 1, 3 and 8 s), then fails over to another verified source. After four consecutive failures (the first plus all three retries) a source goes into a cooldown of 10 minutes, doubling up to 2 hours. Lost voice connections are rebuilt with backoff, and playback that falls more than 45 s behind live re-syncs to the live edge. After a restart, playback resumes only if the server opted in, and an explicit `/radio stop` or `/radio leave` is always respected.
-- **Permissions.** Every slash command, button and select menu is authorised on the server side at the moment it is used. Buttons carry signed, server-bound and usually expiring IDs. Rate limits apply to play and switch, probes, custom-station adds, syncs and button clicks. See [docs/permissions.md](docs/permissions.md).
+- **Permissions.** Every slash command, button and select menu is authorised on the server side at the moment it is used. Buttons carry signed, server-bound and usually expiring IDs. Rate limits apply to play and switch, probes, custom-station adds, syncs, imports and button clicks. See [docs/permissions.md](docs/permissions.md).
 
 The module map and data flow are in [docs/architecture.md](docs/architecture.md), and the audio path in detail is in [docs/audio-quality.md](docs/audio-quality.md).
 

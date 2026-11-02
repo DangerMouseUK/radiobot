@@ -544,7 +544,12 @@ export class GuildSession {
    * newer caller is waiting for. A failed connect leaves the session IDLE, not JOINING.
    */
   async #ensureLink(gen: number, channelId: string): Promise<boolean> {
-    if (this.#link && this.#link.channelId === channelId && this.#link.ready) return true;
+    if (this.#link && this.#link.channelId === channelId && this.#link.ready) {
+      // A leave stops the watchdog but can keep the link open for its onLeaving hook; a play in
+      // that window takes the link over, and must not play without stall detection.
+      if (!this.#watchdog) this.#startWatchdog();
+      return true;
+    }
     if (this.#link) this.#teardownLink();
     this.#setState('JOINING');
     let pending = this.#connecting;
@@ -875,11 +880,26 @@ export class GuildSession {
     this.#persist('playing', { lastErrorCode: code });
     this.#log.warn({ code, sourceId: source?.id, attempts: this.#attempts }, 'playback failure');
 
-    let tripped = false;
-    if (source) tripped = this.#d.sources.recordPlaybackFailure(source.id, code);
+    // The bot's own faults (FFmpeg could not start, an internal error) say nothing about the
+    // source, so they are not held against it. FFmpeg failing to start would fail the same way on
+    // any source, so it never fails over; an unexpected error may be specific to this source's
+    // data, so once its retries run out it still fails over to a fallback.
+    const botFault = faultDomain(code) === 'bot';
+    const tripped = botFault ? false : this.#d.sources.recordPlaybackFailure(source.id, code);
     this.#attempts++;
-    const retrySame =
-      source && !tripped && !NON_RETRYABLE.has(code) && this.#attempts < this.#t.backoff.length + 1;
+    const retrySame = !tripped && !NON_RETRYABLE.has(code) && this.#attempts < this.#t.backoff.length + 1;
+    if (code === 'FFMPEG_SPAWN' && !retrySame) {
+      this.#attempts = 0;
+      this.#setState('ERROR');
+      this.#d.notify({
+        guildId: this.guildId,
+        kind: 'error',
+        code,
+        message: `${message} I will try again in a couple of minutes.`,
+      });
+      this.#scheduleNoSourceRetry(gen);
+      return;
+    }
     if (retrySame) {
       this.#setState('RECOVERING');
       await sleep(backoffDelayMs(this.#attempts - 1, this.#t.backoff, 0.25, this.#d.random));

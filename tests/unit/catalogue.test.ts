@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BUILTIN_PACKS_DIR,
   discoverPackDirs,
@@ -12,6 +12,7 @@ import {
 import { resolveStation, searchStations } from '../../src/catalogue/search.ts';
 import { CatalogueSync } from '../../src/catalogue/sync.ts';
 import { decodeEntities, extractJsonValue, parseWebradioApidata } from '../../src/catalogue/sync-adapters.ts';
+import type { Logger } from '../../src/observability/logger.ts';
 import { metadataSignal } from '../../src/streams/identity.ts';
 import type { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { memoryDb, PRD_STATION_NAMES, silentLogger } from '../helpers.ts';
@@ -434,6 +435,29 @@ describe('official list sync (FR-002)', () => {
     expect(r.ok).toBe(true);
     expect(r.added).toEqual(['Example Three']);
     expect(r.missing).toEqual(['Example Two']);
+  });
+
+  it('redacts URLs with tokens from a failed sync’s error before storing and logging it', async () => {
+    const { stations, meta } = memoryDb();
+    const root = tempRoot();
+    writePack(root, 'example', {
+      meta: { sync: { adapter: 'json-name-list', url: 'https://example.org/list.json' } },
+    });
+    const registry = PackRegistry.load(root, { enabled: new Set(), disabled: new Set(['fg']) });
+    seedPacks(stations, registry);
+    const http = {
+      fetchText: async () => {
+        throw new Error('connect failed for https://example.org/list.json?token=SECRET123');
+      },
+    };
+    const warn = vi.fn();
+    const logger = { child: () => ({ warn }) } as unknown as Logger;
+    const sync = new CatalogueSync(stations, meta, http as unknown as SafeHttpClient, registry, logger);
+    const r = await sync.sync('example', 'admin');
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('connect failed for https://example.org/list.json?***');
+    expect(JSON.stringify(stations.lastSyncReport('example')?.summary)).not.toContain('SECRET123');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('SECRET123');
   });
 
   it('accepts a renamed station only when one missing name is clearly the most similar', async () => {

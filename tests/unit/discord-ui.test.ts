@@ -163,7 +163,7 @@ describe('control buttons', () => {
     expect(comps.map((c) => c.label)).toContain('Unfavourite');
     const parsed = parseAll(ids, comps).filter((p) => p && 'action' in p && p.arg);
     expect(parsed.map((p) => p && 'action' in p && [p.action, p.arg])).toEqual([
-      ['fav', 'fg:fg-dj-radio'],
+      ['unfav', 'fg:fg-dj-radio'],
       ['srcs', 'fg:fg-dj-radio'],
       ['insp', 'fg:fg-dj-radio'],
     ]);

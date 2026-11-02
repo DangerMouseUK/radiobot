@@ -222,9 +222,12 @@ export class SessionManager {
       this.#sessions.delete(guild.id);
     }
     if (guild.available) {
-      // Removed from the server (not an outage): delete operator-held data for it (PRD §15).
-      this.#d.guilds.purgeGuild(guild.id);
-      this.#d.stations.deleteGuildCustomStations(guild.id);
+      // Removed from the server (not an outage): delete operator-held data for it (PRD §15), all
+      // or nothing, so a failure part-way never leaves custom stations without their settings.
+      this.#d.stations.transaction(() => {
+        this.#d.guilds.purgeGuild(guild.id);
+        this.#d.stations.deleteGuildCustomStations(guild.id);
+      });
       this.#log.info({ guildId: guild.id }, 'removed from guild; session released and guild data purged');
     } else {
       this.#log.info({ guildId: guild.id }, 'guild unavailable (outage); session released');

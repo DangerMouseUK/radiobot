@@ -98,7 +98,7 @@ class FakePipeline extends EventEmitter {
       }
     }, 5);
   }
-  fail(code: 'STREAM_EOF' | 'FFMPEG_EXIT' | 'NOT_FOUND' = 'STREAM_EOF'): void {
+  fail(code: 'STREAM_EOF' | 'FFMPEG_EXIT' | 'NOT_FOUND' | 'FFMPEG_SPAWN' | 'INTERNAL' = 'STREAM_EOF'): void {
     this.emit('failed', new RadioError(code, 'boom'));
   }
   stop(): void {
@@ -144,7 +144,7 @@ function setup(
     connectFails?: boolean;
     timings?: Partial<SessionTimings>;
     listeners?: () => number | null;
-    onLeaving?: (channelId: string) => void;
+    onLeaving?: (channelId: string) => Promise<void> | void;
     mayStream?: () => boolean;
     pipelineThrows?: boolean;
     prepareThrows?: boolean | (() => boolean);
@@ -804,5 +804,54 @@ describe('GuildSession', () => {
     await t.session.play('fg:fg-dj-radio', 'voice-1', null);
     expect(t.opened()).toBe(1);
     expect(t.closed()).toBe(1);
+  });
+
+  it('detects a stall when a play takes over a link that a leave is still holding open', async () => {
+    let release = () => {};
+    const t = setup({
+      onLeaving: () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      behaviour: (_u, n) => (n === 1 ? 'stall-after-start' : 'ok'),
+    });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    t.session.leave();
+    const r = await t.session.play('mypack:my-station', 'voice-1', null);
+    expect(r.ok).toBe(true);
+    expect(t.connects()).toBe(1); // the link the leave held open was reused
+    // The second stream stalls: the watchdog must notice and restart it.
+    await until(() => t.failures.get('primary') === 1 && t.pipelines.length === 3);
+    release();
+  });
+
+  it("does not hold the bot's own faults against the source, and never fails over for them", async () => {
+    const t = setup({ timings: { backoff: [5], stableMs: 60_000, noSourceRetryMs: 60_000 } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    t.pipelines[0]!.fail('FFMPEG_SPAWN');
+    // Retried on the same source after a back-off.
+    await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
+    expect(t.session.status().source?.id).toBe('primary');
+    expect(t.failures.size).toBe(0);
+    // Once the quick retries are used up it waits and tries again later, on no other source.
+    t.pipelines[1]!.fail('FFMPEG_SPAWN');
+    await until(() => t.session.state === 'ERROR');
+    expect(t.pipelines).toHaveLength(2);
+    expect(t.failures.size).toBe(0);
+    expect(t.notices.some((n) => n.kind === 'failover')).toBe(false);
+    expect(t.notices.at(-1)?.code).toBe('FFMPEG_SPAWN');
+  });
+
+  it('does not hold an internal error against the source, but fails over once its retries run out', async () => {
+    const t = setup({ timings: { backoff: [5], stableMs: 60_000, noSourceRetryMs: 60_000 } });
+    await t.session.play('mypack:my-station', 'voice-1', null);
+    t.pipelines[0]!.fail('INTERNAL');
+    await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
+    expect(t.session.status().source?.id).toBe('primary');
+    // An unexpected error may be specific to this source's data, so a working fallback plays.
+    t.pipelines[1]!.fail('INTERNAL');
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
+    expect(t.failures.size).toBe(0);
+    expect(t.notices.some((n) => n.kind === 'failover')).toBe(true);
   });
 });

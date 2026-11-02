@@ -22,6 +22,7 @@ pnpm lint                          # biome check . (CI fails on any finding)
 pnpm format                        # biome format --write .
 pnpm test                          # vitest run: unit + integration
 pnpm test:unit | pnpm test:integration
+pnpm test:coverage                 # vitest run --coverage: how much of src/ and scripts/ the tests run, by file
 pnpm test:lifecycle                # Linux only: install.sh + radio-bot.sh against a fake docker
 pnpm vitest run tests/unit/session.test.ts      # a single file
 pnpm build                         # tsc -p tsconfig.build.json → dist/
@@ -82,6 +83,8 @@ catalog/packs/<id>/     pack.json, stations.json, sources.json, SOURCE_PROVENANC
 tests/unit/             fast, pure tests;  tests/integration/  local fixture radio server + synthetic audio
 tests/helpers.ts        memoryDb(), makeSource(), silentLogger()
 tests/lifecycle/        run.sh + fake-docker: end-to-end test of the installer and manager
+vitest.config.ts        test settings, including the coverage report for `pnpm test:coverage`
+.github/workflows/      ci.yml, release.yml, security.yml (dependency audit, gitleaks, CodeQL)
 docs/                   install.md (beginner guide, start here), install-docker/-linux/-container-platforms,
                         architecture, audio-quality, station-verification, permissions, rights-and-disclaimer,
                         PRD, troubleshooting
@@ -116,7 +119,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 **Audio**
 
 1. **Encode once.** FFmpeg decodes the source and encodes **once** with `libopus` into Ogg Opus. `@discordjs/voice` receives `StreamType.OggOpus` and only demuxes it. Never add a second lossy encode, and never add default EQ, AGC, loudness normalisation, compression or limiting.
-2. **Follow the source, not the channel.** In `maximum` mode the Opus target is the source's own bitrate (codec metadata, then measured, then manifest or advertised), capped at `MAX_OPUS_BITRATE_KBPS` (default 510, range 32–510); the cap is the target only when the source's bitrate is unknown. Never pad a stream above its source's rate, and never cap it at the voice channel's bitrate setting, which is reported only. `manual` is the admin's value capped at `MAX_OPUS_BITRATE_KBPS` (like `maximum` until one is set), and `balanced` is 128 kbps or the source's bitrate if lower. See `planEncoder()` in `src/audio/encoder.ts`.
+2. **Follow the source, not the channel.** In `maximum` mode the Opus target is the source's own bitrate (measured, then codec metadata, then manifest or advertised), rounded up to a whole kbps, capped at `MAX_OPUS_BITRATE_KBPS` (default 510, range 32–510); the cap is the target only when the source's bitrate is unknown. Never encode below the source's rate, never pad above it (never under-encoding comes first), and never cap it at the voice channel's bitrate setting, which is reported only. The measured figure comes first because AAC codec metadata is an estimate that can be well off in either direction. `manual` is the admin's value capped at `MAX_OPUS_BITRATE_KBPS` (like `maximum` until one is set), and `balanced` is 128 kbps or the source's bitrate if lower. See `planEncoder()` in `src/audio/encoder.ts`.
 3. **FFmpeg reads stdin only** (`-protocol_whitelist pipe`). Never pass a URL, a user-supplied string or a new protocol into FFmpeg or FFprobe arguments. Bytes reach FFmpeg only from `SafeHttpClient`.
 
 **Network**
@@ -161,6 +164,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 - The `UrlPolicy` `testAllowedAddresses` option lets tests reach loopback fixtures. It must **never** be wired to configuration.
 - Use `memoryDb()` from `tests/helpers.ts` for an in-memory, migrated database, and `makeSource()` for source fixtures. Match the existing style: import from `'../../src/…ts'`, with `describe`/`it` and plain `expect`.
 - New behaviour needs a test. A bug fix needs a test that failed before the fix. Avoid timing-sensitive assertions; inject clocks (for example `RateMeter`'s `now`) instead of sleeping.
+- CI runs `pnpm test:coverage`, which fails if coverage falls below the thresholds in `vitest.config.ts`. Add tests rather than lowering them.
 
 ## Documentation must match the code
 

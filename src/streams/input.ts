@@ -6,7 +6,6 @@ import { delay } from '../shared/async.ts';
 import { RadioError } from '../shared/errors.ts';
 import {
   type HlsMedia,
-  type HlsSegment,
   looksLikeHls,
   parseHls,
   parseM3u,
@@ -318,14 +317,26 @@ export class HlsReader extends Readable {
     return parsed;
   }
 
-  async #fetchSegment(seg: HlsSegment): Promise<Buffer> {
-    const { bytes, finalUrl } = await this.#client.fetchBytes(seg.uri, {
+  async #fetchSegment(uri: URL): Promise<Buffer> {
+    const { bytes, finalUrl } = await this.#client.fetchBytes(uri, {
       maxBytes: MAX_SEGMENT_BYTES,
       signal: this.#abort.signal,
       totalTimeoutMs: Math.max(10_000, this.targetDuration * 2000),
     });
     this.#stats.segmentHost = finalUrl.host;
     return bytes;
+  }
+
+  /** A media segment or init section, tried twice so one transient failure doesn't end the stream. */
+  async #fetchTwice(uri: URL): Promise<Buffer | null> {
+    for (let attempt = 0; attempt < 2 && !this.destroyed; attempt++) {
+      try {
+        return await this.#fetchSegment(uri);
+      } catch {
+        this.#stats.segmentFailures++;
+      }
+    }
+    return null;
   }
 
   async #loop(): Promise<void> {
@@ -360,8 +371,13 @@ export class HlsReader extends Readable {
         const start = playlist.endList ? 0 : Math.max(0, segs.length - this.#liveEdge);
         this.#nextSequence = segs[start]?.sequence ?? playlist.mediaSequence;
       } else if (segs.length > 0 && segs[segs.length - 1]!.sequence + 1 < this.#nextSequence) {
-        // Sequence numbers went backwards (upstream encoder restart): resync near the live edge.
-        this.#nextSequence = segs[Math.max(0, segs.length - this.#liveEdge)]!.sequence;
+        // The playlist ends before what was already sent. A little behind is a stale copy from
+        // another CDN node: nothing new, so poll again. Further back than the playlist is long,
+        // sequence numbers went backwards (upstream encoder restart): resync near the live edge.
+        const behind = this.#nextSequence - 1 - segs[segs.length - 1]!.sequence;
+        if (behind > segs.length) {
+          this.#nextSequence = segs[Math.max(0, segs.length - this.#liveEdge)]!.sequence;
+        }
       } else if (segs.length > 0 && this.#nextSequence < segs[0]!.sequence) {
         // We fell out of the live window (long stall): resynchronise near the live edge.
         this.#stats.skippedSegments += segs[0]!.sequence - this.#nextSequence;
@@ -370,22 +386,19 @@ export class HlsReader extends Readable {
       for (const seg of segs) {
         if (this.destroyed) return;
         if (seg.sequence < this.#nextSequence) continue;
-        if (seg.mapUri && seg.mapUri.href !== this.#lastMap) {
-          const init = await this.#client.fetchBytes(seg.mapUri, {
-            maxBytes: MAX_SEGMENT_BYTES,
-            signal: this.#abort.signal,
-          });
-          this.#lastMap = seg.mapUri.href;
-          this.container ??= 'fmp4';
-          await this.#pushChecked(init.bytes);
-        }
         let data: Buffer | null = null;
-        for (let attempt = 0; attempt < 2 && data === null && !this.destroyed; attempt++) {
-          try {
-            data = await this.#fetchSegment(seg);
-          } catch {
-            this.#stats.segmentFailures++;
+        const mapUri = seg.mapUri;
+        if (mapUri && mapUri.href !== this.#lastMap) {
+          // A segment can't be decoded without its init section: if that fails, so does the segment.
+          const init = await this.#fetchTwice(mapUri);
+          if (init) {
+            this.#lastMap = mapUri.href;
+            this.container ??= 'fmp4';
+            await this.#pushChecked(init);
+            data = await this.#fetchTwice(seg.uri);
           }
+        } else {
+          data = await this.#fetchTwice(seg.uri);
         }
         this.#nextSequence = seg.sequence + 1;
         if (data === null) {

@@ -1,17 +1,32 @@
 # Permissions, governance and abuse controls
 
-Radio Bot asks Discord for as little access as it can. It then checks every action itself, on the server side, whatever Discord's client-side command visibility says. The code is in `src/discord/permissions/authorize.ts`, `src/discord/context.ts`, `src/discord/voice-access.ts` and `src/discord/components/custom-id.ts`.
+## In short
+
+- **The bot asks Discord for very little.** It can see channels, post messages, attach a file, join a voice channel and speak. It cannot read your messages and never hears anyone's voice.
+- **There are three kinds of people:**
+  - **Admins** are the server owner and anyone with Discord's **Administrator** permission. Nobody else. Manage Server does not count.
+  - **DJs** have a role that an admin has made a *DJ role*. They can always control playback.
+  - **Listeners** are everyone else. By default they can control the radio only from inside a voice channel, and only the one the bot is in (or any channel while the bot is idle).
+- **Everyone can look.** Browsing stations, seeing what is playing and checking audio quality are open to all, in any channel where radio commands are allowed.
+- **Only admins change settings,** add custom stations, import or export settings and see `/radio stats`.
+- **Buttons are checked every time they are clicked,** exactly like the command they belong to. A Stop button in a public channel still needs the right to control the radio.
+- **Admins can limit where the bot works:** which text channels accept radio commands, and which voice channels it may join.
+- **There are rate limits,** so nobody can flood the bot with station changes or stream checks.
+
+The rest of this page gives the exact rules. The code is in `src/discord/permissions/authorize.ts`, `src/discord/context.ts`, `src/discord/voice-access.ts` and `src/discord/components/custom-id.ts`.
 
 ## Discord access the bot needs
 
 ### Gateway intents
 
+An *intent* is a category of events Discord sends to a bot. Radio Bot uses two:
+
 | Intent | Used for |
 |---|---|
-| `Guilds` | Servers, channels, roles, and interaction delivery context |
-| `GuildVoiceStates` | Which voice channel a user or the bot is in, listener counts for the idle modes, moves and disconnects |
+| `Guilds` | Servers, channels, roles, and the context of each command or click |
+| `GuildVoiceStates` | Which voice channel a user or the bot is in: listener counts for the idle modes, and noticing when the bot is moved or disconnected |
 
-There are **no privileged intents**: no Message Content, no Server Members, no Presence. The bot does not read messages or chat history, and does not receive voice audio (it joins self-deafened). The member's roles come from the interaction payload itself, and voice channels from the voice-state cache. Any bot may set its own "Listening to" status (`PRESENCE_MODE`); that needs no intent or permission.
+There are **no privileged intents**: no Message Content, no Server Members, no Presence. The bot does not read messages or chat history. It joins voice channels self-deafened, so it never receives anyone's voice. A member's roles come with each command or click, and voice channels come from Discord's voice-state updates. The bot's own "Listening to" status (`PRESENCE_MODE`) needs no intent or permission.
 
 ### OAuth2 scopes
 
@@ -22,126 +37,150 @@ There are **no privileged intents**: no Message Content, no Server Members, no P
 | Permission | Bit value | Why it is needed |
 |---|---:|---|
 | View Channels | 1024 | See the target voice channel, the panel channel and the notice channel |
-| Send Messages | 2048 | **Only** for the optional control panel (`/radio panel`) and the optional notification channel. Slash-command replies don't need it |
+| Send Messages | 2048 | **Only** for the optional control panel (`/radio panel`) and the optional notice channel. Replies to slash commands don't need it |
 | Embed Links | 16384 | Embeds in the control panel and notices |
-| Attach Files | 32768 | `/radio export` returns a JSON file |
+| Attach Files | 32768 | `/radio export` replies with a JSON file |
 | Connect | 1048576 | Join the voice channel |
-| Speak | 2097152 | Transmit audio |
-| Set Voice Channel Status | 281474976710656 | **Optional.** Shows the station and the song or show title as the status of the bot's voice channel, cleared when playback stops or the bot leaves. Admins can switch it off in `/radio config` → Notifications. Without the permission the bot simply doesn't set a status |
+| Speak | 2097152 | Play audio |
+| Set Voice Channel Status | 281474976710656 | **Optional.** Shows the station and the song or show title as the status of the bot's voice channel. The status is cleared when playback stops or the bot leaves. Admins can switch it off in `/radio config` → Notifications. Without the permission the bot simply doesn't set a status |
 
 1024 + 2048 + 16384 + 32768 + 1048576 + 2097152 + 281474976710656 = **281474979908608**.
 
-Servers that invited the bot with the earlier integer `3197952` keep working; to get the channel status there, re-invite the bot with the current link or give its role **Set Voice Channel Status** in the voice channel.
+Servers that invited the bot with the earlier integer `3197952` keep working. To get the voice channel status there, invite the bot again with the current link, or give its role **Set Voice Channel Status** in the voice channel.
 
-Not required: Administrator, Manage Server, Manage Channels, Manage Roles, Manage Messages, Read Message History, Mention Everyone, Use Voice Activity, Priority Speaker, Move Members.
+Not needed: Administrator, Manage Server, Manage Channels, Manage Roles, Manage Messages, Read Message History, Mention Everyone, Use Voice Activity, Priority Speaker, Move Members.
 
-Each time it joins a channel, the bot checks View Channel, Connect and Speak on that **specific** channel, and checks that the channel is a standard voice channel (stage channels are refused) and joinable (not full). Before posting the panel it checks View Channel and Send Messages in the panel channel. Notices are skipped silently if Send Messages is missing.
+Each time it joins a channel, the bot checks View Channel, Connect and Speak on that **specific** channel. It also checks that the channel is a standard voice channel (stage channels are refused) and that it can join it (it isn't full). Before posting the control panel it checks View Channel and Send Messages in the panel channel. Notices are skipped silently if Send Messages is missing.
 
 ### Command registration
 
-There is one `/radio` command, registered as a **guild** command, limited to the guild context (not DMs) and the guild-install type. It is visible to every member: the admin subcommands are listed too, and they refuse anyone who isn't an admin. If you want to hide some subcommands from roles in the client, you can use Discord's **Server Settings → Integrations → Radio Bot** command permissions. This is cosmetic, and the bot's own checks still apply.
+There is one command, `/radio`, registered separately in each server. It works only in servers, not in direct messages. Every member sees the whole command, including the admin subcommands, which refuse anyone who isn't an admin. To hide some subcommands from some roles, use Discord's **Server Settings → Integrations → Radio Bot**. That only changes what people see; the bot's own checks still apply.
 
 ## Access levels
 
-`accessLevel()` puts each user at one level per server:
+`accessLevel()` gives each user one level per server:
 
 | Level | Who |
 |---|---|
-| **admin** | The server owner, or anyone with Discord's **Administrator** permission (`isAdministrator` in `authorize.ts`). **Manage Server alone does not count**, and there is no configurable admin-role setting. To delegate bot administration, give the role Administrator. To delegate playback control only, use DJ roles. |
-| **dj** | Anyone with a role configured as a *DJ role* |
-| **member** | Everyone else |
+| **admin** | The server owner, or anyone with Discord's **Administrator** permission. **Manage Server alone does not count**, and there is no admin-role setting. To let someone run the bot, give their role Administrator. To let them control playback only, make it a DJ role. |
+| **dj** | Anyone with a role that an admin has set as a *DJ role* in `/radio config` → Access |
+| **member** | Everyone else (called *listeners* on this page) |
 
-Separately, the bot **operator** is either a Discord user listed in `OPERATOR_USER_IDS` or the application's owner (or team members). Operators are the only ones who can record identity verdicts for the sources of any station pack, because those verdicts affect every server on the installation. Being an operator does not make you a server admin.
+Separately, the bot **operator** is a Discord user listed in `OPERATOR_USER_IDS`, or the owner of the bot's Discord application (or a member of its team). Only operators can record identity verdicts for the sources of station packs, because those verdicts affect every server the bot is in. They must also be an admin of the server where they run the command. Being an operator does not make you an admin of a server.
 
 ## Capabilities
 
-Each command and component needs one capability:
+Each command, button and menu needs one *capability*:
 
-- **read**: browse, list (including `scope:favourites`), now, quality, sources, inspect, status, help, `queue list`, and the browse (including its Favourites filter), list, refresh, sources and inspect buttons.
-- **control**: play (including choosing a station in browse or from an ambiguity picker), stop, join, leave, skip, `queue add`, `queue remove` and `queue clear`, the next, previous and skip buttons, the favourite button, and the source picker under `/radio sources` (which only switches the station that is playing, until the station changes; when an admin has pinned the station to one source, only admins can use it).
-- **admin**: stats (including its Refresh button; its Close button only deletes the clicker's own private reply), add, edit, remove, rescan (including the re-probe button), the *Prefer the playing source* and *Back to automatic choice* buttons under `/radio sources`, sync, config (including every settings control), export, import (including Apply and Cancel), panel, and `source pin`, `prefer`, `auto` and `verify`.
+- **read**: `/radio browse`, `list` (including `scope:favourites`), `now`, `quality`, `sources`, `inspect`, `status`, `help` and `queue list`. Also the buttons that browse, page through lists, refresh the now-playing card and open Sources or Inspect, including the Favourites filter in a browse list.
+- **control**: `/radio play`, `stop`, `join`, `leave`, `skip`, `queue add`, `queue remove` and `queue clear`. Also choosing a station from a browse list or a "which station did you mean?" menu, the Previous station, Next station, Stop, Leave and Skip buttons, and the **Favourite** and **Unfavourite** buttons. The source menu under `/radio sources` needs *control* too: it switches the source of the station that is playing, until the station changes. When an admin has pinned the station to one source, only admins can use that menu.
+- **admin**: `/radio stats` (and its Refresh button), `add`, `edit`, `remove`, `rescan` (and the **Check sources again** button), `sync`, `config` (and every settings control), `export`, `import` (and its Apply and Cancel buttons), `panel`, and `source pin`, `prefer`, `auto` and `verify`. Also the **Prefer the playing source on this server** and **Back to automatic choice** buttons under `/radio sources`. The Close button of `/radio stats` needs only *read*: it deletes the clicker's own private reply.
 
 ### Capability matrix
 
-| Capability | member | dj | admin |
+| Action | Listener | DJ | Admin |
 |---|:---:|:---:|:---:|
-| Browse, list, now-playing, quality, sources, inspect, status, help | Yes | Yes | Yes |
-| Play or switch, stop, leave, join, next and previous, favourite, skip, queue add, remove and clear | Depends on the listener control mode (below) | Yes | Yes |
+| Browse, list, now playing, quality, sources, inspect, status, help, queue list | Yes | Yes | Yes |
+| Play or switch, stop, join, leave, next and previous, favourite and unfavourite, skip, queue add, remove and clear, choose another source | Depends on the listener control mode (below) | Yes | Yes |
 | Add, edit or remove a custom station | No | No | Yes |
-| Rescan or compare sources, sync station packs, pin, prefer or auto source | No | No | Yes |
-| Configure channels, DJ roles, idle mode, quality, autostart, notifications and the voice channel status; post the panel | No | No | Yes |
-| Import or export configuration; `/radio stats` (private live statistics) | No | No | Yes |
+| Check or compare sources again, sync station packs, pin, prefer or auto source | No | No | Yes |
+| Change channels, DJ roles, idle mode, quality, autostart, notices and the voice channel status; post the panel | No | No | Yes |
+| Import or export settings; `/radio stats` (private live statistics) | No | No | Yes |
 | Record an identity verdict (`source verify`) for a **custom** station of this server | No | No | Yes |
 | Record an identity verdict for a source in a **station pack** | No | No | Operator only |
 
 ### Listener control mode
 
-The *Who can play/stop* setting in `/radio config` → Playback decides what members (not DJs or admins) may do with **control** actions:
+The **Who else can control the radio** menu in `/radio config` → Playback decides what listeners (not DJs or admins) may do with *control* actions:
 
-| Mode | Members can control playback… |
-|---|---|
-| `same_channel` (default) | …only while they are in a voice channel; only when the bot is idle or in **their** channel; and only to play in the channel they are in. |
-| `none` | Never. Only DJs and admins. |
-| `any` | Always, from an allowed command channel. |
+| Mode | Shown as | Listeners can control playback… |
+|---|---|---|
+| `same_channel` (default) | Listeners in the bot's voice channel, plus DJs and admins | …only while they are in a voice channel, only when the bot is idle or in **their** channel, and only to play in the channel they are in. |
+| `none` | Only DJs and admins | Never. |
+| `any` | Anyone who can use radio commands | Always, from an allowed command channel, and in any voice channel the bot may use. |
 
 ### Channel restrictions
 
-- **Command channels** (`/radio config` → Access): when the list is not empty, commands and component clicks from **members and DJs** are refused outside those channels, with an ephemeral message naming the allowed channels. The text chat inside an *approved voice channel* also counts as an allowed command channel. **Admins bypass the command-channel restriction**, so an admin can never lock themselves out.
-- **Approved voice channels:** when the list is not empty, the bot only joins those channels. This applies to everyone, admins included, because it is enforced when connecting. If someone moves the bot into a channel that isn't approved, it leaves and posts a notice to the notification channel, if one is set.
-- **Preferred voice channel and lock:** with *Lock to preferred channel* on, playback always goes to the preferred channel. An explicit `channel` option for any other channel is refused by both `/radio play` and `/radio join`; without one, they go to the preferred channel. If someone moves the bot away from the preferred channel, it leaves in the same way.
+All three settings are in `/radio config`. An empty list means "no restriction".
 
-An empty list means "no restriction".
+- **Command channels** (Access): when the list isn't empty, commands and clicks from **listeners and DJs** are refused outside those channels, with a private message naming the allowed channels. The text chat inside an *approved voice channel* also counts as an allowed command channel. **Admins are never restricted by this list**, so an admin can't lock themselves out.
+- **Approved voice channels** (Access): when the list isn't empty, the bot joins only those channels. This applies to everyone, admins included, because it is checked when the bot connects. If someone moves the bot into a channel that isn't approved, it leaves and posts a notice in the notice channel, if one is set.
+- **Preferred voice channel and lock** (Playback): with **Lock to preferred channel** on, playback always goes to the preferred channel. `/radio play` and `/radio join` refuse a `channel` option that names any other channel, and without one they go to the preferred channel. If someone moves the bot away from the preferred channel, it leaves in the same way.
 
 ### Voice channel choice
 
-For play and join, the target is chosen in this order: the locked preferred channel, then the explicit `channel` option, then the channel the bot is already in, then the requester's voice channel, then the preferred channel. The capability check runs against that target. The connection step then re-checks the allowlist and the bot's own permissions on that channel.
+For play and join, the bot picks the voice channel in this order:
+
+1. the preferred channel, when the lock is on;
+2. the channel named in the `channel` option;
+3. the channel the bot is already in;
+4. the channel the person asking is in;
+5. the preferred channel.
+
+The capability check runs against that channel. So DJs and admins can name any channel. Listeners can name any channel only in the `any` mode, and only the one they are in with `same_channel`. When the bot connects, it checks the approved voice channels and its own permissions on that channel again.
 
 ## Server-side checks for buttons and menus
 
-The PRD requires that "a button posted in a public channel must not become an unrestricted bypass". Here is how that is met:
+The PRD requires that "a button posted in a public channel must not become an unrestricted bypass". This is how:
 
-1. **Every component interaction is re-authorised** with the clicking user's current roles, channel and voice state, exactly as the matching slash command would be. A Stop button in a public panel still needs the *control* capability. A settings menu still needs *admin*.
-2. **Signed component IDs.** Every custom ID has the form `rb2:<action>:<arg>:<expiry>:<signature>`. The signature is an HMAC-SHA256, truncated to 16 base64url characters, over the guild ID and the body. It uses a per-installation secret that is generated once and stored in the database (`app_meta.components.secret`). The check uses a constant-time comparison. A forged ID, or an ID copied from another server, fails the check with "This button or menu is not valid here.". **The signature is not authorisation.** It only proves that this installation issued the ID for this server. Step 1 is still applied.
-   - Every ID fits Discord's 100-character limit by construction: actions are at most 7 characters (all listed in `COMPONENT_ACTIONS`), the argument at most 65, which is the longest possible station ID, and the expiry 5. Building an ID with anything longer is refused.
-   - IDs in the older `rb1` format (Radio Bot 1.0.5 and earlier) are still checked, then treated as expired. The control panel is redrawn when the bot starts, so its buttons are replaced by themselves.
-3. **Expiry.** Now-playing buttons, browse pages and ambiguity pickers expire after 15 minutes, settings pages and the `/radio stats` panel after 30 minutes, and import previews after 10 minutes, each rounded up to the next whole minute. Expired controls answer "These buttons have expired. Run the command again.". Control-panel buttons have no expiry so that the panel keeps working across restarts, and they are still re-authorised on every click.
-4. **Server-held state.** Browse sessions and import previews are referenced by a random token that maps to server-side state. An import can only be applied by an admin of the same server before its preview expires, and only once.
-5. **Superseding.** A new play or switch increments the session's generation counter, so an older request that is still pending cannot overwrite a newer one. Its reply says "Superseded".
+1. **Every click is authorised again,** using the clicking user's current roles, channel and voice channel, exactly as the matching slash command would be. A Stop button in a public panel still needs *control*. A settings menu still needs *admin*.
+2. **Signed button IDs.** Every button and menu carries a hidden ID of the form `rb2:<action>:<argument>:<expiry>:<signature>`.
+   - The signature is an HMAC-SHA256 (a keyed checksum), cut to 16 characters. It covers the server ID and the rest of the ID, and uses a secret that each installation generates once and stores in its database. It is checked in constant time.
+   - A forged ID, or an ID copied from another server, fails the check with "This button or menu is not valid here.".
+   - **The signature is not permission.** It only proves that this installation made the ID for this server. Step 1 still applies.
+   - Every ID fits Discord's 100-character limit by design: the action name is at most 7 characters (all are listed in `COMPONENT_ACTIONS`), the argument at most 65 (the longest possible station ID) and the expiry 5. Making an ID with anything longer is refused.
+   - IDs in the older `rb1` format (Radio Bot 1.0.5 and earlier) are still checked, then treated as expired. The control panel is redrawn when the bot starts, so its own buttons are replaced automatically.
+3. **Expiry.** The expiry is stored in whole minutes, rounded up.
+   - Now-playing buttons, sources views and "which station?" menus expire after 15 minutes.
+   - A browse list stays open for 15 minutes after it was last used.
+   - Settings pages and the `/radio stats` panel expire after 30 minutes.
+   - Import previews expire after 10 minutes.
+   - Expired controls answer "These buttons have expired. Run the command again." (an expired browse list says to run `/radio browse` again).
+   - Control-panel buttons never expire, so the panel keeps working across restarts. They are still authorised on every click.
+4. **State kept by the bot.** Browse lists and import previews are referred to by a random token. The list or preview itself stays inside the bot. An import can be applied only by an admin of the same server, only before its preview expires, and only once. Each server has at most one import preview: a new `/radio import` replaces the previous one, whose buttons then say it has expired.
+5. **Newer requests win.** Each play or switch request gets a number. An older request that is still running can't overwrite a newer one; its reply says "Request replaced: A newer station request took over from this one."
 
 ## Rate limits
 
-These are in-memory token buckets (`RateLimits` in `src/discord/context.ts`). Each holds the stated number of uses and refills continuously over the window. When one is exhausted, the reply says "Slow down — … is rate-limited. Try again in N s." (reason code `RATE_LIMITED`).
+These limits are kept in memory, per bot process (`RateLimits` in `src/discord/context.ts`). Each one allows the stated number of uses at once, and refills steadily over the window. When a limit runs out, the reply says "Too many … in a short time. Try again in N s." (reason code `RATE_LIMITED`).
 
-| Limit | Key | Allowance |
+| Limit | Counted per | Allowance |
 |---|---|---|
-| Play or switch | per user | 6 per 30 s |
-| Play or switch | per server | 12 per 30 s |
-| Re-probe (`/radio rescan`, re-probe button, `/radio edit` with a new URL) | per server | 3 per 10 min |
-| Add custom station | per server | 5 per hour |
-| Catalogue sync | per server | 2 per hour |
-| Catalogue sync | whole installation | 1 per 10 min |
-| Button and menu clicks | per user | 20 per 20 s |
+| Station changes: `/radio play`, `/radio join`, Next, Previous, Skip, choosing from a list, `queue add` when nothing is playing, and the source menu | user | 6 per 30 s |
+| Station changes (as above) | server | 12 per 30 s |
+| Stream checks: `/radio rescan`, the **Check sources again** button, `/radio edit` with a new URL | server | 3 per 10 min |
+| Adding custom stations, with `/radio add` or by an import | server | 5 per hour |
+| Catalogue sync (`/radio sync`) | server | 2 per hour |
+| Catalogue sync (`/radio sync`) | whole installation | 1 per 10 min |
+| Button and menu clicks | user | 20 per 20 s |
+| Settings import (`/radio import`) | server | 5 per 10 min |
 
-Other installation-wide bounds:
+Other limits that apply to the whole installation:
 
-- `MAX_ACTIVE_GUILD_STREAMS` (default 3): servers streaming at once. Exceeding it is refused with `STREAM_LIMIT`;
-- `MAX_CONCURRENT_PROBES` (default 2), plus a limit of one probe per stream host at a time;
-- `MAX_CUSTOM_STATIONS_PER_GUILD` (default 25). Exceeding it is refused with `CUSTOM_STATION_LIMIT`.
+- `MAX_ACTIVE_GUILD_STREAMS` (default 3): servers streaming at once. Going over it is refused with `STREAM_LIMIT`.
+- `MAX_CONCURRENT_PROBES` (default 2): stream checks at once, and never more than one at a time per stream host.
+- `MAX_CUSTOM_STATIONS_PER_GUILD` (default 25): custom stations per server. Going over it is refused with `CUSTOM_STATION_LIMIT`.
+- The queue holds at most 25 stations per server.
+- An import file must be a Discord attachment of at most 256 KB.
 
-The scheduled catalogue sync runs at most once per `CATALOG_SYNC_INTERVAL_HOURS` (at least 6 h) for each pack that declares an official list.
+The scheduled catalogue sync runs once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, at least 6) for each pack that declares an official list, plus a random delay of up to 15 minutes.
 
 ## Custom station safety (SSRF)
 
-Only admins can add custom stations, and the URL check applies to admins too. Every URL, redirect and reconnect is checked:
+*SSRF* (server-side request forgery) is a trick where someone gets a server to connect to a private address on its own network. Only admins can add custom stations, and the same checks apply to admins. Every URL, redirect and reconnect is checked:
 
-- the scheme is `http(s)` only, and plain HTTP can be refused with `ALLOW_INSECURE_HTTP_STREAMS=false`;
-- credentials in the URL are rejected;
-- internal service ports and privileged ports other than 80 and 443 are rejected;
-- internal host names and suffixes are rejected;
-- private, loopback, link-local, CGNAT, multicast, documentation and reserved IPv4 and IPv6 ranges are rejected, including IPv4-mapped, NAT64 and 6to4 forms.
+- only `http://` and `https://` URLs, of at most 2048 characters; plain HTTP can be refused with `ALLOW_INSECURE_HTTP_STREAMS=false`;
+- no user name or password in the URL;
+- no ports of common internal services, and no ports below 1024 other than 80 and 443;
+- no internal host names (such as `localhost`, `metadata` or names ending in `.local`, `.internal` or `.lan`), and no host names without a dot;
+- no private, loopback, link-local, CGNAT, multicast, documentation or reserved IPv4 and IPv6 addresses, including their IPv4-mapped, NAT64 and 6to4 forms.
 
-DNS is resolved by the bot, and the hop is rejected if any answer is blocked. The socket is pinned to the checked address. FFmpeg is never given a URL. See [architecture.md](architecture.md#the-source-validation-boundary) and [SECURITY.md](../SECURITY.md).
+The bot looks up the host name itself and rejects the connection if any of the addresses it gets back is blocked. It then connects only to the address it checked. FFmpeg is never given a URL. See [architecture.md](architecture.md#the-source-validation-boundary) and [SECURITY.md](../SECURITY.md).
 
 ## What is logged about users
 
-Logs contain guild IDs, and the user ID of whoever records an identity override. Playback intents store the last requester's user ID, queue entries store the user ID of whoever queued them, and source preferences and custom stations store the admin who set or added them. Logs contain no message content. See [rights-and-disclaimer.md](rights-and-disclaimer.md#privacy-policy-for-a-self-hosted-instance).
+- Logs contain server IDs. They also contain a user ID in two cases: when someone records an identity verdict with `/radio source verify`, and when someone switches a playing station to another source with the source menu.
+- The database keeps the user ID of the last person who started playback, of whoever queued each station, and of the admin who set each source preference or added each custom station.
+- Logs contain no message content.
+
+See [rights-and-disclaimer.md](rights-and-disclaimer.md#privacy-policy-for-a-self-hosted-instance).

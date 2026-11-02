@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { REST, Routes } from 'discord.js';
-import type { Logger } from '../observability/logger.ts';
+import { type Logger, safeErr } from '../observability/logger.ts';
 import type { MetaRepository } from '../persistence/repositories/guilds.ts';
 import { buildRadioCommand } from './commands/definitions.ts';
 
@@ -35,7 +35,7 @@ export async function registerGuildCommands(
       meta?.set(key, hash);
       updated++;
     } catch (err) {
-      logger.warn({ guildId, err: (err as Error).message }, 'command registration failed for guild');
+      logger.warn({ guildId, err: safeErr(err) }, 'command registration failed for guild');
     }
   }
   if (updated > 0) logger.info({ updated }, 'slash commands registered');

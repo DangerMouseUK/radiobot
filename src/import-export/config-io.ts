@@ -177,7 +177,7 @@ export function previewImport(
   diff('Number of voice channels', cur.allowedVoiceChannelIds.length, s.allowedVoiceChannelIds.length);
   diff('Number of DJ roles', cur.djRoleIds.length, s.djRoleIds.length);
   diff('Who else can control the radio', cur.memberControlMode, s.memberControlMode);
-  diff('Default station', cur.defaultStationId, s.defaultStationId);
+  diff('Default station', cur.defaultStationId, importedDefault(guildId, data, guilds, stations));
   diff('Quality', cur.qualityMode, s.qualityMode);
   diff('When the channel is empty', cur.idleMode, s.idleMode);
   diff('Autostart', cur.autostart, s.autostart);
@@ -200,7 +200,13 @@ export function previewImport(
   );
   if (unknownStations.length > 0)
     warnings.push(`${unknownStations.length} station ID(s) are not in this catalogue and will be skipped.`);
-  lines.push(`• Favourites: ${data.favourites.length}`);
+  const customFavourites = guilds.listFavourites(guildId).filter(isCustom).length;
+  lines.push(
+    `• Favourites: ${data.favourites.length}` +
+      (customFavourites > 0
+        ? ` (this server’s ${customFavourites} custom-station favourite(s) are kept)`
+        : ''),
+  );
   lines.push(`• Source preferences: ${data.sourcePreferences.length}`);
   const importable = data.customStations.filter((c) => !c.urlRedacted);
   lines.push(`• Custom stations to add: ${importable.length} (each one is checked again before it is added)`);
@@ -210,6 +216,39 @@ export function previewImport(
       `${redacted} custom station URL(s) were left out of the export and will be skipped. Add them again with /radio add.`,
     );
   return { data, lines, warnings };
+}
+
+const isCustom = (id: string) => id.startsWith('custom:');
+
+/**
+ * The default station after an import. Exports leave out a custom default station (custom
+ * stations aren't exported), so a file without a default keeps this server's custom one.
+ */
+function importedDefault(
+  guildId: string,
+  data: GuildExport,
+  guilds: GuildRepository,
+  stations: StationRepository,
+): string | null {
+  const wanted = data.settings.defaultStationId;
+  if (wanted) return stations.getVisibleStation(guildId, wanted) ? wanted : null;
+  const cur = guilds.getSettings(guildId).defaultStationId;
+  return cur && isCustom(cur) && stations.getVisibleStation(guildId, cur) ? cur : null;
+}
+
+/**
+ * The favourites after an import: the file's, then this server's custom-station favourites in
+ * their order. Exports leave those out, so replacing the list would lose them.
+ */
+function importedFavourites(
+  guildId: string,
+  data: GuildExport,
+  guilds: GuildRepository,
+  stations: StationRepository,
+): string[] {
+  const ids = data.favourites.filter((id) => stations.getVisibleStation(guildId, id));
+  const kept = guilds.listFavourites(guildId).filter((id) => isCustom(id) && !ids.includes(id));
+  return [...ids, ...kept];
 }
 
 /** Applies settings, favourites and preferences atomically (custom stations are added separately). */
@@ -230,10 +269,7 @@ export function applyImport(
     allowedVoiceChannelIds: ch(s.allowedVoiceChannelIds),
     djRoleIds: rl(s.djRoleIds),
     memberControlMode: s.memberControlMode,
-    defaultStationId:
-      s.defaultStationId && stations.getVisibleStation(guildId, s.defaultStationId)
-        ? s.defaultStationId
-        : null,
+    defaultStationId: importedDefault(guildId, data, guilds, stations),
     preferredVoiceChannelId:
       s.preferredVoiceChannelId && existingChannelIds.has(s.preferredVoiceChannelId)
         ? s.preferredVoiceChannelId
@@ -252,10 +288,7 @@ export function applyImport(
   };
   transaction(() => {
     guilds.updateSettings(guildId, patch);
-    guilds.setFavourites(
-      guildId,
-      data.favourites.filter((id) => stations.getVisibleStation(guildId, id)),
-    );
+    guilds.setFavourites(guildId, importedFavourites(guildId, data, guilds, stations));
     for (const p of data.sourcePreferences) {
       const src = stations.getSource(p.sourceId);
       if (src && src.stationId === p.stationId && stations.getVisibleStation(guildId, p.stationId))

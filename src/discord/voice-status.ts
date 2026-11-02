@@ -46,6 +46,11 @@ export class VoiceStatusUpdater {
   readonly #log: Logger;
   /** What each server's channel was last set to (or last attempted). */
   readonly #sent = new Map<string, { channelId: string; text: string }>();
+  /**
+   * Counts each server's `clear()` calls. `#update()` works from a snapshot and waits for each
+   * request in turn, so a server that left meanwhile must not get a status set after its clear.
+   */
+  readonly #cleared = new Map<string, number>();
 
   constructor(deps: VoiceStatusDeps) {
     this.#d = deps;
@@ -71,26 +76,38 @@ export class VoiceStatusUpdater {
 
   async #update(): Promise<void> {
     const seen = new Set<string>();
-    for (const st of this.#d.sessions()) {
+    const sessions = this.#d.sessions();
+    const generation = new Map(sessions.map((st) => [st.guildId, this.#cleared.get(st.guildId) ?? 0]));
+    const stale = (guildId: string) => (this.#cleared.get(guildId) ?? 0) !== generation.get(guildId);
+    for (const st of sessions) {
       if (!st.channelId) continue;
       seen.add(st.guildId);
+      if (stale(st.guildId)) continue;
       const want =
         this.#d.enabled(st.guildId) && st.stationId ? voiceStatusText(st, this.#d.station(st.stationId)) : '';
       const last = this.#sent.get(st.guildId);
       // The bot moved: clear the channel it left before setting the new one.
-      if (last && last.channelId !== st.channelId) await this.clear(st.guildId, last.channelId);
+      if (last && last.channelId !== st.channelId) await this.#clear(st.guildId, last.channelId);
       const prev = this.#sent.get(st.guildId);
       if (prev?.text === want || (!prev && want === '')) continue;
+      // The bot may have left this channel while the requests before this one were sent.
+      if (stale(st.guildId)) continue;
       await this.#set(st.guildId, st.channelId, want);
     }
     // Sessions that left their channel: Discord may refuse once the bot is gone, which is fine.
     for (const [guildId, last] of this.#sent) {
-      if (!seen.has(guildId)) await this.clear(guildId, last.channelId);
+      if (!seen.has(guildId)) await this.#clear(guildId, last.channelId);
     }
   }
 
   /** Clears the status the bot set in a channel it is about to leave (best effort). */
   async clear(guildId: string, channelId: string): Promise<void> {
+    // Even with nothing set yet: an update already under way must not set one after this.
+    this.#cleared.set(guildId, (this.#cleared.get(guildId) ?? 0) + 1);
+    await this.#clear(guildId, channelId);
+  }
+
+  async #clear(guildId: string, channelId: string): Promise<void> {
     const last = this.#sent.get(guildId);
     if (!last || last.channelId !== channelId) return;
     this.#sent.delete(guildId);

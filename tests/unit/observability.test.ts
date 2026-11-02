@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import type { Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import {
   startDiagnosticsServer,
   writeHeartbeat,
 } from '../../src/observability/health.ts';
-import { safeErr } from '../../src/observability/logger.ts';
+import { type Logger, safeErr } from '../../src/observability/logger.ts';
 import { Metrics, Ring } from '../../src/observability/metrics.ts';
 import { RadioError } from '../../src/shared/errors.ts';
 import { memoryDb, silentLogger } from '../helpers.ts';
@@ -77,7 +77,7 @@ describe('local diagnostics endpoint', () => {
   });
 
   it('serves only GET /healthz and /diagnostics on 127.0.0.1', async () => {
-    server = startDiagnosticsServer(0, () => ({ activeStreams: 2 }));
+    server = startDiagnosticsServer(0, silentLogger(), () => ({ activeStreams: 2 }));
     await new Promise<void>((r) => (server!.listening ? r() : server!.once('listening', () => r())));
     const addr = server.address() as AddressInfo;
     expect(addr.address).toBe('127.0.0.1');
@@ -89,6 +89,23 @@ describe('local diagnostics endpoint', () => {
     expect(await (await fetch(`${base}/diagnostics`)).json()).toEqual({ activeStreams: 2 });
     expect((await fetch(`${base}/other`)).status).toBe(404);
     expect((await fetch(`${base}/healthz`, { method: 'POST' })).status).toBe(404);
+  });
+
+  it('logs a warning and carries on when the port is already in use', async () => {
+    const occupier = createServer();
+    await new Promise<void>((r) => occupier.listen(0, '127.0.0.1', () => r()));
+    try {
+      const { port } = occupier.address() as AddressInfo;
+      const logger = silentLogger();
+      const warned = new Promise<unknown>((r) => vi.spyOn(logger, 'warn').mockImplementation((o) => r(o)));
+      server = startDiagnosticsServer(port, logger, () => ({}));
+      // Without a listener, the 'error' event would be an uncaught exception and stop the bot.
+      expect(server.listenerCount('error')).toBeGreaterThan(0);
+      expect(await warned).toMatchObject({ port, err: { code: 'EADDRINUSE' } });
+      expect(server.listening).toBe(false);
+    } finally {
+      await new Promise<void>((r) => occupier.close(() => r()));
+    }
   });
 });
 
@@ -192,6 +209,25 @@ describe('notification channel notices (FR-008)', () => {
     t.notifier.close();
     expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
+  });
+
+  it('redacts URLs with tokens when logging a notice it could not deliver', async () => {
+    const { guilds } = memoryDb();
+    guilds.updateSettings(GUILD, { notificationChannelId: '223456789012345678' });
+    const client = {
+      channels: {
+        fetch: async () => {
+          throw new Error('request to https://discord.example.com/api?token=SECRET123 failed');
+        },
+      },
+    } as unknown as Client;
+    const debug = vi.fn();
+    const logger = { child: () => ({ debug, isLevelEnabled: () => true }) } as unknown as Logger;
+    const notifier = new Notifier(client, guilds, logger);
+    notifier.notify(notice('failover', 'x'));
+    await vi.waitFor(() => expect(debug).toHaveBeenCalledOnce());
+    expect(JSON.stringify(debug.mock.calls)).not.toContain('SECRET123');
+    notifier.close();
   });
 
   it('stays silent without a notification channel or when the channel belongs to another server', async () => {

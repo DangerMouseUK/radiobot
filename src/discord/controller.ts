@@ -8,6 +8,7 @@ import {
   ButtonStyle,
   ChannelType,
   type ChatInputCommandInteraction,
+  DiscordAPIError,
   EmbedBuilder,
   embedLength,
   type Guild,
@@ -17,6 +18,7 @@ import {
   type MessageComponentInteraction,
   MessageFlags,
   PermissionFlagsBits,
+  RESTJSONErrorCodes,
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { resolveStation, searchStations } from '../catalogue/search.ts';
@@ -90,8 +92,11 @@ const DESIRED_LABEL: Record<DesiredState, string> = {
   kicked: 'stay out of voice (a moderator disconnected it)',
 };
 
-/** Open browse lists kept for their Next, Previous and Favourites buttons (each expires after 15 min). */
+/** Open browse lists kept for their Next, Previous and Favourites buttons (each expires 15 min after last use). */
 const MAX_BROWSE_LISTS = 500;
+
+/** Availabilities that Next and Previous may move to. */
+const PLAYABLE: ReadonlySet<string> = new Set(['available', 'degraded', 'unverified']);
 
 /** The `default_station` choice that clears the default (not a valid station ID). */
 const NO_DEFAULT_STATION = 'none';
@@ -116,8 +121,21 @@ export function describeInteraction(i: Interaction): string {
   return `type ${i.type}`;
 }
 
+/** With nothing typed yet: the default station, then the favourites, then everything else. */
+function defaultSuggestions(stations: Station[], defaultId: string | null, favourites: string[]): Station[] {
+  const top = [...new Set([defaultId, ...favourites])]
+    .map((id) => stations.find((s) => s.id === id))
+    .filter((s): s is Station => Boolean(s));
+  const shown = new Set(top.map((s) => s.id));
+  return [...top, ...stations.filter((s) => !shown.has(s.id))].slice(0, 25);
+}
+
+/** An open browse list; `before` is the category to go back to from the Favourites filter. */
+type OpenBrowse = BrowseState & { expires: number; before?: string | null };
+
 interface PendingImport {
-  guildId: string;
+  /** The token its Apply and Cancel buttons carry. */
+  token: string;
   userId: string;
   data: GuildExport;
   expires: number;
@@ -127,7 +145,8 @@ interface PendingImport {
 export class RadioController {
   readonly #ctx: AppContext;
   /** Open browse lists; `before` is the category to go back to from the Favourites filter. */
-  readonly #browse = new Map<string, BrowseState & { expires: number; before?: string | null }>();
+  readonly #browse = new Map<string, OpenBrowse>();
+  /** At most one import preview per server, by guild ID: a newer one replaces it. */
   readonly #imports = new Map<string, PendingImport>();
 
   constructor(ctx: AppContext) {
@@ -169,6 +188,15 @@ export class RadioController {
   }
 
   async #fail(i: Interaction<'cached'>, err: unknown): Promise<void> {
+    // Suggestions that arrive after Discord stopped waiting (about 3 s) are normal, not a fault.
+    if (
+      i.isAutocomplete() &&
+      err instanceof DiscordAPIError &&
+      err.code === RESTJSONErrorCodes.UnknownInteraction
+    ) {
+      this.#ctx.logger.debug({ guildId: i.guildId }, 'suggestions expired before they were sent');
+      return;
+    }
     const message = isRadioError(err)
       ? err.userMessage
       : 'Something went wrong. The details were logged for the person who runs this bot.';
@@ -285,11 +313,12 @@ export class RadioController {
     }
     let stations = visibleStations(this.#ctx, i.guildId);
     if (sub === 'edit' || sub === 'remove') stations = stations.filter((s) => s.provider === 'custom');
+    const settings = this.#ctx.guilds.getSettings(i.guildId);
+    const favourites = this.#ctx.guilds.listFavourites(i.guildId);
     const hits = q
       ? searchStations(stations, q, 25).map((h) => h.station)
-      : this.#defaultSuggestions(i.guildId, stations);
-    const settings = this.#ctx.guilds.getSettings(i.guildId);
-    const fav = new Set(this.#ctx.guilds.listFavourites(i.guildId));
+      : defaultSuggestions(stations, settings.defaultStationId, favourites);
+    const fav = new Set(favourites);
     const choices = hits.map((s) => {
       const marks = [
         s.provider === 'custom' ? 'custom' : null,
@@ -308,19 +337,6 @@ export class RadioController {
     if (focused.name === 'default_station' && (!q || 'no default station'.includes(q.toLowerCase())))
       choices.unshift({ name: 'No default station (clear it)', value: NO_DEFAULT_STATION });
     await i.respond(choices.slice(0, 25));
-  }
-
-  /** With nothing typed yet: the default station, then the favourites, then everything else. */
-  #defaultSuggestions(guildId: string, stations: Station[]): Station[] {
-    const first = [
-      this.#ctx.guilds.getSettings(guildId).defaultStationId,
-      ...this.#ctx.guilds.listFavourites(guildId),
-    ];
-    const top = [...new Set(first)]
-      .map((id) => stations.find((s) => s.id === id))
-      .filter((s): s is Station => Boolean(s));
-    const shown = new Set(top.map((s) => s.id));
-    return [...top, ...stations.filter((s) => !shown.has(s.id))].slice(0, 25);
   }
 
   // ------------------------------------------------------------------ slash commands
@@ -577,17 +593,22 @@ export class RadioController {
     if (!target) return this.#deny(i, 'Join a voice channel first, or pick one with the channel option.');
     const locked = lockConflict(settings, explicit, target);
     if (locked) return this.#deny(i, locked);
-    const session = this.#ctx.sessions.get(i.guildId);
-    if (session?.connected && session.channelId === target) {
-      await i.reply({
-        embeds: [infoEmbed('Already here', `Radio Bot is already in <#${target}>.`)],
-        flags: EPHEMERAL,
-      });
-      return;
-    }
     const def = settings.defaultStationId
       ? visibleStation(this.#ctx, i.guildId, settings.defaultStationId)
       : null;
+    const session = this.#ctx.sessions.get(i.guildId);
+    if (session?.connected && session.channelId === target) {
+      // Still in the channel after /radio stop: start the default station, as a fresh join would.
+      const desired = this.#ctx.guilds.getIntent(i.guildId)?.desiredState;
+      const playing = desired === 'playing' || desired === 'paused_empty';
+      if (!def || playing) {
+        await i.reply({
+          embeds: [infoEmbed('Already here', `Radio Bot is already in <#${target}>.`)],
+          flags: EPHEMERAL,
+        });
+        return;
+      }
+    }
     // Playing the default station takes play tokens in #play, so only a bare join takes them here.
     if (def) {
       await this.#play(
@@ -649,7 +670,12 @@ export class RadioController {
   /** What the person looking at a sources view may change: only offer controls they can use. */
   #who(i: Cmd | Comp): { admin: boolean; control: boolean } {
     const channel = this.#ctx.sessions.get(i.guildId)?.channelId ?? null;
-    return { admin: this.#auth(i, 'admin').ok, control: this.#auth(i, 'control', channel).ok };
+    const auth = authContext(this.#ctx, i);
+    const settings = this.#ctx.guilds.getSettings(i.guildId);
+    return {
+      admin: authorize(auth, settings, 'admin').ok,
+      control: authorize(auth, settings, 'control', channel).ok,
+    };
   }
 
   #sourcesView(
@@ -673,7 +699,7 @@ export class RadioController {
     const components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
     // Anyone who may control the radio can play this station from another usable source while it
     // plays. Only usable sources are offered, and the click is checked again on the server.
-    const pinned = ctx.guilds.getPreference(guildId, st.id)?.mode === 'pin';
+    const pinned = pref?.mode === 'pin';
     if (who.control && (who.admin || !pinned) && live.playingId && selection.ordered.length > 1) {
       components.push(
         row(
@@ -1337,6 +1363,7 @@ export class RadioController {
     if (!['cdn.discordapp.com', 'media.discordapp.net'].includes(url.hostname)) {
       return this.#deny(i, 'That attachment is not stored on Discord, so it was not read.');
     }
+    this.#rate(this.#ctx.limits.importGuild, i.guildId, 'imports');
     await i.deferReply({ flags: EPHEMERAL });
     const { text } = await this.#ctx.http.fetchText(att.url, { maxBytes: 256 * 1024 });
     let data: GuildExport;
@@ -1350,8 +1377,9 @@ export class RadioController {
     const roles = new Set(i.guild.roles.cache.keys());
     const preview = previewImport(i.guildId, data, this.#ctx.guilds, this.#ctx.stations, channels, roles);
     const token = randomBytes(6).toString('base64url');
-    this.#imports.set(token, {
-      guildId: i.guildId,
+    // Replaces any earlier preview for this server, whose buttons then say it has expired.
+    this.#imports.set(i.guildId, {
+      token,
       userId: i.user.id,
       data,
       expires: Date.now() + 10 * 60_000,
@@ -1671,18 +1699,16 @@ export class RadioController {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
           const [token, p] = arg.split(':');
-          const state = this.#browse.get(token ?? '');
-          if (!state || state.expires < Date.now())
-            return this.#deny(i, 'This station list has expired. Run /radio browse again.');
+          const state = this.#useBrowse(token ?? '');
+          if (!state) return this.#deny(i, 'This station list has expired. Run /radio browse again.');
           await i.update(browseView(this.#ctx, i.guildId, state, token!, Number((p ?? 'p0').slice(1)) || 0));
           return;
         }
         case 'bfav': {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
-          const state = this.#browse.get(arg);
-          if (!state || state.expires < Date.now())
-            return this.#deny(i, 'This station list has expired. Run /radio browse again.');
+          const state = this.#useBrowse(arg);
+          if (!state) return this.#deny(i, 'This station list has expired. Run /radio browse again.');
           if (state.category === 'favourites') state.category = state.before ?? null;
           else {
             state.before = state.category;
@@ -1740,24 +1766,30 @@ export class RadioController {
         case 'next':
         case 'prev':
           return await this.#step(i, action === 'next' ? 1 : -1);
-        case 'fav': {
+        case 'fav':
+        case 'unfav': {
           const a = this.#auth(i, 'control');
           if (!a.ok) return this.#deny(i, a.reason);
           const st = visibleStation(this.#ctx, i.guildId, arg);
           if (!st) return this.#deny(i, 'That station is no longer available.');
-          const on = this.#ctx.guilds.toggleFavourite(i.guildId, st.id);
+          // Each button sets one state, so a double click or an old card never undoes the other.
+          const want = action === 'fav';
+          const was = this.#ctx.guilds.isFavourite(i.guildId, st.id);
+          if (was !== want) this.#ctx.guilds.toggleFavourite(i.guildId, st.id);
+          const text =
+            was === want
+              ? want
+                ? `${st.displayName} is already one of this server’s favourites.`
+                : `${st.displayName} isn’t one of this server’s favourites, so nothing changed.`
+              : want
+                ? `${st.displayName} is now one of this server’s favourites. Favourites come first in the \`/radio play\` suggestions, have their own list in \`/radio browse\` (the Favourites button), and once you have two or more, Next and Previous step through them while one is playing.`
+                : `${st.displayName} is no longer one of this server’s favourites.`;
           await i.reply({
-            embeds: [
-              infoEmbed(
-                'Favourites',
-                on
-                  ? `${st.displayName} is now one of this server’s favourites. Favourites come first in the \`/radio play\` suggestions, have their own list in \`/radio browse\` (the Favourites button), and once you have two or more, Next and Previous step through them while one is playing.`
-                  : `${st.displayName} is no longer one of this server’s favourites.`,
-                COLOR.ok,
-              ),
-            ],
+            embeds: [infoEmbed('Favourites', text, COLOR.ok)],
             flags: EPHEMERAL,
           });
+          // The control panel shows Favourite or Unfavourite for the playing station: redraw it.
+          if (was !== want) await this.refreshPanel(i.guildId);
           return;
         }
         case 'srcs':
@@ -1793,6 +1825,19 @@ export class RadioController {
     }
   }
 
+  /**
+   * An open browse list, kept for another 15 minutes from now (its redrawn buttons last as long),
+   * and moved to the newest end so the count limit drops lists nobody is using first.
+   */
+  #useBrowse(token: string): OpenBrowse | null {
+    const state = this.#browse.get(token);
+    if (!state || state.expires < Date.now()) return null;
+    state.expires = Date.now() + 15 * 60_000;
+    this.#browse.delete(token);
+    this.#browse.set(token, state);
+    return state;
+  }
+
   #isPanel(i: Comp): boolean {
     return this.#ctx.guilds.getSettings(i.guildId).panelMessageId === i.message.id;
   }
@@ -1805,16 +1850,23 @@ export class RadioController {
     const all = visibleStations(ctx, i.guildId);
     const fav = ctx.guilds.listFavourites(i.guildId);
     const provider = current ? (ctx.stations.getStation(current)?.provider ?? null) : all[0]?.provider;
-    const ring = (
-      fav.length >= 2 && current && fav.includes(current)
-        ? fav.map((id) => all.find((s) => s.id === id)).filter((s): s is Station => Boolean(s))
-        : all.filter((s) => s.provider === provider)
-    ).filter((s) => ['available', 'degraded', 'unverified'].includes(ctx.sources.availability(s)));
+    let ring: Station[];
+    if (fav.length >= 2 && current && fav.includes(current)) {
+      const byId = new Map(all.map((s) => [s.id, s]));
+      ring = fav.map((id) => byId.get(id)).filter((s): s is Station => Boolean(s));
+    } else ring = all.filter((s) => s.provider === provider);
+    // Walk from the current station and check only until a playable one turns up: checking
+    // every station of a big pack first would hold up voice packets.
     const idx = current ? ring.findIndex((s) => s.id === current) : -1;
-    if (ring.length === 0 || (ring.length === 1 && idx === 0))
-      return this.#deny(i, 'There is no other playable station to move to.');
+    const n = ring.length;
     // From outside the ring, Next starts at the first station and Previous at the last.
-    const next = idx === -1 ? ring.at(dir === 1 ? 0 : -1)! : ring[(idx + dir + ring.length) % ring.length]!;
+    const from = idx === -1 ? (dir === 1 ? 0 : n - 1) : idx + dir;
+    let next: Station | null = null;
+    for (let k = 0; k < (idx === -1 ? n : n - 1) && !next; k++) {
+      const s = ring[(((from + k * dir) % n) + n) % n]!;
+      if (PLAYABLE.has(ctx.sources.availability(s))) next = s;
+    }
+    if (!next) return this.#deny(i, 'There is no other playable station to move to.');
     await this.#play(
       i,
       next,
@@ -1887,11 +1939,11 @@ export class RadioController {
   async #importComponent(i: Comp, apply: boolean, token: string): Promise<void> {
     const a = this.#auth(i, 'admin');
     if (!a.ok) return this.#deny(i, a.reason);
-    const pending = this.#imports.get(token);
-    this.#imports.delete(token);
-    if (!pending || pending.guildId !== i.guildId || pending.expires < Date.now()) {
+    const pending = this.#imports.get(i.guildId);
+    if (!pending || pending.token !== token || pending.expires < Date.now()) {
       return this.#deny(i, 'This import preview expired. Run /radio import again.');
     }
+    this.#imports.delete(i.guildId);
     if (!apply) {
       await i.update({
         embeds: [infoEmbed('Import cancelled', 'Nothing was changed.', COLOR.neutral)],

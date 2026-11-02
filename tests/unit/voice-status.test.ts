@@ -168,6 +168,28 @@ describe('voice channel status updater', () => {
     expect(t.sent).toEqual([['voice-1', '📻 FG DJ RADIO · A']]);
   });
 
+  it('never sets a status for a server that left while an earlier request was waiting', async () => {
+    const sent: Array<[string, string]> = [];
+    let release = () => {};
+    const u = new VoiceStatusUpdater({
+      sessions: () => [status(), status({ guildId: 'g2', channelId: 'voice-2' })],
+      station: () => station('My Station'),
+      enabled: () => true,
+      allowed: () => true,
+      send: async (channelId, text) => {
+        // The first server's request is slow; the second server leaves meanwhile.
+        if (channelId === 'voice-1') await new Promise<void>((resolve) => (release = resolve));
+        sent.push([channelId, text]);
+      },
+      logger: silentLogger(),
+    });
+    const running = u.update();
+    await u.clear('g2', 'voice-2');
+    release();
+    await running;
+    expect(sent).toEqual([['voice-1', '📻 My Station']]);
+  });
+
   it('clears everything it set on shutdown', async () => {
     const t = setup();
     t.set([status(), status({ guildId: 'g2', channelId: 'voice-9' })]);

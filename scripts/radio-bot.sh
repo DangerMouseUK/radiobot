@@ -134,8 +134,14 @@ container_state() { # running | restarting | exited | missing
   "${DOCKER[@]}" inspect -f '{{.State.Status}}' "$SERVICE" 2>/dev/null || echo missing
 }
 
-require_running() {
-  [ "$(container_state)" = running ] || die "Radio Bot is not running. Start it with: radio-bot start"
+# Runs a command in the bot's container at the lowest CPU priority, so it can't hold up the stream.
+exec_low() { compose exec -T "$SERVICE" nice -n 19 "$@"; }
+
+# Copies the backups in the bot's data to backups/. docker cp also works while the container is
+# stopped or restarting, so backups can be fetched from a bot that won't start.
+copy_backups_out() {
+  mkdir -p backups && chmod 700 backups &&
+    "${DOCKER[@]}" cp "$SERVICE:/app/data/backups/." backups/ >/dev/null
 }
 
 # ---------------------------------------------------------------- versions
@@ -149,6 +155,37 @@ latest_release() { # newest vX.Y.Z tag, ignoring pre-releases
 }
 
 on_release() { git describe --tags --exact-match >/dev/null 2>&1; }
+
+# `update` writes this file before switching versions and the first healthy start removes it, so an
+# update that stopped halfway (a failed download, Ctrl+C) can be finished by running `update` again.
+PENDING=.update-pending
+
+running_image() { "${DOCKER[@]}" inspect -f '{{.Config.Image}}' "$SERVICE" 2>/dev/null || true; }
+wanted_image() { compose config --images "$SERVICE" 2>/dev/null | head -n 1 || true; }
+
+# True when the checked-out version isn't the one running: an update that didn't finish.
+update_pending() {
+  [ ! -f "$PENDING" ] || return 0
+  local running wanted
+  running=$(running_image)
+  [ -n "$running" ] || return 1
+  wanted=$(wanted_image)
+  [ -n "$wanted" ] && [ "$running" != "$wanted" ]
+}
+
+pending_from() { # the version an unfinished update started from, as far as it is known
+  local from='' image
+  [ ! -f "$PENDING" ] || from=$(head -n 1 "$PENDING")
+  if [ -z "$from" ]; then
+    image=$(running_image)
+    from=${image##*:}
+  fi
+  case "$from" in
+    '' | *[!A-Za-z0-9._/-]*) from=old ;;
+    [0-9]*) from="v$from" ;; # images are tagged 1.2.3, releases v1.2.3
+  esac
+  printf '%s\n' "$from"
+}
 
 # Pulls the published image for a release, or builds it here when there is none (or on a branch).
 get_image() {
@@ -224,11 +261,12 @@ invite_url() {
 # ---------------------------------------------------------------- health
 
 # Healthy, and the heartbeat was written by the container's current run, not an earlier one.
+# The same checks as the image's HEALTHCHECK (scripts/healthcheck.ts): an older heartbeat has no ffmpegOk.
 healthy_since() {
-  compose exec -T "$SERVICE" node -e '
+  exec_low node -e '
     const h = JSON.parse(require("node:fs").readFileSync("/app/data/health.json", "utf8"));
     const fresh = Date.parse(h.at) > Date.parse(process.argv[1]) && Date.now() - Date.parse(h.at) < 90000;
-    process.exit(fresh && h.discordReady && h.dbOk ? 0 : 1);
+    process.exit(fresh && h.discordReady && h.dbOk && h.ffmpegOk !== false ? 0 : 1);
   ' "$1" >/dev/null 2>&1
 }
 
@@ -248,6 +286,7 @@ wait_until_healthy() {
       running)
         if healthy_since "$started"; then
           ok "Radio Bot is online."
+          rm -f "$PENDING" # the checked-out version is the one running now
           return 0
         fi
         ;;
@@ -332,7 +371,7 @@ cmd_install() {
   install_shortcut
   if wait_until_healthy; then
     step "Last step: invite the bot to your Discord server"
-    say "Open this link, pick your server and click Authorise:"
+    say "Open this link, pick your server and click Authorize:"
     say ''
     say "  $(invite_url)"
     say ''
@@ -351,7 +390,7 @@ cmd_update() {
     die "Files in $DIR were edited, so updating could overwrite them. Put local changes in compose.override.yaml, then run: git -C \"$DIR\" checkout -- ."
   step "Checking for a new version"
   git fetch --quiet --tags --force origin || die "Couldn't reach GitHub to check for updates."
-  local from to
+  local from to resume=''
   from=$(current_version)
   to=${1:-$(latest_release)}
   if [ -z "$to" ]; then
@@ -359,19 +398,37 @@ cmd_update() {
     to=$from # tracking a branch: follow it
   fi
   if [ "$to" = "$from" ] && on_release; then
-    ok "Already on the newest version ($from)."
-    return
+    if ! update_pending; then
+      ok "Already on the newest version ($from)."
+      return
+    fi
+    # An earlier update switched to $to but stopped before the bot was restarted on it.
+    resume=1
+    from=$(pending_from)
+    warn "The last update to $to didn't finish, so the bot may still be running $from. Finishing it now."
   fi
   if [ "$(container_state)" = running ]; then
     warn_if_playing || die "Cancelled; nothing was changed."
     step "Backing up the database first"
-    compose exec -T "$SERVICE" node dist/scripts/backup.js
+    exec_low node dist/scripts/backup.js ||
+      die "Couldn't back up the database, so nothing was changed. The lines above say why."
+    # A copy outside the container, for putting it back with `radio-bot restore` if the update goes wrong.
+    if copy_backups_out; then
+      ok "Backups copied to $DIR/backups/"
+    else
+      warn "Couldn't copy the backups to $DIR/backups/; they are still in the bot's data."
+    fi
   fi
-  step "Updating $from → $to"
-  if git show-ref --verify --quiet "refs/remotes/origin/$to"; then
-    git checkout --quiet "$to" && git merge --quiet --ff-only "origin/$to"
-  else
-    git -c advice.detachedHead=false checkout --quiet "$to" || die "Version $to was not found."
+  printf '%s\n' "$from" >"$PENDING"
+  if [ -z "$resume" ]; then
+    step "Updating $from → $to"
+    if git show-ref --verify --quiet "refs/remotes/origin/$to"; then
+      { git checkout --quiet "$to" && git merge --quiet --ff-only "origin/$to"; } ||
+        { rm -f "$PENDING" && die "Couldn't switch to the newest $to; nothing was restarted. The lines above say why."; }
+    else
+      git -c advice.detachedHead=false checkout --quiet "$to" ||
+        { rm -f "$PENDING" && die "Version $to was not found."; }
+    fi
   fi
   # The rest runs from the updated copy of this script. "warned" tells it the warning was shown.
   exec bash "$SELF" __finish-update "$from" warned
@@ -379,6 +436,8 @@ cmd_update() {
 
 # Updates started by an older copy of this script arrive here without the warning, so it is shown now.
 cmd_finish_update() {
+  # An older copy of this script doesn't write the marker, so it is written here as well.
+  [ -z "${1:-}" ] || printf '%s\n' "$1" >"$PENDING"
   ensure_docker
   [ "${2:-}" = warned ] || [ "$(container_state)" != running ] || warn_if_playing no-ask || true
   get_image
@@ -444,13 +503,40 @@ remove_old_images() {
 
 cmd_backup() {
   ensure_docker
-  require_running
-  step "Backing up the database"
-  compose exec -T "$SERVICE" node dist/scripts/backup.js
-  mkdir -p backups
-  compose cp "$SERVICE:/app/data/backups/." backups/ >/dev/null
-  chmod 700 backups
+  case "$(container_state)" in
+    running)
+      step "Backing up the database"
+      # A bot that is crash-looping can look "running" for a moment; its earlier backups still count.
+      exec_low node dist/scripts/backup.js ||
+        warn "Couldn't make a new backup (the lines above say why). Copying the backups it made earlier instead."
+      ;;
+    missing) die "There is no Radio Bot container to copy backups from. Start the bot with: radio-bot start" ;;
+    *)
+      # A bot that won't start can still hand over the backups it made earlier, such as the one
+      # taken just before an update changed the database.
+      warn "Radio Bot isn't running, so no new backup can be made. Copying the backups it made earlier instead."
+      ;;
+  esac
+  copy_backups_out || die "Couldn't copy the backups out of the bot's data (it may not have made any yet)."
   ok "Backups copied to $DIR/backups/ — keep a copy somewhere other than this computer too."
+}
+
+# Every SQLite database starts with these 16 bytes: "SQLite format 3" and a NUL.
+is_sqlite_file() {
+  [ "$(od -An -tx1 -N16 "$1" 2>/dev/null | tr -d '[:space:]')" = 53514c69746520666f726d6174203300 ]
+}
+
+restore_failed() { # restore_failed REASON [interrupted]: starts the bot again, then stops with the reason
+  trap - INT TERM
+  warn "$1"
+  local what="The backup wasn't restored."
+  # Ctrl+C can arrive after the copy has finished, so whether it was restored isn't known.
+  [ -z "${2:-}" ] || what="The backup may or may not have been restored; to be sure, run the same restore again."
+  if compose up -d >/dev/null 2>&1; then
+    if [ -n "${2:-}" ]; then die "$what Radio Bot has been started again."; fi
+    die "$what Radio Bot has been started again with the data it had."
+  fi
+  die "$what Radio Bot couldn't be started again. Try: radio-bot start"
 }
 
 cmd_restore() {
@@ -460,18 +546,32 @@ cmd_restore() {
   case "$file" in /*) ;; *) [ ! -f "$START_DIR/$file" ] || file="$START_DIR/$file" ;; esac
   [ -f "$file" ] || die "No such file: $file"
   file=$(resolve "$file")
+  is_sqlite_file "$file" ||
+    die "$(basename "$file") isn't a Radio Bot backup (a .sqlite file), so nothing was changed."
   ensure_docker
   warn "This replaces all of the bot's current settings and data with the backup."
   confirm "Restore $(basename "$file")?" n || die "Cancelled."
   if [ "$(container_state)" = running ]; then
     step "Backing up the current database first"
-    compose exec -T "$SERVICE" node dist/scripts/backup.js
+    if ! exec_low node dist/scripts/backup.js; then
+      # Normal for a bot that can't start (after going back to an older version, for example).
+      warn "Couldn't back up the current database (the lines above say why)."
+      confirm "Restore anyway, without a backup of the current data?" n || die "Cancelled; nothing was changed."
+    fi
   fi
   step "Restoring"
-  compose stop "$SERVICE" >/dev/null
-  compose run --rm --no-deps -T -v "$file:/restore.sqlite:ro" --entrypoint sh "$SERVICE" -c \
-    'cp /restore.sqlite /app/data/radio-bot.sqlite && rm -f /app/data/radio-bot.sqlite-wal /app/data/radio-bot.sqlite-shm'
-  compose up -d
+  # From here until the bot is started again, a failure or Ctrl+C still brings it back up.
+  trap 'restore_failed "Restoring was interrupted." interrupted' INT TERM
+  compose stop "$SERVICE" >/dev/null || restore_failed "Couldn't stop Radio Bot."
+  # Copied next to the database first, then swapped in, so a failed copy leaves the current data alone.
+  # shellcheck disable=SC2016 # $d is expanded by the container's shell
+  compose run --rm --no-deps -T -v "$file:/restore.sqlite:ro" --entrypoint sh "$SERVICE" -c '
+    d=/app/data/radio-bot.sqlite
+    cp /restore.sqlite "$d.restoring" && rm -f "$d-wal" "$d-shm" && mv -f "$d.restoring" "$d" ||
+      { rm -f "$d.restoring"; exit 1; }
+  ' || restore_failed "Couldn't copy the backup into the bot's data."
+  trap - INT TERM
+  compose up -d || die "Couldn't start Radio Bot again. Try: radio-bot start"
   wait_until_healthy || exit 1
   ok "Restored."
 }
@@ -499,11 +599,13 @@ cmd_status() {
   say "State:    $(container_state)"
   if [ "$(container_state)" = running ]; then
     printf 'Health:   '
-    compose exec -T "$SERVICE" node dist/scripts/healthcheck.js || true
+    exec_low node dist/scripts/healthcheck.js || true
   fi
   local latest
   latest=$(latest_release)
-  if [ -n "$latest" ] && [ "$latest" != "$(current_version)" ]; then
+  if update_pending; then
+    say "Update:   the last update to $(current_version) didn't finish (run: radio-bot update)"
+  elif [ -n "$latest" ] && [ "$latest" != "$(current_version)" ]; then
     say "Update:   $latest is available (run: radio-bot update)"
   fi
 }
@@ -514,7 +616,7 @@ cmd_uninstall() {
   confirm "Continue?" n || die "Cancelled."
   local keep=''
   if [ "$(container_state)" = running ] && confirm "Save a copy of the bot's data to your home folder first?" y; then
-    compose exec -T "$SERVICE" node dist/scripts/backup.js >/dev/null
+    exec_low node dist/scripts/backup.js >/dev/null
     keep="$HOME/radio-bot-backup-$(date +%Y%m%d-%H%M%S)"
     mkdir -p "$keep"
     compose cp "$SERVICE:/app/data/backups/." "$keep/" >/dev/null
@@ -558,9 +660,10 @@ ${BOLD}radio-bot${RESET} — manage your Radio Bot install ($DIR)
   ${BOLD}start${RESET} | ${BOLD}stop${RESET} | ${BOLD}restart${RESET}
   ${BOLD}config${RESET}            Edit settings (.env) and restart to apply them
   ${BOLD}invite${RESET}            Print the link that adds the bot to a Discord server
-  ${BOLD}backup${RESET}            Back up the database and copy it to $DIR/backups/
+  ${BOLD}backup${RESET}            Back up the database and copy the backups to $DIR/backups/ (copies only, if the bot is stopped)
   ${BOLD}restore${RESET} FILE      Replace the database with a backup
-  ${BOLD}update${RESET} [vX.Y.Z]   Update to the newest release (or the one named): backs up first, keeps the old log, removes old images
+  ${BOLD}update${RESET} [vX.Y.Z]   Update to the newest release (or the one named): backs up first, keeps the old log, removes old images.
+                    If an update stops halfway, run it again to finish it
   ${BOLD}uninstall${RESET}         Remove the bot, optionally keeping a copy of its data
   ${BOLD}install${RESET}           Set up or repair this install (safe to run again)
   ${BOLD}version${RESET}           Print the installed version
