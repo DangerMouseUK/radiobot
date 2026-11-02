@@ -212,7 +212,7 @@ Per station, in order (§7.4):
 
 1. **Eligible:** enabled, not blocked, identity-verified, successfully probed, not cooling down.
 2. **Transport tier, first:** direct stream (tier 0), then unknown transport (tier 1), then **HLS (tier 2), which is a last resort**. HLS plays only when no direct stream of the station is eligible, even if it measures higher. Segmented delivery makes live playback slower to start, further behind live and less smooth to recover. The explanation states when HLS was chosen only because no direct stream was eligible.
-3. **Fidelity, within the tier:** compare measured evidence. Same codec: a bitrate difference decides when it is 3 % or more between two measured figures, or 15 % or more otherwise. Different codecs are **never** ranked by bitrate. Stereo beats mono; a ≥ 44.1 kHz source beats one below 32 kHz.
+3. **Fidelity, within the tier:** compare measured evidence. Same codec: a bitrate difference decides when it is 3 % or more between two measured figures, or 15 % or more otherwise. Different codecs are **never** ranked by bitrate, with one narrow exception: measured AAC-LC of at least 96 kbps and at least twice the measured HE-AAC rate beats HE-AAC. Stereo beats mono; a ≥ 44.1 kHz source beats one below 32 kHz.
 4. **Stability:** health score difference of 20 points or more.
 5. **Latency:** startup time difference over 1.5 s.
 6. **Catalogue order** as the documented default.

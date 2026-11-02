@@ -77,6 +77,36 @@ function codecFamily(s: StationSource): string {
 
 export type FidelityRelation = 'a' | 'b' | 'equal' | 'inconclusive';
 
+const HE_AAC = new Set(['HE-AAC', 'HE-AACv2']);
+/** The least measured AAC-LC rate that may be ranked above HE-AAC, and by how many times its rate. */
+export const AAC_LC_OVER_HE_MIN_KBPS = 96;
+export const AAC_LC_OVER_HE_RATIO = 2;
+
+/**
+ * The one, deliberately narrow exception to "different codecs are never ranked by bitrate"
+ * (AGENTS.md invariant 8). Both are AAC: HE-AAC encodes only the lower half of the sound and
+ * rebuilds the treble from hints, which wins at low rates but not against a full-rate stream.
+ * So AAC-LC wins only when both rates are measured, AAC-LC is at least 96 kbps and at least twice
+ * the HE-AAC rate. Anything closer, or any other pair of codecs, stays inconclusive.
+ */
+function aacLcOverHeAac(
+  a: StationSource,
+  b: StationSource,
+  fa: string,
+  fb: string,
+): { relation: FidelityRelation; reason: string } | null {
+  const lcIsA = fa === 'AAC-LC' && HE_AAC.has(fb);
+  if (!lcIsA && !(fb === 'AAC-LC' && HE_AAC.has(fa))) return null;
+  const lc = (lcIsA ? a : b).measuredBitrateKbps;
+  const he = (lcIsA ? b : a).measuredBitrateKbps;
+  if (lc === null || he === null || lc < AAC_LC_OVER_HE_MIN_KBPS || lc < AAC_LC_OVER_HE_RATIO * he)
+    return null;
+  return {
+    relation: lcIsA ? 'a' : 'b',
+    reason: `${Math.round(lc)} kbps AAC-LC vs ${Math.round(he)} kbps ${lcIsA ? fb : fa}: AAC-LC at twice the rate or more`,
+  };
+}
+
 /**
  * Compares demonstrated fidelity evidence. Never ranks across codecs by bitrate alone; a
  * clear channel-count or audio-bandwidth (sample-rate) difference is accepted as evidence.
@@ -102,8 +132,14 @@ export function compareFidelity(
   const fa = codecFamily(a);
   const fb = codecFamily(b);
   if (fa === 'unknown' || fb === 'unknown') return { relation: 'inconclusive', reason: 'codec unknown' };
-  if (fa !== fb)
-    return { relation: 'inconclusive', reason: `${fa} vs ${fb}: different codecs are not ranked by bitrate` };
+  if (fa !== fb) {
+    return (
+      aacLcOverHeAac(a, b, fa, fb) ?? {
+        relation: 'inconclusive',
+        reason: `${fa} vs ${fb}: different codecs are not ranked by bitrate`,
+      }
+    );
+  }
   const ba = effectiveBitrate(a);
   const bb = effectiveBitrate(b);
   if (ba.kbps === null || bb.kbps === null)

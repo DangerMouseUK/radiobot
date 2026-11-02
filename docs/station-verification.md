@@ -129,6 +129,7 @@ What counts as verified for a pack source is shared by every server on the insta
    - Stereo beats mono.
    - A clear difference in audio bandwidth counts: one source below 32 kHz and the other at 44.1 kHz or above.
    - **Different codecs are never ranked by bitrate.** AAC against MP3, for example, is "different codecs are not ranked by bitrate". An unknown codec is inconclusive too.
+   - **One narrow exception: AAC-LC against HE-AAC.** Both are AAC, but HE-AAC encodes only the lower half of the sound and rebuilds the treble from hints. That sounds good at low bitrates, but not as good as a full-rate stream. So AAC-LC wins only when both bitrates are measured, and AAC-LC is at least 96 kbps and at least twice the HE-AAC rate (128 against 64, say). Anything closer stays inconclusive, and HE-AAC never wins on bitrate.
    - Within the same codec (AAC-LC, HE-AAC, MP3 and so on each count separately), two **measured** bitrates within 3 % of each other are equal (a measurement is precise, so 112 against 128 kbps is a real difference). Otherwise figures within 15 % are equal, because codec metadata (for AAC only an estimate) and advertised figures are looser. A bigger gap counts only if both figures are measured or from codec metadata; if either is only advertised, the result is inconclusive.
 4. **Reliability.** A difference in health score of 20 points or more decides.
 5. **Start-up time.** A difference of more than 1.5 s in measured start-up time decides.

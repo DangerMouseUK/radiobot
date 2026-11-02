@@ -133,7 +133,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 **Correctness**
 
 7. **The correct station beats the best bitrate.** A source is eligible only if its identity is verified, it is healthy and it is not in cooldown (`src/streams/ranking.ts`). If a station has no eligible source, the bot says so and plays nothing in its place. Don't relax the identity or eligibility gates without an issue first.
-8. **Transport tier comes first:** direct streams (tier 0), then unknown (1), then HLS (2) as a last resort, whatever their bitrate. Within a tier, rank by evidence. Never compare bitrates across codecs.
+8. **Transport tier comes first:** direct streams (tier 0), then unknown (1), then HLS (2) as a last resort, whatever their bitrate. Within a tier, rank by evidence. Never compare bitrates across codecs, with one deliberately narrow exception: AAC-LC beats HE-AAC (v1 or v2) when both rates are measured and AAC-LC is at least 96 kbps and at least twice the HE-AAC rate (`aacLcOverHeAac()` in `src/streams/ranking.ts`). Never widen it without an issue first.
 9. **No claim without evidence.** User-facing text distinguishes `measured`, `codec-metadata`, `manifest`, `advertised` and `unknown` bitrates, and says "not conclusively determined" when that's the truth. Never claim "HD" or "lossless".
 10. **No recording.** Probe samples are held in memory and then discarded. The bot is self-deafened and never receives voice audio.
 
