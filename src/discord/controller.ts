@@ -585,11 +585,10 @@ export class RadioController {
       });
       return;
     }
-    this.#rate(this.#ctx.limits.playUser, i.user.id, 'join requests');
-    this.#rate(this.#ctx.limits.playGuild, i.guildId, 'join requests');
     const def = settings.defaultStationId
       ? visibleStation(this.#ctx, i.guildId, settings.defaultStationId)
       : null;
+    // Playing the default station takes play tokens in #play, so only a bare join takes them here.
     if (def) {
       await this.#play(
         i,
@@ -600,6 +599,8 @@ export class RadioController {
       );
       return;
     }
+    this.#rate(this.#ctx.limits.playUser, i.user.id, 'join requests');
+    this.#rate(this.#ctx.limits.playGuild, i.guildId, 'join requests');
     await i.deferReply();
     await this.#ctx.sessions.ensure(i.guildId).join(target);
     await i.editReply({
@@ -705,7 +706,7 @@ export class RadioController {
       if (live.playingId && (pref?.mode !== 'prefer' || pref.sourceId !== live.playingId)) {
         buttons.push(
           new ButtonBuilder()
-            .setCustomId(ctx.ids.make(guildId, 'srcpref', st.id))
+            .setCustomId(ctx.ids.make(guildId, 'spref', st.id))
             .setLabel('Prefer the playing source on this server')
             .setStyle(ButtonStyle.Secondary),
         );
@@ -713,7 +714,7 @@ export class RadioController {
       if (pref && pref.mode !== 'auto') {
         buttons.push(
           new ButtonBuilder()
-            .setCustomId(ctx.ids.make(guildId, 'srcauto', st.id))
+            .setCustomId(ctx.ids.make(guildId, 'sauto', st.id))
             .setLabel('Back to automatic choice')
             .setStyle(ButtonStyle.Secondary),
         );
@@ -1610,32 +1611,30 @@ export class RadioController {
       switch (action) {
         case 'usesrc':
           return await this.#useSource(i, arg);
-        case 'srcpref':
-        case 'srcauto': {
+        case 'spref':
+        case 'sauto': {
           const a = this.#auth(i, 'admin');
           if (!a.ok) return this.#deny(i, a.reason);
           const st = visibleStation(this.#ctx, i.guildId, arg);
           // Prefer whatever this station is playing from right now (worked out at click time).
           const session = this.#ctx.sessions.get(i.guildId);
           const playing =
-            action === 'srcpref' && session?.stationId === arg
-              ? (session.status()?.source?.id ?? null)
-              : null;
+            action === 'spref' && session?.stationId === arg ? (session.status()?.source?.id ?? null) : null;
           const source = playing ? this.#ctx.stations.getSource(playing) : null;
-          if (!st || (action === 'srcpref' && source?.stationId !== st.id))
+          if (!st || (action === 'spref' && source?.stationId !== st.id))
             return this.#deny(i, 'That station isn’t playing from a source that can be preferred right now.');
           this.#ctx.guilds.setPreference(
             i.guildId,
             st.id,
-            action === 'srcpref' ? 'prefer' : 'auto',
+            action === 'spref' ? 'prefer' : 'auto',
             source?.id ?? null,
             i.user.id,
           );
           await i.reply({
             embeds: [
               infoEmbed(
-                action === 'srcpref' ? 'Preferred source' : 'Automatic selection',
-                action === 'srcpref'
+                action === 'spref' ? 'Preferred source' : 'Automatic selection',
+                action === 'spref'
                   ? `This server now prefers ${source!.label ?? 'that source'} (${sourceFormat(source!)}) for ${st.displayName}, whenever it is verified and working.`
                   : `The bot chooses the source for ${st.displayName} again, based on its own checks.`,
                 COLOR.ok,
@@ -1692,7 +1691,7 @@ export class RadioController {
           await i.update(browseView(this.#ctx, i.guildId, state, arg, 0));
           return;
         }
-        case 'openbrowse': {
+        case 'obrowse': {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
           const token = randomBytes(6).toString('base64url');
@@ -1811,9 +1810,11 @@ export class RadioController {
         ? fav.map((id) => all.find((s) => s.id === id)).filter((s): s is Station => Boolean(s))
         : all.filter((s) => s.provider === provider)
     ).filter((s) => ['available', 'degraded', 'unverified'].includes(ctx.sources.availability(s)));
-    if (ring.length === 0) return this.#deny(i, 'There is no other playable station to move to.');
     const idx = current ? ring.findIndex((s) => s.id === current) : -1;
-    const next = ring[(idx + dir + ring.length) % ring.length]!;
+    if (ring.length === 0 || (ring.length === 1 && idx === 0))
+      return this.#deny(i, 'There is no other playable station to move to.');
+    // From outside the ring, Next starts at the first station and Previous at the last.
+    const next = idx === -1 ? ring.at(dir === 1 ? 0 : -1)! : ring[(idx + dir + ring.length) % ring.length]!;
     await this.#play(
       i,
       next,

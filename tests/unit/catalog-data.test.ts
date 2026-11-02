@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_PACKS_DIR, discoverPackDirs, loadPack, PackRegistry } from '../../src/catalogue/packs.ts';
-import { ComponentIds } from '../../src/discord/components/custom-id.ts';
+import { COMPONENT_ACTIONS, ComponentIds } from '../../src/discord/components/custom-id.ts';
 
 /**
  * Data checks on the shipped packs, read straight from the JSON (independent of the loader),
@@ -98,7 +98,7 @@ describe.each(packDirs.map((d) => [d.split(/[\\/]/).pop()!, d]))('pack data: %s'
     const ids = new ComponentIds('secret');
     for (const s of stations) {
       const id = `${meta.id}:${s.slug}`;
-      for (const action of ['fav', 'srcs', 'insp', 'rescan', 'play']) {
+      for (const action of COMPONENT_ACTIONS) {
         for (const ttl of [15 * 60_000, null]) {
           const custom = ids.make('123456789012345678', action, id, ttl);
           expect(ids.parse('123456789012345678', custom)).toEqual({ action, arg: id, expired: false });

@@ -13,6 +13,7 @@ import { searchStations } from '../../catalogue/search.ts';
 import { AVAILABILITY_LABEL, type Station } from '../../catalogue/types.ts';
 import type { GuildSettings } from '../../persistence/repositories/guilds.ts';
 import { truncate } from '../../shared/text.ts';
+import type { ComponentAction } from '../components/custom-id.ts';
 import type { AppContext } from '../context.ts';
 import { groupName, visibleStations } from '../context.ts';
 import { availabilityBadge, COLOR, DISCLAIMER, stationLine } from './format.ts';
@@ -287,7 +288,7 @@ export function controlRows(
   persistent = false,
 ): Row[] {
   const ttl = persistent ? null : 15 * 60_000;
-  const b = (action: string, label: string, style: ButtonStyle, arg = '') =>
+  const b = (action: ComponentAction, label: string, style: ButtonStyle, arg = '') =>
     new ButtonBuilder()
       .setCustomId(ctx.ids.make(guildId, action, arg, ttl))
       .setLabel(label)
@@ -307,7 +308,7 @@ export function controlRows(
     );
   }
   const second: ButtonBuilder[] = [
-    b('openbrowse', 'Browse stations', ButtonStyle.Success),
+    b('obrowse', 'Browse stations', ButtonStyle.Success),
     b('now', 'Refresh', ButtonStyle.Primary),
   ];
   if (stationId) {

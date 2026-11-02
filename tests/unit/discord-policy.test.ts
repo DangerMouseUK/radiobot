@@ -1,5 +1,12 @@
+import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { ComponentIds } from '../../src/discord/components/custom-id.ts';
+import {
+  COMPONENT_ACTIONS,
+  type ComponentAction,
+  ComponentIds,
+  MAX_ACTION_LENGTH,
+  MAX_ARG_LENGTH,
+} from '../../src/discord/components/custom-id.ts';
 import { type AuthContext, authorize } from '../../src/discord/permissions/authorize.ts';
 import type { GuildSettings } from '../../src/persistence/repositories/guilds.ts';
 
@@ -112,10 +119,33 @@ describe('signed component IDs (§6 button rules)', () => {
     expect(new ComponentIds('other').parse('guild-1', id)).toBeNull();
   });
 
-  it('expires', () => {
-    const id = ids.make('guild-1', 'stop', '', 1000);
-    now += 5000;
+  it('expires, to the next whole minute', () => {
+    const id = ids.make('guild-1', 'stop', '', 60_000);
+    now += 60_000;
+    expect(ids.parse('guild-1', id)).toMatchObject({ expired: false });
+    now += 61_000;
     expect(ids.parse('guild-1', id)).toEqual({ expired: true });
+  });
+
+  it('keeps every action with the longest argument within 100 characters until 2100', () => {
+    const longest = `${'p'.repeat(32)}:${'s'.repeat(32)}`;
+    expect(longest).toHaveLength(MAX_ARG_LENGTH);
+    const in2100 = new ComponentIds('secret-123', () => Date.UTC(2100, 0, 1));
+    for (const action of COMPONENT_ACTIONS) {
+      expect(action).toMatch(new RegExp(`^[a-z0-9-]{1,${MAX_ACTION_LENGTH}}$`));
+      for (const ttl of [30 * 60_000, null]) {
+        const id = in2100.make('123456789012345678', action, longest, ttl);
+        expect(id.length).toBeLessThanOrEqual(100);
+        expect(in2100.parse('123456789012345678', id)).toEqual({ action, arg: longest, expired: false });
+      }
+    }
+  });
+
+  it('treats a genuine id in the old format as expired, and a forged one as invalid', () => {
+    const body = 'rb1:stop::0';
+    const sig = createHmac('sha256', 'secret-123').update(`guild-1|${body}`).digest('base64url').slice(0, 16);
+    expect(ids.parse('guild-1', `${body}:${sig}`)).toEqual({ expired: true });
+    expect(ids.parse('guild-2', `${body}:${sig}`)).toBeNull();
   });
 
   it('supports persistent ids', () => {
@@ -126,6 +156,7 @@ describe('signed component IDs (§6 button rules)', () => {
 
   it('refuses unsafe args', () => {
     expect(() => ids.make('g', 'play', 'a:b:c')).toThrow();
-    expect(() => ids.make('g', 'PLAY')).toThrow();
+    expect(() => ids.make('g', 'PLAY' as ComponentAction)).toThrow();
+    expect(() => ids.make('g', 'play', `p:${'s'.repeat(MAX_ARG_LENGTH - 1)}`)).toThrow();
   });
 });

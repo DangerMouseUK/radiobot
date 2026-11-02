@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- A `CATALOG_SYNC_INTERVAL_HOURS` above 596 (the range goes up to 720) made catalogue sync run again and again without pause, because Node can't wait that long with a single timer. Long intervals are now waited out in full.
+- The admin buttons on the sources view (**Prefer the playing source** and **Back to automatic choice**) failed with "Something went wrong" for stations with the longest allowed IDs, because the button's ID went over Discord's 100-character limit. Button and menu IDs now fit that limit by design, whatever the station: a new, shorter way of writing the expiry leaves room for the longest station ID with every action, and lasts until 2140 (the old one would have grown a character in December 2038). Buttons sent by an earlier version say they have expired; run the command again. The control panel is redrawn when the bot starts.
+- A detailed sources view of a station with many sources and a server override could go over Discord's 6000-character message limit and fail to send.
+- **Previous station** with nothing playing now starts from the last station, not the one before it, and **Next** or **Previous** says there is no other station instead of restarting the one that plays.
+- `/radio join` with a default station used two play tokens instead of one, so the per-user limit ran out after three joins rather than six.
+
 ## [1.0.5] - 2026-11-02
 
 ### Added

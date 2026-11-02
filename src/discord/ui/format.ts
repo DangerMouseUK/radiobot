@@ -323,8 +323,9 @@ export function sourcesEmbed(
     2000,
   );
   // Discord rejects an embed whose title, description, fields and footer exceed 6000 characters
-  // in total, so detailed views of stations with many sources stop adding fields before that.
-  let budget = 5900 - (e.data.title?.length ?? 0) - (e.data.footer?.text.length ?? 0) - description.length;
+  // in total, so detailed views of stations with many sources stop adding fields before that. The
+  // margin leaves room for what callers add: the server override field and a re-check summary.
+  let budget = 5600 - (e.data.title?.length ?? 0) - (e.data.footer?.text.length ?? 0) - description.length;
   // Usable sources first, in the order the bot ranks them; then the rest, which can't be used.
   const rank = new Map(selection.ordered.map((s, i) => [s.id, i + 1]));
   const ranked = [
