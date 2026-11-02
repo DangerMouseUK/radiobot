@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-11-02
+
 ### Added
 
 - **Favourites are easy to get back to.** The station list from **Browse stations** has a **Favourites** button that shows only this server's favourites (and **All stations** to go back), and now-playing messages have the Browse stations button too, not just the control panel. Pressing **Favourite** now says where favourites show up, and `/radio help` explains favourites and the default station.
@@ -191,7 +193,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.1...v1.0.2
