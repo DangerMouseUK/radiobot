@@ -326,7 +326,7 @@ describe('official list sync (FR-002)', () => {
     entries.push({ id: 'NEWID00001', label: 'FG BRAND NEW' });
     let html = page(entries);
     const http = {
-      fetchText: async () => ({ text: html, finalUrl: new URL('https://x'), status: 200, headers: {} }),
+      fetchBytes: async () => ({ bytes: Buffer.from(html), finalUrl: new URL('https://x'), headers: {} }),
     };
     const sync = new CatalogueSync(
       stations,
@@ -366,8 +366,8 @@ describe('official list sync (FR-002)', () => {
     entries.find((e) => e.label === 'FG DANCE')!.label = 'FG DANCE NATION';
     entries.push({ id: 'NEWID00001', label: 'FG BRAND NEW' });
     const http = {
-      fetchText: async () => ({
-        text: page(entries),
+      fetchBytes: async () => ({
+        bytes: Buffer.from(page(entries)),
         finalUrl: new URL('https://x'),
         status: 200,
         headers: {},
@@ -413,11 +413,13 @@ describe('official list sync (FR-002)', () => {
     const registry = PackRegistry.load(root, { enabled: new Set(), disabled: new Set(['fg']) });
     seedPacks(stations, registry);
     const http = {
-      fetchText: async () => ({
-        text: JSON.stringify([
-          { id: 1, name: 'Example One' },
-          { id: 3, name: 'Example Three' },
-        ]),
+      fetchBytes: async () => ({
+        bytes: Buffer.from(
+          JSON.stringify([
+            { id: 1, name: 'Example One' },
+            { id: 3, name: 'Example Three' },
+          ]),
+        ),
         finalUrl: new URL('https://example.org'),
         status: 200,
         headers: {},
@@ -446,7 +448,7 @@ describe('official list sync (FR-002)', () => {
     const registry = PackRegistry.load(root, { enabled: new Set(), disabled: new Set(['fg']) });
     seedPacks(stations, registry);
     const http = {
-      fetchText: async () => {
+      fetchBytes: async () => {
         throw new Error('connect failed for https://example.org/list.json?token=SECRET123');
       },
     };
@@ -472,8 +474,8 @@ describe('official list sync (FR-002)', () => {
       const registry = PackRegistry.load(root, { enabled: new Set(), disabled: new Set(['fg']) });
       seedPacks(stations, registry);
       const http = {
-        fetchText: async () => ({
-          text: JSON.stringify(listed.map((name, id) => ({ id, name }))),
+        fetchBytes: async () => ({
+          bytes: Buffer.from(JSON.stringify(listed.map((name, id) => ({ id, name })))),
           finalUrl: new URL('https://example.org'),
           status: 200,
           headers: {},

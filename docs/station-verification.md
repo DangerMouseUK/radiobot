@@ -306,7 +306,7 @@ docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe my
 
 ## Catalogue sync
 
-`CatalogueSync` (`src/catalogue/sync.ts`) keeps each **enabled pack that declares `sync`** in its `pack.json` in line with that pack's official station list. Each pack has its own schedule: once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, 6 to 720) plus a random delay of up to 15 minutes. A pack that has never synced is first synced about 10 minutes after the bot starts. `CATALOG_SYNC_ENABLED=false` turns the schedule off. Admins can also run `/radio sync [pack]`. The list is read by the adapter the pack names, from `src/catalogue/sync-adapters.ts`:
+`CatalogueSync` (`src/catalogue/sync.ts`) keeps each **enabled pack that declares `sync`** in its `pack.json` in line with that pack's official station list. Each pack has its own schedule: once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, 6 to 720) plus a random delay of up to 15 minutes. A pack that has never synced is first synced about 10 minutes after the bot starts. A scheduled sync follows the rules for background work: it runs one at a time with the background source checks and waits while any stream is in its first 30 s. `CATALOG_SYNC_ENABLED=false` turns the schedule off. Admins can also run `/radio sync [pack]`, which starts at once (after any sync already running). The list is read by the adapter the pack names, from `src/catalogue/sync-adapters.ts`:
 
 - `webradio-apidata` reads a list of web radios embedded in a station website's page (a `webradios[]` array in the page's `var apidata` JSON);
 - `json-name-list` reads a plain JSON list of `{ id, name }`.
@@ -316,12 +316,13 @@ A sync:
 - fetches the pack's `sync` URL through the bot's safe HTTP client, at most 6 MiB and 20 s;
 - reads **only station names and stable IDs**. With `webradio-apidata` that is each `webradios` entry's `label` and `id`, skipping entries with `displayOnWebsite: false`, with the page's navigation menu as a fallback;
 - **never collects stream URLs, and ignores any short-lived signed play URLs on the page.** New sources are only ever added by a reviewed change to the pack's `sources.json`;
-- treats a list as implausible, and changes nothing, when it has fewer than 10 names (or, for packs with fewer than 20 stations, fewer than half the pack's stations);
+- reads the list on a separate worker thread, so a large page never holds up the stream;
+- treats a list as implausible, and changes nothing, when it has fewer than 10 names (or, for packs with fewer than 20 stations, fewer than half the pack's stations), or more than 5,000;
 - matches stations by stable ID, then by name (ignoring case, accents and punctuation). An unmatched new name that closely resembles a single missing station is treated as a rename;
 - on a **rename**, keeps the station ID, favourites and preferences, and keeps the old name as an alias;
 - on a **new station**, adds it with no source and reports that it needs a reviewed source before it can play;
 - on a **missing** station, marks it `missing_from_official`, keeps it (so favourites still work) and reports it. A station that reappears is reported as "Back on the list";
-- applies all its changes together or none of them;
+- applies all its changes together or none of them. Only a sync with more than 50 changes at once is written in parts of 50; the report then lists what was written, and if a part fails, the next sync finishes the job;
 - on **failure**, keeps the existing entries and records a failed report. `/radio list` for that pack shows "list may be out of date" when no sync has succeeded within three intervals.
 
 Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio sync` shows one report per pack: added, renamed, no longer on the official list, back on the list, new stations with no stream yet, and stations whose sources all failed their last check.

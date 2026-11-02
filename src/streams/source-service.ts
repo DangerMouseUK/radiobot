@@ -581,6 +581,18 @@ export class SourceService {
     }
   }
 
+  /**
+   * Runs other background work (a scheduled catalogue sync, say) under the same rules as background
+   * checks: it waits for its turn in the same one-at-a-time queue, and then until no stream is
+   * starting, so it never runs alongside a check or during a stream's first moments.
+   */
+  runInBackground<T>(fn: () => Promise<T>): Promise<T> {
+    return this.#background.run(async () => {
+      await this.#waitForQuiet();
+      return fn();
+    });
+  }
+
   /** A stream is starting: background checks wait `ms` so they don't compete with its start-up. */
   holdBackground(ms: number): void {
     this.#holdUntil = Math.max(this.#holdUntil, Date.now() + ms);

@@ -360,11 +360,11 @@ describe('small utilities', () => {
 });
 
 describe('heartbeat file', () => {
-  it('keeps the form radio-bot update reads the number of playing servers from', () => {
+  it('keeps the form radio-bot update reads the number of playing servers from', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'radio-bot-hb-'));
     try {
       const path = join(dir, 'health.json');
-      writeHeartbeat(path, {
+      await writeHeartbeat(path, {
         at: new Date().toISOString(),
         pid: 1,
         discordReady: true,

@@ -195,6 +195,31 @@ describe('StationRepository: pack stations', () => {
     expect(stations.listStations(null)).toHaveLength(1);
     expect(stations.getStation('mypack:my-station')?.retiredAt).toBeNull();
   });
+
+  it('marks several stations active and seen in one statement, warm cache or cold', () => {
+    const { db, stations } = withStation();
+    stations.upsertProviderStation(stationSeed({ id: 'mypack:other', slug: 'other', externalId: null }));
+    stations.setCatalogueStatus('mypack:other', 'missing_from_official');
+    stations.markSeen([], '2026-07-01');
+    expect(stations.listBuiltinStations()).toHaveLength(2); // warm the cache
+    const reads = vi.spyOn(db, 'all');
+    stations.markSeen(['mypack:my-station', 'mypack:other', 'mypack:nope'], '2026-07-01');
+    // Only the changed rows are read again, not the whole list.
+    expect(reads).toHaveBeenCalledOnce();
+    for (const id of ['mypack:my-station', 'mypack:other']) {
+      expect(stations.getStation(id)).toMatchObject({
+        catalogueStatus: 'active',
+        officialLastSeenAt: '2026-07-01',
+      });
+    }
+    expect(stations.listStations(null)).toHaveLength(2);
+    reads.mockRestore();
+    // With no cache to patch, the next read simply reads everything again.
+    const cold = memoryDb();
+    cold.stations.upsertProviderStation(stationSeed());
+    cold.stations.markSeen(['mypack:my-station'], '2026-07-02');
+    expect(cold.stations.getStation('mypack:my-station')?.officialLastSeenAt).toBe('2026-07-02');
+  });
 });
 
 describe('StationRepository: custom stations', () => {

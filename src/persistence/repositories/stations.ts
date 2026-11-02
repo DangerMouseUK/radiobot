@@ -428,6 +428,37 @@ export class StationRepository {
     }
   }
 
+  /**
+   * A change to several stations (IDs as a JSON array) that keeps the list's order: only those
+   * rows are read again, in one query.
+   */
+  #writeStationRows(idsJson: string, sql: string, params: Params): void {
+    const cache = this.#currentStations();
+    let done = false;
+    try {
+      this.#db.run(sql, params);
+      done = true;
+    } finally {
+      let patched = false;
+      if (done && cache) {
+        const rows = this.#db.all('SELECT * FROM stations WHERE id IN (SELECT value FROM json_each(?))', [
+          idsJson,
+        ]);
+        const at = new Map(cache.all.map((st, i) => [st.id, i]));
+        patched = rows.every((r) => at.has(r.id as string));
+        if (patched) {
+          for (const r of rows) {
+            const next = freezeStation(mapStation(r));
+            cache.byId.set(next.id, next);
+            cache.all[at.get(next.id)!] = next;
+          }
+          Object.assign(cache, deriveStations(cache.all));
+        }
+      }
+      if (!patched) this.#stationWrites++;
+    }
+  }
+
   /** A change to one source: only that row is read again, and moved if its station or priority changed. */
   #writeSourceRow(id: string, sql: string, params: Params): { changes: number; lastInsertRowid: number } {
     const cache = this.#currentSources();
@@ -577,6 +608,21 @@ export class StationRepository {
          retired_at = CASE WHEN ? = 'retired' THEN COALESCE(retired_at, ?) ELSE NULL END,
          updated_at = ? WHERE id = ?`,
       [status, lastSeenAt ?? null, status, now, now, id],
+    );
+  }
+
+  /**
+   * Marks stations active and seen on `day` (what a catalogue sync does for every station still on
+   * the official list), in one statement rather than one per station.
+   */
+  markSeen(ids: readonly string[], day: string): void {
+    if (ids.length === 0) return;
+    const list = JSON.stringify(ids);
+    this.#writeStationRows(
+      list,
+      `UPDATE stations SET catalogue_status = 'active', official_catalog_last_seen_at = ?, retired_at = NULL,
+         updated_at = ? WHERE id IN (SELECT value FROM json_each(?))`,
+      [day, nowIso(), list],
     );
   }
 

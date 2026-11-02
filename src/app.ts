@@ -24,9 +24,10 @@ import { PresenceUpdater, presenceEntries } from './discord/presence.ts';
 import { registerGuildCommands } from './discord/register.ts';
 import { VoiceStatusUpdater } from './discord/voice-status.ts';
 import { EventLoopMonitor } from './observability/event-loop.ts';
-import { heartbeatPath, startDiagnosticsServer, writeHeartbeat } from './observability/health.ts';
+import { HeartbeatWriter, heartbeatPath, startDiagnosticsServer } from './observability/health.ts';
 import { createLogger, type Logger, safeErr } from './observability/logger.ts';
 import { Metrics } from './observability/metrics.ts';
+import { WalCheckpointer } from './persistence/checkpoint.ts';
 import { Db } from './persistence/db.ts';
 import { GuildRepository, MetaRepository } from './persistence/repositories/guilds.ts';
 import { StationRepository } from './persistence/repositories/stations.ts';
@@ -197,27 +198,31 @@ export function createApp(
   let diagnostics: Server | null = null;
   const hbPath = heartbeatPath(config.databasePath);
 
-  const heartbeat = () => {
+  // Written asynchronously and one at a time, so a slow disk never holds up voice packets.
+  const heartbeats = new HeartbeatWriter(hbPath, (err) =>
+    logger.warn({ err: safeErr(err) }, 'could not write heartbeat'),
+  );
+  const heartbeat = (): Promise<void> => {
     let dbOk = true;
     try {
       db.get('SELECT 1 AS ok');
     } catch {
       dbOk = false;
     }
-    try {
-      writeHeartbeat(hbPath, {
-        at: new Date().toISOString(),
-        pid: process.pid,
-        discordReady: client.isReady(),
-        activeStreams: sessions.activeStreams(),
-        ffmpegProcesses: registry.active,
-        dbOk,
-        ffmpegOk: ctx.ffmpegInfo?.libopus === true,
-      });
-    } catch (err) {
-      logger.warn({ err: safeErr(err) }, 'could not write heartbeat');
-    }
+    return heartbeats.write({
+      at: new Date().toISOString(),
+      pid: process.pid,
+      discordReady: client.isReady(),
+      activeStreams: sessions.activeStreams(),
+      ffmpegProcesses: registry.active,
+      dbOk,
+      ffmpegOk: ctx.ffmpegInfo?.libopus === true,
+    });
   };
+  // Copies the database's write-ahead log back into the file on a worker thread, not inside commits.
+  const checkpointer = new WalCheckpointer({ db, logger });
+  // Aborted at shutdown, so a scheduled sync that is still running stops writing.
+  const shutdownSignal = new AbortController();
 
   let syncSchedule: { stop(): void } | null = null;
   const scheduleSync = () => {
@@ -226,13 +231,16 @@ export function createApp(
       packIds: catalogueSync.syncablePacks().map((p) => p.meta.id),
       intervalMs: config.catalogSyncIntervalHours * 3_600_000,
       lastSync: (packId) => catalogueSync.lastSync(packId).at,
-      sync: (packId) => catalogueSync.sync(packId, 'scheduled'),
+      // Background work: one at a time with source checks, and never while a stream is starting.
+      sync: (packId) =>
+        sources.runInBackground(() => catalogueSync.sync(packId, 'scheduled', shutdownSignal.signal)),
     });
   };
 
   async function start(): Promise<void> {
     // Replace any heartbeat left by a previous run, so health checks wait for this process.
-    heartbeat();
+    await heartbeat();
+    await checkpointer.start();
     try {
       ctx.ffmpegInfo = await checkFfmpeg(registry, {
         ffmpeg: config.ffmpegPath,
@@ -275,7 +283,8 @@ export function createApp(
         const targets = config.devGuildId ? [config.devGuildId] : [...c.guilds.cache.keys()];
         await registerGuildCommands(config.discordToken, config.applicationId, targets, meta, logger);
       }
-      heartbeat();
+      // Taken now, written in the background: restoring playback doesn't wait for the disk.
+      void heartbeat();
       await sessions
         .restoreOnBoot()
         .catch((err: unknown) => logger.error({ err: safeErr(err) }, 'restore failed'));
@@ -288,7 +297,7 @@ export function createApp(
       }
     });
 
-    timers.push(setInterval(heartbeat, 30_000));
+    timers.push(setInterval(() => void heartbeat(), 30_000));
     // A blocked event loop sends voice packets late: listeners hear a drop, then a catch-up.
     ctx.eventLoop.start(60_000, (s) => {
       if (s.maxMs >= 50)
@@ -371,6 +380,7 @@ export function createApp(
     stopping = true;
     for (const t of timers) clearTimeout(t);
     syncSchedule?.stop();
+    shutdownSignal.abort();
     // Clear channel statuses while the bot is still connected (bounded, so shutdown never hangs).
     await Promise.race([voiceStatus.clearAll(), new Promise((r) => setTimeout(r, 2_000))]);
     ctx.eventLoop.stop();
@@ -378,8 +388,15 @@ export function createApp(
     sessions.shutdown();
     notifier.close();
     await client.destroy().catch(() => {});
-    heartbeat();
+    await heartbeat();
     registry.killAll();
+    await checkpointer.stop();
+    // A final checkpoint while nothing plays leaves the whole database in its main file.
+    try {
+      db.checkpoint('TRUNCATE');
+    } catch (err) {
+      logger.warn({ err: safeErr(err) }, 'final database checkpoint failed');
+    }
     db.close();
   }
 
