@@ -558,8 +558,9 @@ describe('status embeds', () => {
         }),
       );
       const e = sourcesEmbed(station, sources, selectSource(sources, null, { now }), true);
-      // The controller may add a server override field (about 125 characters) and a re-check summary.
-      expect(embedSize(e)).toBeLessThanOrEqual(5700);
+      // The controller may add its "On this server" field (up to about 400 characters) and a
+      // re-check summary, which fits itself into what is left.
+      expect(embedSize(e)).toBeLessThanOrEqual(5500);
       expect(JSON.stringify(e.toJSON())).toMatch(/more sources? not shown/);
     }
   });

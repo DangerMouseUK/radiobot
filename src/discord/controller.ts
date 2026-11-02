@@ -694,22 +694,33 @@ export class RadioController {
     const live = { playingId: status?.source?.id ?? null, manualId: status?.manualSourceId ?? null };
     const embed = sourcesEmbed(st, sources, selection, detailed, live);
     const pref = ctx.guilds.getPreference(guildId, st.id);
-    if (pref) {
-      const id = `\`${pref.sourceId ?? 'none'}\``;
-      embed.addFields({
-        name: 'Source chosen on this server',
-        value:
-          pref.mode === 'pin'
-            ? `Pinned to ${id}: only admins can switch it to another source. While that source can’t be used, another one plays and the station shows as degraded.`
-            : `${id} is tried first. If it can’t be used, the bot picks another source by itself.`,
-      });
-    }
+    const pinned = pref?.mode === 'pin';
+    const canPrefer =
+      who.admin &&
+      sources.length > 0 &&
+      live.playingId !== null &&
+      (pref?.mode !== 'prefer' || pref.sourceId !== live.playingId);
+    const canAuto = who.admin && sources.length > 0 && !!pref && pref.mode !== 'auto';
+    // The admin buttons have short labels, so what they do (on this server only) is said here.
+    const choice: string[] = [];
+    const id = `\`${pref?.sourceId ?? 'none'}\``;
+    if (pinned)
+      choice.push(
+        `Pinned to ${id}: only admins can switch it. If it fails, another source plays and the station shows as degraded.`,
+      );
+    else if (pref?.mode === 'prefer')
+      choice.push(`${id} is tried first. If it fails, the bot switches to another source.`);
+    if (canPrefer)
+      choice.push(
+        '**Use this source first**: try the source playing now first. If it fails, the bot still switches to another.',
+      );
+    if (canAuto) choice.push('**Choose automatically**: go back to the bot’s own choice.');
+    if (choice.length) embed.addFields({ name: 'On this server', value: choice.join('\n') });
     const row = (...c: MessageActionRowComponentBuilder[]) =>
       new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(...c);
     const components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
     // Anyone who may control the radio can play this station from another usable source while it
     // plays. Only usable sources are offered, and the click is checked again on the server.
-    const pinned = pref?.mode === 'pin';
     if (who.control && (who.admin || !pinned) && live.playingId && selection.ordered.length > 1) {
       components.push(
         row(
@@ -739,19 +750,19 @@ export class RadioController {
           .setLabel('Check sources again')
           .setStyle(ButtonStyle.Primary),
       ];
-      if (live.playingId && (pref?.mode !== 'prefer' || pref.sourceId !== live.playingId)) {
+      if (canPrefer) {
         buttons.push(
           new ButtonBuilder()
             .setCustomId(ctx.ids.make(guildId, 'spref', st.id))
-            .setLabel('Make the source playing now this server’s first choice')
+            .setLabel('Use this source first')
             .setStyle(ButtonStyle.Secondary),
         );
       }
-      if (pref && pref.mode !== 'auto') {
+      if (canAuto) {
         buttons.push(
           new ButtonBuilder()
             .setCustomId(ctx.ids.make(guildId, 'sauto', st.id))
-            .setLabel('Let the bot choose the source again')
+            .setLabel('Choose automatically')
             .setStyle(ButtonStyle.Secondary),
         );
       }
@@ -916,7 +927,7 @@ export class RadioController {
                 : 'Transport: direct HTTP stream',
               `Codec: ${src ? sourceFormat(src) : 'unknown'}`,
               `Live input rate: ${kbps(inp.kbps10s)} (10 s) · ${kbps(inp.kbps60s)} (60 s) · ${(inp.bytes / 1048576).toFixed(1)} MB received`,
-              `Round trip to the stream server (TCP): ${lat(streamRtt)}`,
+              `Stream server round trip (TCP): ${lat(streamRtt)}`,
             ].join('\n'),
             1024,
           ),
@@ -941,7 +952,7 @@ export class RadioController {
               `Voice WebSocket ping: ${lat(live.voice?.ws ?? null)}`,
               `Gateway ping: ${ctx.client.ws.ping >= 0 ? `${ctx.client.ws.ping} ms` : 'not measured yet'}`,
               `Encryption: ${live.voice?.encryption ?? '—'}${live.voice?.encryptionMode ? ` · ${live.voice.encryptionMode}` : ''}`,
-              `Source switches after a failure: ${status.failovers} · voice reconnects: ${status.reconnects} · encoder PID: ${status.encoderPid ?? '—'}`,
+              `Fallback switches: ${status.failovers} · voice reconnects: ${status.reconnects} · encoder PID: ${status.encoderPid ?? '—'}`,
             ].join('\n'),
             1024,
           ),
@@ -1502,7 +1513,7 @@ export class RadioController {
           value: lines(
             '`/radio browse`: pick a station from the list',
             '`/radio play <station>`: play a station in your voice channel',
-            '`/radio now`: what is playing · `/radio stop`: stop playing · `/radio leave`: leave the voice channel',
+            '`/radio now` what is playing · `/radio stop` stop playing · `/radio leave` leave the channel',
             '-# Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
           ),
         },
@@ -1510,7 +1521,7 @@ export class RadioController {
           name: '⭐ Favourites and the default station',
           value: lines(
             'Press **Favourite** under a playing station. Favourites come first in the `/radio play` suggestions, have their own list in Browse, and Next and Previous step through them.',
-            'The default station (set by an admin) is what `/radio join` plays, and what plays when the bot starts if **Autostart** is on.',
+            'The default station (set by an admin) is what `/radio join` plays, and what **Autostart** plays when the bot starts.',
           ),
         },
         {
@@ -1533,7 +1544,7 @@ export class RadioController {
               name: '🛠 Admin',
               value: lines(
                 '`/radio config` · `/radio add` · `/radio edit` · `/radio remove` · `/radio source pin|prefer|auto|verify` · `/radio rescan` · `/radio sync` · `/radio export` · `/radio import` · `/radio panel`',
-                '-# `/radio source`: `prefer` tries a source first · `pin` keeps the station on one source while it works (only admins can switch it) · `auto` lets the bot choose again · `verify` records whether a source plays the right station',
+                '-# `/radio source`: `prefer` tries a source first · `pin` also lets only admins switch it · `auto` lets the bot choose · `verify` records if a source is the right station',
                 '`/radio stats`: live stream and connection figures, shown only to you',
               ),
             }
@@ -1590,7 +1601,7 @@ export class RadioController {
       if (st.provider !== 'custom' && !isOperator(this.#ctx, i.user.id)) {
         return this.#deny(
           i,
-          'A review of a station-pack source applies to every server that uses this bot, so only the bot’s operator can record it: someone who runs the bot (listed in OPERATOR_USER_IDS, or the owner or team of the bot’s Discord application).',
+          'A review of a station-pack source applies to every server that uses this bot, so only the bot’s operator can record it (listed in OPERATOR_USER_IDS, or the owner or team of the bot’s Discord application).',
         );
       }
       if (st.provider === 'custom' && st.guildId !== i.guildId)

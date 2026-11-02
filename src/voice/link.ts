@@ -339,7 +339,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     const code = this.connection.voicePrivacyCode;
     return code
       ? `DAVE end-to-end encrypted (privacy code ${code})`
-      : 'Encrypted in transit; Discord did not use DAVE end-to-end encryption for this call';
+      : 'Encrypted in transit; DAVE end-to-end encryption not used for this call';
   }
 
   destroy(): void {

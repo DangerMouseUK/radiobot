@@ -363,7 +363,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
         value: truncate(
           [
             `Commands work in: ${fmtIds(s.allowedTextChannelIds, '#')}`,
-            `Voice channels the bot can play in: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
+            `Radio can play in: ${fmtIds(s.allowedVoiceChannelIds, '#')}`,
             `DJ roles: ${s.djRoleIds.length ? fmtIds(s.djRoleIds, '@&') : 'none'}`,
             `Listeners can control: ${s.memberControlMode === 'same_channel' ? 'from the bot’s voice channel' : s.memberControlMode === 'any' ? 'from anywhere' : 'no (DJs and admins only)'}`,
             '-# Admins are the server owner and members with the Administrator permission.',

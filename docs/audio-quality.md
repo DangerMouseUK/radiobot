@@ -124,7 +124,7 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 - The **encoder target** in kbps and the quality mode.
 - The **voice channel bitrate setting,** labelled as not limiting the bot's stream.
 - The **measured encoder output:** the Ogg Opus data per second leaving FFmpeg, shown after 5 s. It includes the Ogg framing, and because the output uses variable bitrate it moves around the target.
-- **Encryption:** "DAVE end-to-end encrypted (privacy code …)" or "Encrypted in transit; Discord did not use DAVE end-to-end encryption for this call".
+- **Encryption:** "DAVE end-to-end encrypted (privacy code …)" or "Encrypted in transit; DAVE end-to-end encryption not used for this call".
 
 **Processing**
 

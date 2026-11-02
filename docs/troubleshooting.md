@@ -64,7 +64,7 @@ These mean the server limits who can control the radio (the *listener control mo
 
 ### DAVE / encryption
 
-DAVE is Discord's end-to-end encryption for voice calls. The bot joins with DAVE switched on (`daveEncryption: true`), and the library it needs, `@snazzah/davey`, is included in the image. `/radio quality` shows either "DAVE end-to-end encrypted (privacy code …)" or "Encrypted in transit; Discord did not use DAVE end-to-end encryption for this call". Both are normal: Discord decides for each call whether DAVE is used.
+DAVE is Discord's end-to-end encryption for voice calls. The bot joins with DAVE switched on (`daveEncryption: true`), and the library it needs, `@snazzah/davey`, is included in the image. `/radio quality` shows either "DAVE end-to-end encrypted (privacy code …)" or "Encrypted in transit; DAVE end-to-end encryption not used for this call". Both are normal: Discord decides for each call whether DAVE is used.
 
 If the voice connection fails consistently after a Discord-side protocol change:
 

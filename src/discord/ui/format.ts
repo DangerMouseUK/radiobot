@@ -47,7 +47,7 @@ const VERIFICATION_LABEL: Record<VerificationState, string> = {
   unverified: 'working, but not verified as this station',
   degraded: 'working with decode errors',
   blocked_by_policy: 'blocked by the bot’s safety rules',
-  cooldown: 'resting after repeated failures (it will be tried again later)',
+  cooldown: 'resting after repeated failures',
   offline: 'last check failed',
   retired: 'retired',
 };
@@ -150,9 +150,9 @@ function streamSummary(s: StationSource): string {
 const CHOICE_TEXT: Record<SelectionResult['conclusion'], string> = {
   'higher-quality-verified': 'The best measured quality of this station’s sources.',
   'no-higher-quality-source-verified':
-    'Its sources carry the same audio, so the choice came down to how each is delivered, its reliability, start-up time and the station pack’s order.',
+    'Its sources carry the same audio; delivery, reliability, start-up time and pack order decided.',
   'not-conclusively-determined':
-    'Which source sounds better was not conclusively determined (different codecs aren’t compared), so the choice came down to how each is delivered, its reliability, start-up time and the station pack’s order.',
+    'Which sounds better was not conclusively determined (different codecs aren’t compared); delivery, reliability, start-up time and pack order decided.',
   'higher-quality-source-ranked-lower':
     'Another source measures higher but comes later, because of how it is delivered, its reliability or an admin’s choice.',
   'single-source': 'The only usable source right now.',
@@ -325,8 +325,9 @@ export function sourcesEmbed(
   );
   // Discord rejects an embed whose title, description, fields and footer exceed 6000 characters
   // in total, so detailed views of stations with many sources stop adding fields before that. The
-  // margin leaves room for what callers add: the server override field and a re-check summary.
-  let budget = 5600 - (e.data.title?.length ?? 0) - (e.data.footer?.text.length ?? 0) - description.length;
+  // margin leaves room for what callers add: the "On this server" field (up to about 400
+  // characters) and a re-check summary, which fits itself into what is left.
+  let budget = 5400 - (e.data.title?.length ?? 0) - (e.data.footer?.text.length ?? 0) - description.length;
   // Usable sources first, in the order the bot ranks them; then the rest, which can't be used.
   const rank = new Map(selection.ordered.map((s, i) => [s.id, i + 1]));
   const ranked = [

@@ -552,7 +552,7 @@ describe('/radio stats', () => {
       'Connected to: `127.0.0.1:443`',
       'Transport: direct HTTP stream',
       'Live input rate: 128 kbps (10 s) · — (60 s) · 2.0 MB received',
-      'Round trip to the stream server (TCP): not measured yet',
+      'Stream server round trip (TCP): not measured yet',
       'Opus target: 128 kbps (maximum) · voice channel setting 64 kbps (not a cap)',
       'Sent to Discord: 130 kbps (10 s) · 129 kbps (60 s)',
       'Packets to Discord: 50 per second (expect ~50) · 3000 sent on this connection',
@@ -560,7 +560,7 @@ describe('/radio stats', () => {
       'Voice WebSocket ping: 20 ms (avg 21, min 19, max 25, jitter 2 ms, 5 samples)',
       'Gateway ping: 42 ms',
       'Encryption: aead_aes256_gcm_rtpsize · dave',
-      'Source switches after a failure: 2 · voice reconnects: 1 · encoder PID: 4321',
+      'Fallback switches: 2 · voice reconnects: 1 · encoder PID: 4321',
     ]) {
       expect(text).toContain(line);
     }
@@ -1453,8 +1453,10 @@ describe('/radio list, sources and inspect', () => {
     s.playingSourceId = 'custom-my-station-1';
     t.guilds.setPreference(GUILD, st.id, 'prefer', 'custom-my-station-1', OWNER);
     const i = await t.command(t.people.admin, { sub: 'inspect', strings: { station: st.id } });
-    expect(i.text).toMatch(/Source chosen on this server\n`custom-my-station-1` is tried first\./);
-    // It already tries the playing source first, so only Check again and Let the bot choose are offered.
+    expect(i.text).toMatch(
+      /On this server\n`custom-my-station-1` is tried first\. If it fails, the bot switches to another source\.\n\*\*Choose automatically\*\*: go back/,
+    );
+    // It already tries the playing source first, so only Check again and Choose automatically are offered.
     expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(['rescan', 'sauto']);
   });
 
@@ -1463,8 +1465,20 @@ describe('/radio list, sources and inspect', () => {
     playingIn(t, V1, st.id).playingSourceId = 'custom-my-station-1';
     const i = await t.command(t.people.admin, { sub: 'sources', strings: { station: st.id } });
     expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(['rescan', 'spref']);
+    expect(i.text).toMatch(
+      /On this server\n\*\*Use this source first\*\*: try the source playing now first\. If it fails, the bot still switches to another\./,
+    );
     const member = await t.command(t.people.member, { sub: 'sources', strings: { station: st.id } });
     expect(member.componentIds).toEqual([]);
+    // The explanation is only for the admin buttons, which a member doesn't get.
+    expect(member.text).not.toMatch(/On this server/);
+  });
+
+  it('says nothing about a server choice when the stored preference is automatic', async () => {
+    const { t, st } = customServer();
+    t.guilds.setPreference(GUILD, st.id, 'auto', null, OWNER);
+    const i = await t.command(t.people.member, { sub: 'sources', strings: { station: st.id } });
+    expect(i.text).not.toMatch(/On this server|tried first|`none`/);
   });
 
   it('offers no buttons for a station with no sources', async () => {

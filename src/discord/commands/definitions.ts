@@ -99,7 +99,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('inspect')
-        .setDescription('Technical details of a station’s sources: codec, bitrate and how each was checked')
+        .setDescription('Technical details of a station’s sources: codec, bitrate and checks')
         .addStringOption((o) => stationOpt(o)),
     )
     .addSubcommand((s) =>
@@ -108,7 +108,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('sources')
-        .setDescription('Show a station’s sources: which one plays, and which takes over if it fails')
+        .setDescription('A station’s sources: which one plays, and which takes over if it fails')
         .addStringOption((o) => stationOpt(o)),
     )
     .addSubcommand((s) =>
@@ -169,9 +169,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addBooleanOption((o) =>
           o
             .setName('compare')
-            .setDescription(
-              'Also check unverified sources by comparing about 40 seconds of their audio with a verified one',
-            ),
+            .setDescription('Also check unverified sources against a verified one (about 40 s of audio)'),
         ),
     )
     .addSubcommand((s) =>
@@ -189,7 +187,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addStringOption((o) =>
           o
             .setName('default_station')
-            .setDescription('Station the bot plays when it joins without being given one')
+            .setDescription('Station to play when the bot joins without one')
             .setAutocomplete(true)
             .setMaxLength(100),
         )

@@ -72,7 +72,7 @@ export class UrlPolicy {
     if (url.username || url.password) {
       throw new RadioError(
         'URL_CREDENTIALS_NOT_ALLOWED',
-        'Stream URLs with a username or password in them are not accepted: streams that need a login are not supported.',
+        'Stream URLs with a username or password are not accepted: streams that need a login aren’t supported.',
       );
     }
     const host = stripBrackets(url.hostname).toLowerCase();
@@ -88,7 +88,7 @@ export class UrlPolicy {
       if (isBlockedAddress(host) && !this.#testAllowed.has(host)) {
         throw new RadioError(
           'ADDRESS_BLOCKED',
-          'That address is private or reserved (a home network address, for example), so the bot won’t connect to it.',
+          'That address is private or reserved (such as a home network), so the bot won’t connect to it.',
         );
       }
       return url;
@@ -119,7 +119,7 @@ export class UrlPolicy {
     if (isBlockedAddress(address)) {
       throw new RadioError(
         'ADDRESS_BLOCKED',
-        'That stream’s address is private or reserved (a home network address, for example), so the bot won’t connect to it.',
+        'That stream’s address is private or reserved (such as a home network), so the bot won’t connect to it.',
       );
     }
   }

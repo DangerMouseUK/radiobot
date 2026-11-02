@@ -185,7 +185,7 @@ These are per-server overrides, stored in `guild_source_preferences`:
 | `prefer` | `/radio source prefer <station> <source>` | Uses that source whenever it is eligible. Otherwise the bot chooses automatically, without marking playback as degraded. |
 | `pin` | `/radio source pin <station> <source>` | Uses that source whenever it is eligible. Otherwise playback is marked **Degraded: the pinned source can't be used (reason), so a fallback is playing.** |
 
-Admins can also use the **Make the source playing now this server's first choice** button (the same as `prefer` with the source that is playing) and the **Let the bot choose the source again** button (the same as `auto`) under `/radio sources`.
+Admins can also use the **Use this source first** button (the same as `prefer` with the source that is playing) and the **Choose automatically** button (the same as `auto`) under `/radio sources`. The view's "On this server" field says what each one does, and which source this server tries first or is pinned to.
 
 When you pin or prefer a source that can't be used right now, the reply warns you and gives the reason. An override never makes an ineligible source playable: the identity and health gate always applies. An admin may pin or prefer an HLS source; that overrides the tier order, but not the gate. Catalogue sync and pack updates never touch these preferences, except that moving a source to a different station clears the preferences that pointed to it.
 
