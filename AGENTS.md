@@ -69,11 +69,13 @@ src/
                         register.ts, notifier.ts, presence.ts (bot status),
                         voice-status.ts (voice channel status),
                         voice-access.ts, context.ts
-  persistence/          db.ts (node:sqlite, migrations, backups), repositories/ (stations, guilds; MetaRepository lives in guilds.ts)
+  persistence/          db.ts (node:sqlite, migrations, backups), checkpoint.ts + checkpoint-worker.ts
+                        (WAL checkpoints on a worker thread), repositories/ (stations, guilds; MetaRepository lives in guilds.ts)
   observability/        logger, health (health.json heartbeat, diagnostics server), metrics, netstats,
                         event-loop (event-loop delay for /radio stats)
   import-export/        /radio export and import
-  shared/               errors (reason codes), backoff, rate limits, redaction, text, async helpers, paths
+  shared/               errors (reason codes), backoff, rate limits, redaction, text, async helpers, paths,
+                        workers (one-off worker threads)
 scripts/                validate-catalogue, register-commands, healthcheck, backup (CLI entry points);
                         radio-bot.sh, the bash manager behind the `radio-bot` command (install, update,
                         backup, restore, uninstall …) for Docker Compose installs

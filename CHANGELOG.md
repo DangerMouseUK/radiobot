@@ -59,6 +59,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - On Linux, stream checks mark themselves as the first processes to stop if memory runs out, so a check can never take the bot or its encoder down with it.
 - `radio-bot` runs backups and health checks at the lowest disk priority as well as the lowest CPU priority.
 - `radio-bot update` warns that the new version is downloaded (or built) while the station plays, which can cause small cuts on a small server.
+- Smoother playback: the database's write-ahead log is now copied back into the database file on a separate thread every few minutes, not inside whichever write happened to fill it. On slow storage that copy, and its sync to disk, could hold up voice packets for 20–100 ms. If the separate thread can't run, SQLite's own copying takes over.
+- Smoother playback: the health heartbeat (`health.json`) is written without blocking. Its contents and location are unchanged.
+- Catalogue sync now waits its turn with background source checks, and never runs while a stream is starting. The official list is read on a separate thread, and changes are written in short steps. `/radio sync` still starts at once. A list with more than 5,000 names is refused as not a real station list. A sync with more than 50 changes is written in parts of 50, so if it fails part-way the parts already written stay (the next sync completes it); a normal sync is still all or nothing.
 - Two measured bitrates of the same codec now count as equal only within 3 % (it was 15 %), so a 128 kbps stream beats a 112 kbps one of the same codec. Codec metadata and advertised figures keep the 15 % margin, because they are looser.
 - Alternate HLS audio renditions are now chosen by the bandwidth of the variants that use them, not just by which one is marked as the default.
 - When a quality change briefly restarts the playing station, the reply to the admin now says so.

@@ -157,6 +157,7 @@ Provenance details for each station are recorded in the pack folder's `SOURCE_PR
   - `webradio-apidata`, used by the starter pack, reads a webradio list embedded in a station website's page (a `webradios[]` array in its `var apidata` JSON) and ignores, and never stores, any short-lived signed play URLs on that page;
   - `json-name-list` reads a plain JSON list of `{ id, name }`.
 - Runs on its own jittered schedule for each enabled pack that declares a list (daily by default; `CATALOG_SYNC_INTERVAL_HOURS` from 6 hours to 30 days, each waited out in full), and on admin request (`/radio sync [pack]`), with rate limits.
+- Scheduled syncs run as background work: one at a time with background source checks, and never during a stream's first 30 s. The list is parsed off the main thread and changes are written in short steps (parts of 50). A list with more than 5,000 names is refused.
 - Renames are detected by stable ID (or a single clearly similar name); the station keeps its ID and favourites, and the old name becomes an alias.
 - Stations no longer listed are marked *missing from official list* but kept. New names are added as catalogued-only and reported as needing a reviewed source mapping.
 - A failed or implausible fetch changes nothing. A list is implausible when it has fewer than 10 names, or fewer than half the pack's stations for small packs. The pack's list is flagged as possibly stale.
@@ -664,6 +665,7 @@ These are engineering targets, not guarantees about broadcasters or Discord.
 | NFR-12 | Truthful reporting | Output settings reported accurately; unknown values marked unknown |
 | NFR-13 | Bounded resources | Stream, probe, buffer and process limits enforced |
 | NFR-14 | Accessibility | Usable on Discord mobile, with text labels alongside any icons |
+| NFR-15 | Stream priority | Voice packets leave on time while the bot does other work: database checkpoints, the heartbeat write and catalogue parsing run off the voice thread; stream checks run at the lowest CPU and disk priority and are the first to go if memory runs out; the supported deployments give the bot a high CPU weight and protect it from the out-of-memory killer, with no CPU quota or memory limit |
 
 Diagnostics attribute faults to upstream, Discord, the bot, the operator or the user.
 
