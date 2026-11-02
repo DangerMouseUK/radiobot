@@ -7,7 +7,8 @@ This page is not legal advice. It explains what the Radio Bot project does and d
 Radio Bot is an independent, community-maintained open-source project.
 
 - **It is not affiliated with, endorsed by, sponsored by or approved by any broadcaster or rights holder.**
-- Station packs, including the bundled starter pack, refer to stations by their **station names** (nominative use) only so that listeners can find them. The names, audio and artwork belong to their owners. Each pack's `pack.json` carries an unofficial disclaimer, which is shown with the pack. The names are recorded as they appear on the broadcaster's official site. Their use does not imply any partnership.
+- Station packs, including the bundled starter pack, refer to stations by their **station names** only so that listeners can find them (this is called *nominative use*). The names, audio and artwork belong to their owners. The names are recorded as they appear on the broadcaster's official site. Their use does not imply any partnership.
+- A pack's `pack.json` can carry its own unofficial disclaimer; the bundled pack does. It is shown in the footer of `/radio list` when that pack is listed.
 - The repository contains **no station logos, artwork or audio**, and none should be added. Don't name, brand or present your instance or your Discord application in a way that suggests it is an official broadcaster product.
 - The bot shows "Radio Bot is unofficial and not affiliated with or endorsed by any broadcaster." in its now-playing, quality, sources/inspect, browse, list and help views.
 
@@ -99,17 +100,17 @@ Radio Bot runs on your hardware, under your Discord application. **You, the oper
 
 ### Logs
 
-Logs are JSON lines written to stdout and kept by your container runtime. They stay on your host. The shipped Compose file keeps at most about 50 MB, rotated. Replacing the container deletes its log, so `radio-bot update` first saves the last 500 lines to the install's `logs` folder, readable only by your user (the newest 5 files are kept). Logs contain server IDs, reason codes, stream host names and timings, and, when someone records an identity review with `/radio source verify`, that person's user ID. Tokens, URL query strings and credentials are redacted. Probe history in the database is pruned to `PROBE_HISTORY_LIMIT` results per source and at most `PROBE_HISTORY_DAYS` days old (30 and 30 by default).
+Logs are JSON lines written to stdout and kept by your container runtime. They stay on your host. The shipped Compose file keeps at most about 50 MB, rotated. Replacing the container deletes its log, so `radio-bot update` first saves the last 500 lines to the install's `logs` folder, readable only by your user (the newest 5 files are kept). Logs contain server IDs, reason codes, stream host names and timings. They also contain a user ID when someone records an identity review with `/radio source verify`, or switches a playing station to another source with the source menu under `/radio sources`. Tokens, URL query strings and credentials are redacted. Probe history in the database is pruned to `PROBE_HISTORY_LIMIT` results per source and at most `PROBE_HISTORY_DAYS` days old (30 and 30 by default).
 
 ### Exports and backups
 
-`/radio export` produces JSON with channel and role IDs, settings, favourites of pack stations, source preferences and custom stations. Custom URLs that contain query strings or credentials are redacted. Database backups in `data/backups/` contain everything in the table above. Store both as carefully as the database itself.
+`/radio export` produces a JSON file with channel and role IDs, settings, favourites of pack stations, source preferences and custom stations. Custom station URLs that contain a query string or credentials are left out. Database backups contain everything in the table above. The bot keeps them in `backups/` inside its data folder; with a Docker Compose install, `radio-bot backup` and `radio-bot update` also copy them to the `backups` folder of the install. Store exports and backups as carefully as the database itself.
 
 ### Retention and deletion
 
 - Data is kept until it is changed or removed.
-- **Removing the bot from a server deletes that server's data automatically.** When Discord reports that the bot has left or been removed from a server, the bot deletes the server's settings, favourites, queue, source preferences and playback state, plus its custom stations together with their sources and probe history, and its command-registration record. This does not happen when a server is only temporarily unavailable because of a Discord outage. If the bot is removed while it is offline, it never receives the removal event, so that server's data stays until you delete the volume.
+- **Removing the bot from a server deletes that server's data automatically.** When Discord reports that the bot has left or been removed from a server, the bot deletes, in one step, the server's settings, favourites, queue, source preferences and playback state, its custom stations with their sources and check history, and its command-registration record. This does not happen when a server is only temporarily unavailable because of a Discord outage. If the bot is removed while it is offline, it never receives the removal event, so that server's data stays until you delete the volume.
 - To delete a server's data without removing the bot, an admin can remove its custom stations with `/radio remove`. The simplest way to clear everything else is to kick the bot and invite it again.
-- **Copies made earlier are not changed.** Backups in `data/backups/` and any exports still contain the old data until they are rotated out or deleted.
-- To delete everything, remove the data volume (`docker compose down -v`) and any backups you copied elsewhere.
+- **Copies made earlier are not changed.** Backups and exports still contain the old data until they are rotated out or deleted.
+- To delete everything, remove the data volume (`docker compose down -v`), the install's `backups` folder, and any backups or exports you copied elsewhere.
 - If you run a **public** instance, publish your own privacy notice based on this section, give a contact for deletion requests, and respond to them.
