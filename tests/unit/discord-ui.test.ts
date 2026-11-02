@@ -156,7 +156,7 @@ describe('control buttons', () => {
     ]);
   });
 
-  it('lays the buttons out in three short rows, one blurple button at most per row and nothing red', () => {
+  it('lays the buttons out in rows of two or three, one blurple button at most per row and nothing red', () => {
     const { ctx, ids, guilds } = context();
     guilds.enqueue(GUILD, 'fg:fg-chic', null);
     const rows = controlRows(ctx, GUILD, 'fg:fg-dj-radio', true).map((r) => r.toJSON().components);
@@ -166,19 +166,29 @@ describe('control buttons', () => {
           (ids.parse(GUILD, String((c as { custom_id: string }).custom_id)) as { action: string }).action,
       ),
     );
-    // Change station; this station; then the card itself, with ending playback last.
+    // Change station; pick or keep a station; its sources; then the card itself, with ending
+    // playback last. At most three to a row, so a 375-wide phone shows each row on one line.
     expect(actions).toEqual([
       ['prev', 'next', 'skip'],
-      ['obrowse', 'fav', 'srcs', 'insp'],
+      ['obrowse', 'fav'],
+      ['srcs', 'insp'],
       ['now', 'stop', 'leave'],
     ]);
+    const labels = rows.map((r) => r.map((c) => (c as { label: string }).label));
+    expect(labels[0]).toEqual(['Previous', 'Next', 'Skip']);
     const styles = rows.map((r) => r.map((c) => (c as { style: ButtonStyle }).style));
     for (const r of styles) expect(r.filter((s) => s === ButtonStyle.Primary).length).toBeLessThanOrEqual(1);
     expect(styles.flat()).not.toContain(ButtonStyle.Danger);
-    // An empty queue doesn't call for attention.
+    // Skip is blurple while something is queued ("Up next" lists it); an empty queue is grey.
+    expect(styles[0]!.at(-1)).toBe(ButtonStyle.Primary);
     guilds.clearQueue(GUILD);
-    const empty = controlRows(ctx, GUILD, null, true)[0]!.toJSON().components;
-    expect(empty.at(-1)).toMatchObject({ label: 'Skip (queue empty)', style: ButtonStyle.Secondary });
+    const empty = controlRows(ctx, GUILD, null, true);
+    expect(empty[0]!.toJSON().components.at(-1)).toMatchObject({
+      label: 'Skip',
+      style: ButtonStyle.Secondary,
+    });
+    // With no station there is nothing to favourite or inspect, so Browse has its row alone.
+    expect(empty.map((r) => r.toJSON().components.length)).toEqual([3, 1, 3]);
   });
 
   it('adds station buttons carrying the station id, and a queue-aware skip', () => {
@@ -188,7 +198,7 @@ describe('control buttons', () => {
     guilds.toggleFavourite(GUILD, 'fg:fg-dj-radio');
     const rows = controlRows(ctx, GUILD, 'fg:fg-dj-radio');
     const comps = checkComponents({ components: rows });
-    expect(comps.map((c) => c.label)).toContain('Skip (2 queued)');
+    expect(comps.find((c) => c.label === 'Skip')).toMatchObject({ style: ButtonStyle.Primary });
     expect(comps.map((c) => c.label)).toContain('Unfavourite');
     const parsed = parseAll(ids, comps).filter((p) => p && 'action' in p && p.arg);
     expect(parsed.map((p) => p && 'action' in p && [p.action, p.arg])).toEqual([
@@ -204,7 +214,7 @@ describe('control buttons', () => {
     const panel = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic', true) });
     const temporary = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic') });
     expect(panel).toHaveLength(10);
-    expect(panel.map((c) => c.label)).toEqual(expect.arrayContaining(['Skip (queue empty)', 'Browse']));
+    expect(panel.map((c) => c.label)).toEqual(expect.arrayContaining(['Skip', 'Browse']));
     now += 16 * 60_000;
     expect(parseAll(ids, panel).every((p) => p && !p.expired)).toBe(true);
     expect(parseAll(ids, temporary).every((p) => p?.expired)).toBe(true);
@@ -425,7 +435,7 @@ describe('settings view', () => {
     for (const p of parseAll(ids, comps)) expect(p).toMatchObject({ action: 'cfg', expired: false });
     const e = v.embeds[0]!.toJSON();
     // Only the page being edited is shown, so the message stays short on a phone.
-    const name = { access: 'Access', playback: 'Playback', notify: 'Notifications' }[page];
+    const name = { access: 'Access', playback: 'Playback', notify: 'Notices' }[page];
     expect(e.title).toBe(`Radio Bot settings: ${name}`);
     expect((e.fields ?? []).map((f) => f.name)).toEqual([name]);
     const d = e.fields![0]!.value;
@@ -437,11 +447,34 @@ describe('settings view', () => {
     // Every page ends with the page buttons, and has room to spare under Discord's five rows.
     expect(v.components.length).toBeLessThanOrEqual(5);
     const last = v.components.at(-1)!.toJSON().components;
-    expect(last.map((c) => (c as { label?: string }).label)).toEqual(['Access', 'Playback', 'Notifications']);
-    // Option labels are short enough for a phone; the detail is in the description.
+    expect(last.map((c) => (c as { label?: string }).label)).toEqual(['Access', 'Playback', 'Notices']);
+    // Option labels and descriptions are short enough for a phone to show them in full.
     for (const c of comps)
-      for (const o of (Array.isArray(c.options) ? c.options : []) as { label: string }[])
-        expect(o.label.length).toBeLessThanOrEqual(40);
+      for (const o of (Array.isArray(c.options) ? c.options : []) as {
+        label: string;
+        description?: string;
+      }[]) {
+        expect(o.label.length).toBeLessThanOrEqual(30);
+        expect((o.description ?? '').length).toBeLessThanOrEqual(40);
+      }
+  });
+
+  it('puts the three playback switches in one menu, ticked when on', () => {
+    const { ctx, ids, guilds } = context();
+    const s = guilds.updateSettings(GUILD, { autostart: true, voiceLock: true });
+    const comps = checkComponents(configView(ctx, GUILD, s, 'playback'));
+    const menu = comps.find(
+      (c) => (ids.parse(GUILD, String(c.custom_id)) as { arg?: string })?.arg === 'switches',
+    )!;
+    expect(menu).toMatchObject({ min_values: 0, max_values: 3 });
+    const options = menu.options as { value: string; default?: boolean }[];
+    expect(options.map((o) => [o.value, Boolean(o.default)])).toEqual([
+      ['autostart', true],
+      ['resume', false],
+      ['lock', true],
+    ]);
+    // No row of switch buttons any more: they didn't fit a phone's width.
+    expect(comps.filter((c) => c.type === 2).map((c) => c.label)).toEqual(['Access', 'Playback', 'Notices']);
   });
 
   it('marks the current choices in the access and playback selects', () => {
@@ -571,19 +604,18 @@ describe('status embeds', () => {
     expect(nowEmbed(station, status({ state: 'IDLE' }), null).toJSON().title).toBe('Radio is idle');
   });
 
-  it('lays out the song, three short facts and why this source plays', () => {
+  it('lays out the song, the stream and why this source plays', () => {
     const e = nowEmbed(station, status(), '999').toJSON();
     expect(e.title).toBe('▶ Playing: FG CHIC');
     expect(e.color).toBe(COLOR.ok);
     expect(e.description).toBe('-# The station isn’t sending a song or show title right now.');
     const fields = Object.fromEntries((e.fields ?? []).map((f) => [f.name, f]));
-    expect(fields.Channel).toMatchObject({ value: '<#999>', inline: true });
-    // The bitrate carries its evidence here too, as in Sources.
-    expect(fields['Station stream']).toMatchObject({
-      value: 'Direct MP3 · ≈128 kbps (measured)',
-      inline: true,
-    });
-    expect(fields['To Discord']?.value).toMatch(/^Opus · \d+ kbps$/);
+    // One full-width field, not three narrow columns, which wrapped the stream on a phone. The
+    // bitrate carries its evidence here too, as in Sources.
+    expect(fields.Stream?.inline).toBeFalsy();
+    expect(fields.Stream?.value).toMatch(
+      /^Direct MP3 · ≈128 kbps \(measured\)\nTo Discord: Opus · \d+ kbps · in <#999>$/,
+    );
     expect(fields.Source?.value).toMatch(/Verified as this station · checked/);
     const titled = nowEmbed(
       station,

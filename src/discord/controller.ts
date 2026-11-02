@@ -794,12 +794,13 @@ export class RadioController {
             .setCustomId(ctx.ids.make(guildId, 'usesrc', st.id))
             .setPlaceholder('Switch source until the station changes')
             .addOptions(
-              // A short label a phone shows in full; the figures go in the description.
+              // A short label a phone shows in full, and the codec and bitrate below it (about 40
+              // characters, so a phone shows that in full too; the rest is in the list above).
               selection.ordered.slice(0, 25).map((src, n) => ({
                 label: truncate(`#${n + 1} ${src.label ?? 'Source'}`, 100),
                 value: src.id,
                 description: truncate(
-                  `${src.id === selection.selected?.id ? 'Best choice · ' : ''}${sourceFormat(src)}`,
+                  `${src.id === selection.selected?.id ? 'Best · ' : ''}${codecLabel(src.codec, src.profile)} · ${bitrateText(src)}`,
                   100,
                 ),
                 default: src.id === live.playingId,
@@ -2154,10 +2155,18 @@ export class RadioController {
         patch = { memberControlMode: v };
       if (field === 'quality' && (v === 'maximum' || v === 'balanced' || v === 'manual'))
         patch = { qualityMode: v };
+      // The switches menu: a ticked option is on, an unticked one off.
+      if (field === 'switches')
+        patch = {
+          autostart: i.values.includes('autostart'),
+          resumeOnRestart: i.values.includes('resume'),
+          voiceLock: i.values.includes('lock'),
+        };
     } else if (i.isButton() && field === 'vstatus') {
       page = 'notify';
       patch = { voiceChannelStatus: !cur.voiceChannelStatus };
     } else if (i.isButton()) {
+      // The switch buttons of settings pages sent before the switches became a menu.
       page = 'playback';
       if (field === 'autostart') patch = { autostart: !cur.autostart };
       if (field === 'resume') patch = { resumeOnRestart: !cur.resumeOnRestart };

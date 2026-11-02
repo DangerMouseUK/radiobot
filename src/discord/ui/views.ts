@@ -334,42 +334,43 @@ export function controlRows(
       .setCustomId(ctx.ids.make(guildId, action, arg, ttl))
       .setLabel(label)
       .setStyle(style);
-  // Three short rows, so each wraps evenly on a phone: change station, this station, then the
-  // card itself and ending playback last. Blurple marks the main action of a row; nothing here
-  // deletes anything, so nothing is red.
+  // Rows of two or three short buttons: a 375-wide phone has room for about 290 pixels of buttons,
+  // so four in a row would wrap unevenly. Change station; pick or keep a station; look at its
+  // sources; then the card itself, with ending playback last. Blurple marks the main action of a
+  // row; nothing here deletes anything, so nothing is red. Skip shows no count: "Up next" lists
+  // the queue, and the count made the row too wide.
   const tune: ButtonBuilder[] = [
     b('prev', 'Previous', ButtonStyle.Secondary),
     b('next', 'Next', ButtonStyle.Secondary),
   ];
   const queued = queue.length;
-  if (persistent || queued > 0) {
-    tune.push(
-      queued > 0
-        ? b('skip', `Skip (${queued} queued)`, ButtonStyle.Primary)
-        : b('skip', 'Skip (queue empty)', ButtonStyle.Secondary),
-    );
-  }
-  const station: ButtonBuilder[] = [b('obrowse', 'Browse', ButtonStyle.Primary)];
+  if (persistent || queued > 0)
+    tune.push(b('skip', 'Skip', queued > 0 ? ButtonStyle.Primary : ButtonStyle.Secondary));
+  const rows: Row[] = [row(...tune)];
   if (stationId) {
     // The button says what it does, so a second click or an old card can't undo it.
     const fav = ctx.guilds.isFavourite(guildId, stationId);
-    station.push(
-      fav
-        ? b('unfav', 'Unfavourite', ButtonStyle.Secondary, stationId)
-        : b('fav', 'Favourite', ButtonStyle.Secondary, stationId),
-      b('srcs', 'Sources', ButtonStyle.Secondary, stationId),
-      b('insp', 'Inspect', ButtonStyle.Secondary, stationId),
+    rows.push(
+      row(
+        b('obrowse', 'Browse', ButtonStyle.Primary),
+        fav
+          ? b('unfav', 'Unfavourite', ButtonStyle.Secondary, stationId)
+          : b('fav', 'Favourite', ButtonStyle.Secondary, stationId),
+      ),
+      row(
+        b('srcs', 'Sources', ButtonStyle.Secondary, stationId),
+        b('insp', 'Inspect', ButtonStyle.Secondary, stationId),
+      ),
     );
-  }
-  return [
-    row(...tune),
-    row(...station),
+  } else rows.push(row(b('obrowse', 'Browse', ButtonStyle.Primary)));
+  rows.push(
     row(
       b('now', 'Refresh', ButtonStyle.Secondary),
       b('stop', 'Stop', ButtonStyle.Secondary),
       b('leave', 'Leave', ButtonStyle.Secondary),
     ),
-  ];
+  );
+  return rows;
 }
 
 export type ConfigPage = 'access' | 'playback' | 'notify';
@@ -377,7 +378,8 @@ export type ConfigPage = 'access' | 'playback' | 'notify';
 const PAGE_LABEL: Record<ConfigPage, string> = {
   access: 'Access',
   playback: 'Playback',
-  notify: 'Notifications',
+  // "Notices", not "Notifications": the three page buttons then fit one row on a phone.
+  notify: 'Notices',
 };
 
 const IDLE_LABEL: Record<GuildSettings['idleMode'], string> = {
@@ -437,7 +439,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
       ),
     },
     notify: {
-      name: 'Notifications',
+      name: 'Notices',
       value: truncate(
         [
           `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
@@ -514,7 +516,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
           .addOptions(
             opt('same_channel', 'Listeners in the bot’s channel', 'Plus DJs and admins', s.memberControlMode),
             opt('none', 'Only DJs and admins', 'Listeners can only listen', s.memberControlMode),
-            opt('any', 'Anyone', 'Anyone who can use radio commands, from any channel', s.memberControlMode),
+            opt('any', 'Anyone', 'Even from outside the voice channel', s.memberControlMode),
           ),
       ),
       nav,
@@ -526,8 +528,8 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
           .setCustomId(id('idle'))
           .setPlaceholder('When the voice channel is empty')
           .addOptions(
-            opt('leave_when_empty', 'Leave', 'Leave the voice channel when everyone has gone', s.idleMode),
-            opt('pause_when_empty', 'Pause', 'Pause, and play again when someone joins', s.idleMode),
+            opt('leave_when_empty', 'Leave', 'Leave when everyone has gone', s.idleMode),
+            opt('pause_when_empty', 'Pause', 'Play again when someone joins', s.idleMode),
             opt('24x7', 'Keep playing (24/7)', 'Stay in the channel and keep playing', s.idleMode),
           ),
       ),
@@ -536,9 +538,9 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
           .setCustomId(id('quality'))
           .setPlaceholder('Audio quality')
           .addOptions(
-            opt('maximum', 'Maximum', 'Match the station’s own bitrate, up to the limit', s.qualityMode),
+            opt('maximum', 'Maximum', 'Follow the station’s own bitrate', s.qualityMode),
             opt('balanced', 'Balanced', 'Up to 128 kbps', s.qualityMode),
-            opt('manual', 'Manual', 'A fixed bitrate, set with /radio config manual_bitrate', s.qualityMode),
+            opt('manual', 'Manual', 'A fixed bitrate you choose', s.qualityMode),
           ),
       ),
       row(
@@ -550,10 +552,34 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
           .setMaxValues(1)
           .setDefaultChannels(s.preferredVoiceChannelId ? [s.preferredVoiceChannelId] : []),
       ),
+      // One menu for the three switches: three buttons don't fit a phone's width, and the menu
+      // can say what each one does. A ticked option is on.
       row(
-        toggle('autostart', 'Autostart', s.autostart),
-        toggle('resume', 'Resume after restart', s.resumeOnRestart),
-        toggle('lock', 'Channel lock', s.voiceLock),
+        new StringSelectMenuBuilder()
+          .setCustomId(id('switches'))
+          .setPlaceholder('Autostart, resume and lock: all off')
+          .setMinValues(0)
+          .setMaxValues(3)
+          .addOptions(
+            {
+              value: 'autostart',
+              label: 'Autostart',
+              description: 'Play the default station at start-up',
+              default: s.autostart,
+            },
+            {
+              value: 'resume',
+              label: 'Resume after restart',
+              description: 'Carry on with what was playing',
+              default: s.resumeOnRestart,
+            },
+            {
+              value: 'lock',
+              label: 'Channel lock',
+              description: 'Always play in the preferred channel',
+              default: s.voiceLock,
+            },
+          ),
       ),
       nav,
     );

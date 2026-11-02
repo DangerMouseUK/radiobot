@@ -108,7 +108,7 @@ Step-by-step instructions are in [docs/install.md](docs/install.md#1-create-your
   | Attach Files | `/radio export` returns a JSON file |
   | Connect | Join the voice channel |
   | Speak | Play audio |
-  | Set Voice Channel Status | Optional: show the station and song as the voice channel's status (`/radio config` → Notifications). Without it, everything else works |
+  | Set Voice Channel Status | Optional: show the station and song as the voice channel's status (`/radio config` → Notices). Without it, everything else works |
 
   Administrator, Manage Channels, Manage Roles, Manage Messages, Read Message History and Message Content are not needed.
 
@@ -195,7 +195,7 @@ Radio never ends, so the queue moves only when you skip.
 | `/radio source auto <station>` | Admin | Lets the bot choose the station's source again, from its own checks. |
 | `/radio source verify <station> <source> <verdict>` | Admin (+ Operator for pack sources) | Records whether a source really plays this station (`verified`, `mismatch` or `clear`). Admins can review their own server's custom stations. A review of a pack source affects every server, so the admin must also be an operator: listed in `OPERATOR_USER_IDS`, or the application owner (or a member of its team). |
 
-**Buttons** on now-playing messages and the control panel, in three rows: Previous and Next (the next station in the pack, or in your favourites); Browse, Favourite (or Unfavourite, when the station already is one), Sources and Inspect; then Refresh, Stop and Leave. **Skip (n queued)** joins the first row when the queue isn't empty, and is always on the panel. The station list from Browse has a **Show favourites** button (**Show all stations** to go back) that switches between all stations and only this server's favourites.
+**Buttons** on now-playing messages and the control panel, in rows of two or three, so each row fits a phone screen: Previous and Next (the next station in the pack, or in your favourites); Browse and Favourite (or Unfavourite, when the station already is one); Sources and Inspect; then Refresh, Stop and Leave. **Skip** joins the first row when the queue isn't empty (blurple then, with the queue under "Up next"), and is always on the panel. The station list from Browse has a **Show favourites** button (**Show all stations** to go back) that switches between all stations and only this server's favourites.
 
 **Favourites and the default station** do different jobs:
 

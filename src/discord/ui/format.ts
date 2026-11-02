@@ -187,9 +187,9 @@ function streamSummary(s: StationSource): string {
 const CHOICE_TEXT: Record<SelectionResult['conclusion'], string> = {
   'higher-quality-verified': 'The best measured quality of this station’s sources.',
   'no-higher-quality-source-verified':
-    'Its sources carry the same audio; delivery, reliability, start-up time and pack order decided.',
+    'Its sources carry the same audio. Sources shows how this one was chosen.',
   'not-conclusively-determined':
-    'Which sounds better was not conclusively determined (different codecs aren’t compared); delivery, reliability, start-up time and pack order decided.',
+    'Which source sounds better was not conclusively determined. Sources shows how this one was chosen.',
   'higher-quality-source-ranked-lower':
     'Another source measures higher but comes later, because of how it is delivered, its reliability or an admin’s choice.',
   'single-source': 'The only usable source right now.',
@@ -244,15 +244,14 @@ export function nowEmbed(
     return e;
   }
   const s = status.source;
-  e.addFields(
-    { name: 'Channel', value: voiceChannelId ? `<#${voiceChannelId}>` : '—', inline: true },
-    { name: 'Station stream', value: s ? streamSummary(s) : '—', inline: true },
-    {
-      name: 'To Discord',
-      value: status.plan ? `Opus · ${status.plan.targetKbps} kbps` : '—',
-      inline: true,
-    },
-  );
+  // One full-width field: in three side-by-side columns a phone wrapped the stream onto 5 lines.
+  e.addFields({
+    name: 'Stream',
+    value: [
+      s ? streamSummary(s) : '—',
+      `To Discord: ${status.plan ? `Opus · ${status.plan.targetKbps} kbps` : '—'}${voiceChannelId ? ` · in <#${voiceChannelId}>` : ''}`,
+    ].join('\n'),
+  });
   if (s) {
     const verified =
       s.identityStatus === 'verified' ? '✅ Verified as this station' : '❔ Not yet verified as this station';

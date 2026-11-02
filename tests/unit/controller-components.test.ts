@@ -370,7 +370,7 @@ describe('settings menus and buttons', () => {
     for (const [field, label] of [
       ['page-access', 'Page: Access'],
       ['page-playback', 'Page: Playback'],
-      ['page-notify', 'Page: Notifications'],
+      ['page-notify', 'Page: Notices'],
     ] as const) {
       const i = await t.click(t.people.admin, cfg(t, field));
       expect(methods(i)).toEqual(['update']);
@@ -387,7 +387,7 @@ describe('settings menus and buttons', () => {
     const pvoice = await t.click(t.people.admin, cfg(t, 'pvoice'), 'channel', [V2]);
     expect(page(pvoice)).toBe('Page: Playback');
     const notify = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', ['800000000000000022']);
-    expect(page(notify)).toBe('Page: Notifications');
+    expect(page(notify)).toBe('Page: Notices');
     expect(t.guilds.getSettings(GUILD)).toMatchObject({
       allowedTextChannelIds: ['800000000000000021'],
       allowedVoiceChannelIds: [V1, V2],
@@ -478,7 +478,26 @@ describe('settings menus and buttons', () => {
     expect(s.encoderRefreshes).toBe(2);
   });
 
-  it('the Autostart, Resume and Lock buttons each switch their setting', async () => {
+  it('the switches menu turns on exactly the ticked switches, and stays on the Playback page', async () => {
+    const t = setup();
+    t.guilds.updateSettings(GUILD, { autostart: false, resumeOnRestart: true, voiceLock: false });
+    const on = await t.click(t.people.admin, cfg(t, 'switches'), 'string', ['autostart', 'lock']);
+    expect(page(on)).toBe('Page: Playback');
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({
+      autostart: true,
+      resumeOnRestart: false,
+      voiceLock: true,
+    });
+    // Unticking everything turns every switch off.
+    await t.click(t.people.admin, cfg(t, 'switches'), 'string', []);
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({
+      autostart: false,
+      resumeOnRestart: false,
+      voiceLock: false,
+    });
+  });
+
+  it('the switch buttons of settings pages sent before the menu still work', async () => {
     const t = setup();
     const before = t.guilds.getSettings(GUILD);
     for (const field of ['autostart', 'resume', 'lock']) {

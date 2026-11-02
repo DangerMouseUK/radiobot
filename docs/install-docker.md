@@ -128,8 +128,8 @@ As a bot admin (the server owner, or a member with Discord's **Administrator** p
    - **Playback page:**
      - idle mode (*Leave* is the default, *Pause*, or *Keep playing (24/7)*);
      - quality mode (*Maximum*, *Balanced* or *Manual*);
-     - the preferred voice channel, plus the *Autostart*, *Resume after restart* and *Channel lock* switches.
-   - **Notifications page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and the *Voice channel status* switch, which shows what's playing as the voice channel's status (on by default; needs the optional Set Voice Channel Status permission).
+     - the preferred voice channel, and one menu for the *Autostart*, *Resume after restart* and *Channel lock* switches (a ticked switch is on).
+   - **Notices page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and the *Voice channel status* switch, which shows what's playing as the voice channel's status (on by default; needs the optional Set Voice Channel Status permission).
    - Set a default station with `/radio config default_station:` and a manual Opus target with `/radio config manual_bitrate:`.
 2. Join a voice channel and run **`/radio play`**, then start typing a station's name and pick it from the list, or use **`/radio browse`**.
 3. Run **`/radio quality`** to see the source, the Discord output and the processing report.
