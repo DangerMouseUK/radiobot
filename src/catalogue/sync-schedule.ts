@@ -1,5 +1,7 @@
 /** Up to this much random delay is added to each run, so packs (and installations) don't all sync at once. */
 const JITTER_MS = 15 * 60_000;
+/** Node fires any longer setTimeout after 1 ms, so longer waits are made of several timers. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 export interface SyncScheduleOptions {
   /** Packs that declare an official list. */
@@ -25,6 +27,12 @@ export function scheduleCatalogueSyncs(o: SyncScheduleOptions): { stop(): void; 
   let stopped = false;
   const schedule = (packId: string, ms: number) => {
     if (stopped) return;
+    if (ms > MAX_TIMER_MS) {
+      const t = setTimeout(() => schedule(packId, ms - MAX_TIMER_MS), MAX_TIMER_MS);
+      t.unref?.();
+      timers.set(packId, t);
+      return;
+    }
     const t = setTimeout(async () => {
       timers.delete(packId);
       try {

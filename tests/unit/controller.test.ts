@@ -561,7 +561,8 @@ describe('buttons and menus are authorised again on every click', () => {
     let now = Date.now();
     const clocked = new ComponentIds('test-secret', () => now);
     const id = clocked.make(GUILD, 'stats', '', 60_000);
-    now += 61_000;
+    // Expiry is rounded up to the next whole minute.
+    now += 121_000;
     (t.ctx as { ids: ComponentIds }).ids = clocked;
     const expired = await t.click(t.people.admin, id);
     expect(expired.text).toMatch(/expired/);
@@ -664,6 +665,19 @@ describe('/radio join', () => {
     expect(i.violations).toEqual([]);
     expect(i.calls.map((c) => c.method)).toEqual(['deferReply', 'editReply']);
     expect(t.sessions.get(GUILD)?.joins).toEqual([V1]);
+  });
+
+  it('takes one play token, not two, when it plays the default station', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const station = t.stations.listStations(GUILD)[0]!;
+    t.guilds.updateSettings(GUILD, { defaultStationId: station.id });
+    await t.command(t.people.admin, { sub: 'join' });
+    expect(t.sessions.plays.at(-1)?.stationId).toBe(station.id);
+    // Six per 30 s: one went on the join, so five are left.
+    const left = Array.from({ length: 6 }, () => t.ctx.limits.playUser.take(ADMIN));
+    expect(left.slice(0, 5)).toEqual([0, 0, 0, 0, 0]);
+    expect(left[5]).toBeGreaterThan(0);
   });
 });
 
@@ -845,6 +859,37 @@ describe('Next and Previous station buttons', () => {
     await t.click(t.people.admin, t.ids.make(GUILD, 'prev'));
     expect(t.sessions.plays.at(-1)!.stationId).toBe(start.id);
   });
+
+  it('start from the first station (Next) or the last (Previous) when nothing is playing', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const all = t.stations.listStations(GUILD);
+    const playable = ['available', 'degraded', 'unverified'];
+    const ring = all.filter(
+      (s) => s.provider === all[0]!.provider && playable.includes(t.ctx.sources.availability(s)),
+    );
+    await t.click(t.people.admin, t.ids.make(GUILD, 'prev'));
+    expect(t.sessions.plays.at(-1)!.stationId).toBe(ring.at(-1)!.id);
+    t.sessions.plays.length = 0;
+    await t.click(t.people.admin, t.ids.make(GUILD, 'next'));
+    expect(t.sessions.plays.at(-1)!.stationId).toBe(ring[0]!.id);
+  });
+
+  it('refuses instead of restarting the station when it is the only one to move to', async () => {
+    const t = setup();
+    t.putInVoice(t.people.admin, V1);
+    const playable = ['available', 'degraded', 'unverified'];
+    const [start, other] = t.stations
+      .listStations(GUILD)
+      .filter((s) => playable.includes(t.ctx.sources.availability(s)));
+    Object.assign(t.sessions.ensure(GUILD), { connected: true, channelId: V1, stationId: start!.id });
+    t.guilds.setFavourites(GUILD, [start!.id, other!.id]);
+    const availability = t.ctx.sources.availability.bind(t.ctx.sources);
+    t.ctx.sources.availability = (s) => (s.id === other!.id ? 'no_source' : availability(s));
+    const next = await t.click(t.people.admin, t.ids.make(GUILD, 'next'));
+    expect(next.text).toMatch(/no other playable station/);
+    expect(t.sessions.plays).toEqual([]);
+  });
 });
 
 describe('favourites and the default station', () => {
@@ -991,12 +1036,12 @@ describe('choosing another source while a station plays', () => {
     const { t, st, usable } = playing();
     t.putInVoice(t.people.member, V1);
     // The button names the station; the source it prefers is the one playing when it is pressed.
-    const denied = await t.click(t.people.member, t.ids.make(GUILD, 'srcpref', st.id));
+    const denied = await t.click(t.people.member, t.ids.make(GUILD, 'spref', st.id));
     expect(denied.text).toMatch(/Only the server owner/);
     expect(t.guilds.getPreference(GUILD, st.id)).toBeNull();
-    await t.click(t.people.admin, t.ids.make(GUILD, 'srcpref', st.id));
+    await t.click(t.people.admin, t.ids.make(GUILD, 'spref', st.id));
     expect(t.guilds.getPreference(GUILD, st.id)).toMatchObject({ mode: 'prefer', sourceId: usable[0] });
-    await t.click(t.people.admin, t.ids.make(GUILD, 'srcauto', st.id));
+    await t.click(t.people.admin, t.ids.make(GUILD, 'sauto', st.id));
     expect(t.guilds.getPreference(GUILD, st.id)?.mode ?? 'auto').toBe('auto');
   });
 

@@ -10,7 +10,7 @@ import {
   type StationPack,
 } from '../../src/catalogue/packs.ts';
 import { loadConfig } from '../../src/config/env.ts';
-import { ComponentIds } from '../../src/discord/components/custom-id.ts';
+import { COMPONENT_ACTIONS, ComponentIds, MAX_ARG_LENGTH } from '../../src/discord/components/custom-id.ts';
 import { MAX_SLUG_LENGTH } from '../../src/shared/text.ts';
 
 const roots: string[] = [];
@@ -106,7 +106,8 @@ describe('loadPack validation', () => {
       ).stations[0]!.id,
     ).toBe(longest);
     const ids = new ComponentIds('secret');
-    for (const action of ['fav', 'srcs', 'insp', 'rescan', 'play']) {
+    expect(longest).toHaveLength(MAX_ARG_LENGTH);
+    for (const action of COMPONENT_ACTIONS) {
       for (const ttl of [15 * 60_000, null]) {
         expect(ids.parse('123456789012345678', ids.make('123456789012345678', action, longest, ttl))).toEqual(
           {

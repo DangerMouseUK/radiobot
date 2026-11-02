@@ -147,7 +147,7 @@ describe('control buttons', () => {
       'next',
       'stop',
       'leave',
-      'openbrowse',
+      'obrowse',
       'now',
     ]);
   });
@@ -542,21 +542,25 @@ describe('status embeds', () => {
 
   it('stays within the 6000-character embed limit for stations with many detailed sources', () => {
     const now = Date.now();
-    const sources: StationSource[] = Array.from({ length: 12 }, (_, i) =>
-      makeSource({
-        id: `example-station-with-a-long-name-source-${i}`,
-        label: `Direct mount ${i} (high bitrate, primary CDN)`,
-        url: `https://stream-${i}.example.com/a/very/long/mount/path/for/source/${i}/stream.mp3`,
-        effectiveHost: `n0${i}-eu1.cdn.example.com`,
-        priority: i,
-        lastFailureCode: 'STREAM_STALLED',
-        icyName: 'An unusually long stream name that the station sends in its ICY headers',
-        healthScore: 40,
-        cooldownUntil: new Date(now + 60_000).toISOString(),
-      }),
-    );
-    const e = sourcesEmbed(station, sources, selectSource(sources, null, { now }), true);
-    expect(embedSize(e)).toBeLessThanOrEqual(6000);
-    expect(JSON.stringify(e.toJSON())).toMatch(/more source\(s\) not shown/);
+    // Sources of slightly different sizes, so one of them fills the embed close to its budget.
+    for (let extra = 0; extra < 60; extra += 3) {
+      const sources: StationSource[] = Array.from({ length: 12 }, (_, i) =>
+        makeSource({
+          id: `example-station-with-a-long-name-source-${i}`,
+          label: `Direct mount ${i} (high bitrate, primary CDN)`,
+          url: `https://stream-${i}.example.com/a/very/long/mount/path/for/source/${i}/stream.mp3`,
+          effectiveHost: `n0${i}-eu1.cdn.example.com`,
+          priority: i,
+          lastFailureCode: 'STREAM_STALLED',
+          icyName: `An unusually long stream name ${'x'.repeat(extra)}`,
+          healthScore: 40,
+          cooldownUntil: new Date(now + 60_000).toISOString(),
+        }),
+      );
+      const e = sourcesEmbed(station, sources, selectSource(sources, null, { now }), true);
+      // The controller may add a server override field (about 125 characters) and a re-check summary.
+      expect(embedSize(e)).toBeLessThanOrEqual(5700);
+      expect(JSON.stringify(e.toJSON())).toMatch(/more source\(s\) not shown/);
+    }
   });
 });

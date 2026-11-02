@@ -101,8 +101,10 @@ For play and join, the target is chosen in this order: the locked preferred chan
 The PRD requires that "a button posted in a public channel must not become an unrestricted bypass". Here is how that is met:
 
 1. **Every component interaction is re-authorised** with the clicking user's current roles, channel and voice state, exactly as the matching slash command would be. A Stop button in a public panel still needs the *control* capability. A settings menu still needs *admin*.
-2. **Signed component IDs.** Every custom ID has the form `rb1:<action>:<arg>:<expiry>:<signature>`. The signature is an HMAC-SHA256, truncated to 16 base64url characters, over the guild ID and the body. It uses a per-installation secret that is generated once and stored in the database (`app_meta.components.secret`). The check uses a constant-time comparison. A forged ID, or an ID copied from another server, fails the check with "This control is not valid here.". **The signature is not authorisation.** It only proves that this installation issued the ID for this server. Step 1 is still applied.
-3. **Expiry.** Now-playing buttons, browse pages and ambiguity pickers expire after 15 minutes, settings pages and the `/radio stats` panel after 30 minutes, and import previews after 10 minutes. Expired controls answer "These controls have expired. Run the command again.". Control-panel buttons have no expiry so that the panel keeps working across restarts, and they are still re-authorised on every click.
+2. **Signed component IDs.** Every custom ID has the form `rb2:<action>:<arg>:<expiry>:<signature>`. The signature is an HMAC-SHA256, truncated to 16 base64url characters, over the guild ID and the body. It uses a per-installation secret that is generated once and stored in the database (`app_meta.components.secret`). The check uses a constant-time comparison. A forged ID, or an ID copied from another server, fails the check with "This button or menu is not valid here.". **The signature is not authorisation.** It only proves that this installation issued the ID for this server. Step 1 is still applied.
+   - Every ID fits Discord's 100-character limit by construction: actions are at most 7 characters (all listed in `COMPONENT_ACTIONS`), the argument at most 65, which is the longest possible station ID, and the expiry 5. Building an ID with anything longer is refused.
+   - IDs in the older `rb1` format (Radio Bot 1.0.5 and earlier) are still checked, then treated as expired. The control panel is redrawn when the bot starts, so its buttons are replaced by themselves.
+3. **Expiry.** Now-playing buttons, browse pages and ambiguity pickers expire after 15 minutes, settings pages and the `/radio stats` panel after 30 minutes, and import previews after 10 minutes, each rounded up to the next whole minute. Expired controls answer "These buttons have expired. Run the command again.". Control-panel buttons have no expiry so that the panel keeps working across restarts, and they are still re-authorised on every click.
 4. **Server-held state.** Browse sessions and import previews are referenced by a random token that maps to server-side state. An import can only be applied by an admin of the same server before its preview expires, and only once.
 5. **Superseding.** A new play or switch increments the session's generation counter, so an older request that is still pending cannot overwrite a newer one. Its reply says "Superseded".
 
@@ -114,7 +116,7 @@ These are in-memory token buckets (`RateLimits` in `src/discord/context.ts`). Ea
 |---|---|---|
 | Play or switch | per user | 6 per 30 s |
 | Play or switch | per server | 12 per 30 s |
-| Re-probe (`/radio rescan`, re-probe button) | per server | 3 per 10 min |
+| Re-probe (`/radio rescan`, re-probe button, `/radio edit` with a new URL) | per server | 3 per 10 min |
 | Add custom station | per server | 5 per hour |
 | Catalogue sync | per server | 2 per hour |
 | Catalogue sync | whole installation | 1 per 10 min |
