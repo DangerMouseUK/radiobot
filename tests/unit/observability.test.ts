@@ -40,29 +40,29 @@ describe('heartbeat file (Docker HEALTHCHECK)', () => {
     ...o,
   });
 
-  it('lives next to the database and is written atomically', () => {
+  it('lives next to the database and is written atomically', async () => {
     const dir = tempDir();
     const path = heartbeatPath(join(dir, 'data', 'radio-bot.sqlite'));
     expect(path).toBe(join(dir, 'data', 'health.json'));
-    writeHeartbeat(path, snap());
+    await writeHeartbeat(path, snap());
     expect(checkHeartbeat(path)).toEqual({ healthy: true, reason: 'ok' });
   });
 
-  it('reports stale, unhealthy and missing heartbeats', () => {
+  it('reports stale, unhealthy and missing heartbeats', async () => {
     const path = join(tempDir(), 'health.json');
     expect(checkHeartbeat(path)).toEqual({ healthy: false, reason: 'no heartbeat file' });
-    writeHeartbeat(path, snap({ at: new Date(Date.now() - 120_000).toISOString() }));
+    await writeHeartbeat(path, snap({ at: new Date(Date.now() - 120_000).toISOString() }));
     expect(checkHeartbeat(path).reason).toMatch(/heartbeat is 12\d s old/);
-    writeHeartbeat(path, snap({ at: new Date(Date.now() + 60_000).toISOString() }));
+    await writeHeartbeat(path, snap({ at: new Date(Date.now() + 60_000).toISOString() }));
     expect(checkHeartbeat(path).healthy).toBe(false);
-    writeHeartbeat(path, snap({ dbOk: false }));
+    await writeHeartbeat(path, snap({ dbOk: false }));
     expect(checkHeartbeat(path).reason).toBe('database check failed');
-    writeHeartbeat(path, snap({ discordReady: false }));
+    await writeHeartbeat(path, snap({ discordReady: false }));
     expect(checkHeartbeat(path).reason).toBe('not connected to Discord');
-    writeHeartbeat(path, snap({ ffmpegOk: false }));
+    await writeHeartbeat(path, snap({ ffmpegOk: false }));
     expect(checkHeartbeat(path)).toEqual({ healthy: false, reason: 'ffmpeg unavailable or missing libopus' });
     // Heartbeats from before the field existed still count as healthy.
-    writeHeartbeat(path, snap({ ffmpegOk: undefined }));
+    await writeHeartbeat(path, snap({ ffmpegOk: undefined }));
     expect(checkHeartbeat(path).healthy).toBe(true);
     writeFileSync(path, '{ not json');
     expect(checkHeartbeat(path).healthy).toBe(false);

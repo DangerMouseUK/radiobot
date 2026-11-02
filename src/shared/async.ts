@@ -99,3 +99,24 @@ export function linkedSignal(
   if (list.length === 0) return new AbortController().signal;
   return list.length === 1 ? list[0]! : AbortSignal.any(list);
 }
+
+/** Gives the event loop a turn: timers, I/O and voice packets that are due go first. */
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Splits long synchronous work into slices: `await slice()` gives the event loop a turn once
+ * `budgetMs` have passed since the last one, so voice packets are not held up behind the work.
+ */
+export function timeSlicer(
+  budgetMs: number,
+  now: () => number = () => performance.now(),
+): () => Promise<void> {
+  let start = now();
+  return async () => {
+    if (now() - start < budgetMs) return;
+    await yieldToEventLoop();
+    start = now();
+  };
+}

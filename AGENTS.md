@@ -69,11 +69,13 @@ src/
                         register.ts, notifier.ts, presence.ts (bot status),
                         voice-status.ts (voice channel status),
                         voice-access.ts, context.ts
-  persistence/          db.ts (node:sqlite, migrations, backups), repositories/ (stations, guilds; MetaRepository lives in guilds.ts)
+  persistence/          db.ts (node:sqlite, migrations, backups), checkpoint.ts + checkpoint-worker.ts
+                        (WAL checkpoints on a worker thread), repositories/ (stations, guilds; MetaRepository lives in guilds.ts)
   observability/        logger, health (health.json heartbeat, diagnostics server), metrics, netstats,
                         event-loop (event-loop delay for /radio stats)
   import-export/        /radio export and import
-  shared/               errors (reason codes), backoff, rate limits, redaction, text, async helpers, paths
+  shared/               errors (reason codes), backoff, rate limits, redaction, text, async helpers, paths,
+                        workers (one-off worker threads)
 scripts/                validate-catalogue, register-commands, healthcheck, backup (CLI entry points);
                         radio-bot.sh, the bash manager behind the `radio-bot` command (install, update,
                         backup, restore, uninstall …) for Docker Compose installs
@@ -131,7 +133,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 **Correctness**
 
 7. **The correct station beats the best bitrate.** A source is eligible only if its identity is verified, it is healthy and it is not in cooldown (`src/streams/ranking.ts`). If a station has no eligible source, the bot says so and plays nothing in its place. Don't relax the identity or eligibility gates without an issue first.
-8. **Transport tier comes first:** direct streams (tier 0), then unknown (1), then HLS (2) as a last resort, whatever their bitrate. Within a tier, rank by evidence. Never compare bitrates across codecs.
+8. **Transport tier comes first:** direct streams (tier 0), then unknown (1), then HLS (2) as a last resort, whatever their bitrate. Within a tier, rank by evidence. Never compare bitrates across codecs, with one deliberately narrow exception: AAC-LC beats HE-AAC (v1 or v2) when both rates are measured and AAC-LC is at least 96 kbps and at least twice the HE-AAC rate (`aacLcOverHeAac()` in `src/streams/ranking.ts`). Never widen it without an issue first.
 9. **No claim without evidence.** User-facing text distinguishes `measured`, `codec-metadata`, `manifest`, `advertised` and `unknown` bitrates, and says "not conclusively determined" when that's the truth. Never claim "HD" or "lossless".
 10. **No recording.** Probe samples are held in memory and then discarded. The bot is self-deafened and never receives voice audio.
 

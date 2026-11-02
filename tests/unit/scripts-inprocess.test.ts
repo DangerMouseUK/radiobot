@@ -370,9 +370,9 @@ describe('healthcheck (in process)', () => {
       out: 'unhealthy: no heartbeat file\n',
       err: '',
     });
-    writeHeartbeat(join(dir, 'health.json'), beat({ discordReady: false }));
+    await writeHeartbeat(join(dir, 'health.json'), beat({ discordReady: false }));
     expect((await runScript('healthcheck.ts')).out).toBe('unhealthy: not connected to Discord\n');
-    writeHeartbeat(join(dir, 'health.json'), beat());
+    await writeHeartbeat(join(dir, 'health.json'), beat());
     expect(await runScript('healthcheck.ts')).toEqual({ code: 0, out: 'healthy: ok\n', err: '' });
   });
 
@@ -382,7 +382,7 @@ describe('healthcheck (in process)', () => {
     process.chdir(dir);
     expect((await runScript('healthcheck.ts')).code).toBe(1);
     mkdirSync(join(dir, 'data'));
-    writeHeartbeat(join(dir, 'data', 'health.json'), beat());
+    await writeHeartbeat(join(dir, 'data', 'health.json'), beat());
     expect(await runScript('healthcheck.ts')).toEqual({ code: 0, out: 'healthy: ok\n', err: '' });
   });
 });

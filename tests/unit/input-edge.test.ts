@@ -107,6 +107,7 @@ const newStats = (): InputStats => ({
   segmentFailures: 0,
   playlistFailures: 0,
   skippedSegments: 0,
+  liveEdgeSkips: 0,
 });
 
 /** A media playlist with `count` segments named seg<sequence>.ts, starting at `seq`. */
@@ -185,6 +186,7 @@ describe('HlsReader: following a live playlist', () => {
     const chunks = await drain(reader(client, media(0, 3), 1, stats));
     expect(chunks.map((c) => c[1])).toEqual([2, 12, 13]);
     expect(stats.skippedSegments).toBe(7);
+    expect(stats.liveEdgeSkips).toBe(1);
   });
 
   it('retries a failing playlist with growing waits and gives up after five failures in a row', async () => {
@@ -239,6 +241,8 @@ describe('HlsReader: segments', () => {
     expect(chunks.map((c) => c[1])).toEqual([0, 1, 3]);
     expect(stats.segmentFailures).toBe(3);
     expect(stats.skippedSegments).toBe(1);
+    // A failed segment skipped on the way is not a jump to the live edge.
+    expect(stats.liveEdgeSkips).toBe(0);
     expect(stats.segmentsFetched).toBe(3);
   });
 

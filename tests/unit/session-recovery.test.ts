@@ -140,7 +140,7 @@ function setup(opts: Options = {}) {
   ];
   const links: FakeLink[] = [];
   const pipelines: FakePipeline[] = [];
-  const inputs: Array<{ closed: boolean }> = [];
+  const inputs: Array<{ closed: boolean; stats: { skippedSegments: number; liveEdgeSkips: number } }> = [];
   const notices: SessionNotice[] = [];
   const failures: string[] = [];
   const metrics = new Metrics();
@@ -174,11 +174,18 @@ function setup(opts: Options = {}) {
       if (signal.aborted) throw new RadioError('CANCELLED', 'aborted');
       await opts.openInput?.(opens);
       opens++;
-      const record = { closed: false };
+      const stats = {
+        segmentHost: null,
+        segmentsFetched: 0,
+        segmentFailures: 0,
+        skippedSegments: 0,
+        liveEdgeSkips: 0,
+      };
+      const record = { closed: false, stats };
       inputs.push(record);
       return {
         info: { transport: source.transport, finalHost: 'stream.example.com', hls: null },
-        stats: { segmentHost: null, segmentsFetched: 0, segmentFailures: 0, skippedSegments: 0 },
+        stats,
         close() {
           record.closed = true;
         },
@@ -303,7 +310,7 @@ describe('GuildSession: audio ending in the player', () => {
 });
 
 describe('GuildSession: voice connection failures', () => {
-  it('retries a voice connect that timed out, then gives up with a visible error', async () => {
+  it('retries a voice connect that timed out, says so once, then keeps trying slowly', async () => {
     const t = setup({
       connect: () => {
         throw new RadioError('VOICE_CONNECT_TIMEOUT', 'Could not connect to the voice channel in time.');
@@ -321,9 +328,17 @@ describe('GuildSession: voice connection failures', () => {
     expect(t.connects()).toBe(3);
     expect(t.notices).toHaveLength(1);
     expect(t.notices[0]).toMatchObject({ kind: 'error', code: 'VOICE_CONNECT_TIMEOUT' });
-    expect(t.notices[0]!.message).toMatch(/I couldn’t reconnect\. Use \/radio play to try again\.$/);
-    await wait(50);
-    expect(t.connects()).toBe(3);
+    expect(t.notices[0]!.message).toMatch(
+      /I’ll keep trying every couple of minutes\. \/radio stop cancels it\.$/,
+    );
+    // Every noSourceRetryMs (here 200 ms) it tries again, without another notice.
+    await until(() => t.connects() >= 5);
+    expect(t.session.state).toBe('ERROR');
+    expect(t.notices).toHaveLength(1);
+    await t.session.stop();
+    const after = t.connects();
+    await wait(300);
+    expect(t.connects()).toBe(after);
   });
 
   it('does not retry a voice failure that a retry cannot fix', async () => {
@@ -406,6 +421,19 @@ describe('GuildSession: watchdog', () => {
     await until(() => t.pipelines.length >= 2 && t.session.state === 'PLAYING');
     expect(t.pipelines[0]!.stopped).toBe(true);
     expect(t.failures).toEqual([]);
+  });
+
+  it('does not count the gap an HLS skip to the live edge left as drift', async () => {
+    const t = setup({ timings: { lagMs: 100, watchdogIntervalMs: 20 } });
+    await t.session.play('mypack:my-station', 'voice-1', 'u1');
+    // The player reports no audio sent, but the reader keeps skipping forward to the live edge.
+    const skipping = setInterval(() => t.inputs[0]!.stats.liveEdgeSkips++, 10);
+    await wait(300);
+    clearInterval(skipping);
+    expect(t.metrics.get('playback.resync')).toBe(0);
+    expect(t.pipelines).toHaveLength(1);
+    // Once it stops skipping, real drift is caught again.
+    await until(() => t.metrics.get('playback.resync') >= 1);
   });
 
   it('measures packets per second for the stats panel', async () => {

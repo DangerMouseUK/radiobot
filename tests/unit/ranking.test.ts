@@ -44,11 +44,47 @@ describe('fidelity comparison', () => {
     expect(compareFidelity(mp3, aac).relation).toBe('inconclusive');
   });
 
+  it('ranks AAC-LC above HE-AAC only when both are measured and AAC-LC is at least 96 kbps and twice the rate', () => {
+    const lc = (kbps: number | null, codecKbps: number | null = kbps) =>
+      makeSource({
+        id: 'lc',
+        codec: 'aac',
+        profile: 'LC',
+        measuredBitrateKbps: kbps,
+        codecBitrateKbps: codecKbps,
+      });
+    const he = (kbps: number | null, profile = 'HE-AAC') =>
+      makeSource({ id: 'he', codec: 'aac', profile, measuredBitrateKbps: kbps, codecBitrateKbps: kbps });
+    expect(compareFidelity(lc(128), he(64)).relation).toBe('a');
+    expect(compareFidelity(he(48), lc(96)).relation).toBe('b');
+    expect(compareFidelity(lc(320), he(48, 'HE-AACv2')).relation).toBe('a');
+    expect(compareFidelity(lc(128), he(64)).reason).toBe(
+      '128 kbps AAC-LC vs 64 kbps HE-AAC: AAC-LC at twice the rate or more',
+    );
+    // Closer than twice, below 96 kbps, or a figure that isn't measured: still inconclusive.
+    expect(compareFidelity(lc(112), he(64)).relation).toBe('inconclusive');
+    expect(compareFidelity(lc(80), he(32)).relation).toBe('inconclusive');
+    expect(compareFidelity(lc(null, 320), he(48)).relation).toBe('inconclusive');
+    expect(compareFidelity(lc(320), he(null)).relation).toBe('inconclusive');
+    // HE-AAC never wins on bitrate, and no other pair of codecs is compared.
+    expect(compareFidelity(he(128), lc(48)).relation).toBe('inconclusive');
+    const mp3 = makeSource({ id: 'mp3', codec: 'mp3', measuredBitrateKbps: 320 });
+    expect(compareFidelity(mp3, he(48)).relation).toBe('inconclusive');
+  });
+
   it('treats near-equal same-codec bitrates as equal', () => {
     expect(
       compareFidelity(makeSource({ measuredBitrateKbps: 128 }), makeSource({ measuredBitrateKbps: 131 }))
         .relation,
     ).toBe('equal');
+  });
+
+  it('tells 112 from 128 kbps when both are measured, but not when either is only metadata', () => {
+    const measured = (kbps: number) => makeSource({ measuredBitrateKbps: kbps, codecBitrateKbps: kbps });
+    expect(compareFidelity(measured(128), measured(112)).relation).toBe('a');
+    expect(compareFidelity(measured(128.1), measured(128)).relation).toBe('equal');
+    const metadata = makeSource({ measuredBitrateKbps: null, codecBitrateKbps: 112 });
+    expect(compareFidelity(measured(128), metadata).relation).toBe('equal');
   });
 
   it('prefers a measurably higher same-codec bitrate, but not an advertised-only one', () => {
@@ -122,10 +158,14 @@ describe('selection', () => {
       sourceId: 'b',
       updatedAt: '',
     };
-    expect(selectSource([a, b], pin, { now }).selected?.id).toBe('b');
+    expect(selectSource([a, b], pin, { now })).toMatchObject({
+      selected: { id: 'b' },
+      preferredSourceId: 'b',
+    });
     const r = selectSource([a, { ...b, verificationState: 'offline' as const }], pin, { now });
     expect(r.selected?.id).toBe('a');
     expect(r.degraded).toBe(true);
+    expect(r.preferredSourceId).toBeNull();
     expect(r.explanation[0]).toMatch(/Degraded: the pinned source can’t be used/);
   });
 

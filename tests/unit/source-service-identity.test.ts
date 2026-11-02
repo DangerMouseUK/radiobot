@@ -438,3 +438,122 @@ describe('playback health', () => {
     expect(() => t.service.recordPlaybackSuccess('nope')).not.toThrow();
   });
 });
+
+describe('playback health: blips, holds and the playing source', () => {
+  it('needs repeated failures over a minute to put a source on hold, and counts one blip once', () => {
+    const t = setup([{ id: 'a', patch: verified() }]);
+    const start = Date.now();
+    // Four quick failures (a 12 s blip and its retries) don't trip the breaker.
+    for (const at of [0, 1_000, 4_000, 12_000])
+      expect(t.service.recordPlaybackFailure('a', 'STREAM_EOF', start + at)).toBe(false);
+    expect(t.source('a').cooldownUntil).toBeNull();
+    // Several servers hearing the same blip at once count once.
+    expect(t.service.recordPlaybackFailure('a', 'STREAM_EOF', start + 12_200)).toBe(false);
+    expect(t.source('a').consecutiveFailures).toBe(4);
+    // Still failing a minute later: now it is put on hold.
+    expect(t.service.recordPlaybackFailure('a', 'STREAM_EOF', start + 61_000)).toBe(true);
+    expect(t.source('a').cooldownUntil).not.toBeNull();
+  });
+
+  it('starts a new streak after a good check, so an old failover never makes a later blip trip it', () => {
+    const t = setup([{ id: 'a', patch: verified() }]);
+    const start = Date.now();
+    for (const at of [0, 1_000, 4_000, 12_000])
+      t.service.recordPlaybackFailure('a', 'STREAM_EOF', start + at);
+    t.stations.recordSuccess('a'); // a background check worked
+    const hour = start + 60 * 60_000;
+    for (const at of [0, 1_000, 4_000]) t.service.recordPlaybackFailure('a', 'STREAM_EOF', hour + at);
+    expect(t.service.recordPlaybackFailure('a', 'STREAM_EOF', hour + 12_000)).toBe(false);
+    expect(t.source('a').cooldownUntil).toBeNull();
+  });
+
+  it('never re-checks a source the safety rules block just because its last check failed', () => {
+    const t = setup([{ id: 'a', patch: verified({ verificationState: 'blocked_by_policy' }) }]);
+    const failedAt = Date.now() + 1_000;
+    t.stations.recordFailure('a', 'ADDRESS_BLOCKED', new Date(failedAt).toISOString());
+    expect(t.service.needsProbe(t.source('a'), failedAt + 6 * 60_000)).toBe(false);
+  });
+
+  it('starts a new streak after steady playback, and steady playback clears a failed check', () => {
+    const t = setup([{ id: 'a', patch: verified({ verificationState: 'offline' }) }]);
+    const start = Date.now();
+    t.service.recordPlaybackFailure('a', 'STREAM_EOF', start);
+    t.service.recordPlaybackSuccess('a');
+    expect(t.source('a').verificationState).toBe('eligible');
+    for (const at of [70_000, 71_000, 74_000]) t.service.recordPlaybackFailure('a', 'STREAM_EOF', start + at);
+    // The streak began at 70 s, so 82 s is only 12 s into it.
+    expect(t.service.recordPlaybackFailure('a', 'STREAM_EOF', start + 82_000)).toBe(false);
+  });
+
+  it('re-checks a source on hold every couple of minutes when nothing else can play, and a good check ends the hold', async () => {
+    const twoMinAgo = new Date(Date.now() - 3 * 60_000).toISOString();
+    const t = setup([
+      {
+        id: 'a',
+        patch: verified({
+          verificationState: 'cooldown',
+          lastProbeAt: twoMinAgo,
+        }),
+      },
+    ]);
+    t.stations.setCooldown('a', new Date(Date.now() + 60 * 60_000).toISOString());
+    expect(t.service.needsProbe(t.source('a'), Date.now(), 'background')).toBe(false);
+    expect(t.service.needsProbe(t.source('a'), Date.now(), 'foreground')).toBe(true);
+    t.outcomes.set('a', () => ok());
+    const selection = await t.service.prepareForPlayback('g1', STATION);
+    expect(selection.selected?.id).toBe('a');
+    expect(t.source('a')).toMatchObject({ cooldownUntil: null, verificationState: 'eligible' });
+  });
+
+  it('keeps an earlier measurement when a check is too short to measure', async () => {
+    const t = setup([{ id: 'a', patch: verified({ codec: 'aac', measuredBitrateKbps: 128.1 }) }]);
+    t.outcomes.set('a', () =>
+      ok({
+        codec: 'aac',
+        measuredBitrateKbps: null,
+        codecBitrateKbps: 113.7,
+        bitrateEvidence: 'codec-metadata',
+      }),
+    );
+    await t.service.probe('a');
+    expect(t.source('a')).toMatchObject({
+      measuredBitrateKbps: 128.1,
+      codecBitrateKbps: 113.7,
+      bitrateConfidence: 'measured',
+    });
+    // A different codec is a different stream: the old figure no longer applies.
+    t.outcomes.set('a', () =>
+      ok({
+        codec: 'mp3',
+        measuredBitrateKbps: null,
+        codecBitrateKbps: 192,
+        bitrateEvidence: 'codec-metadata',
+      }),
+    );
+    await t.service.probe('a');
+    expect(t.source('a').measuredBitrateKbps).toBeNull();
+  });
+
+  it('never re-checks the source that is playing in the background', () => {
+    const old = new Date(Date.now() - 2 * 24 * 60 * 60_000).toISOString();
+    const t = setup([
+      { id: 'a', patch: verified({ lastProbeAt: old }) },
+      { id: 'b', patch: verified({ lastProbeAt: old }) },
+    ]);
+    const queued: string[][] = [];
+    t.service.refreshInBackground = (ids: string[]) => void queued.push(ids);
+    t.service.refreshStation(STATION, 'a');
+    expect(queued).toEqual([['b']]);
+  });
+
+  it('checks a source that failed in playback again a few minutes later, so the bot can move back to it', () => {
+    const t = setup([{ id: 'a', patch: verified() }]);
+    const failedAt = Date.now() + 1_000;
+    t.stations.recordFailure('a', 'STREAM_EOF', new Date(failedAt).toISOString());
+    expect(t.service.needsProbe(t.source('a'), failedAt + 60_000)).toBe(false);
+    expect(t.service.needsProbe(t.source('a'), failedAt + 6 * 60_000)).toBe(true);
+    // A failed check marks it offline, which keeps its own, longer back-off.
+    t.stations.applyProbePatch('a', { verificationState: 'offline' });
+    expect(t.service.needsProbe(t.source('a'), failedAt + 6 * 60_000)).toBe(false);
+  });
+});

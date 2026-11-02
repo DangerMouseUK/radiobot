@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadPack, PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
-import { CatalogueSync } from '../../src/catalogue/sync.ts';
+import {
+  CatalogueSync,
+  type CatalogueSyncOptions,
+  MAX_OFFICIAL_ENTRIES,
+  parseOfficialListInWorker,
+} from '../../src/catalogue/sync.ts';
+import { parseOfficialList } from '../../src/catalogue/sync-adapters.ts';
 import type { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { memoryDb, silentLogger } from '../helpers.ts';
 
@@ -50,24 +56,30 @@ const source = (id: string, station: string) => ({
   provenanceDetail: 'Listed on the station website.',
 });
 
-function setup(names: string[] | (() => string), packs = [makePack('mypack')]) {
+function setup(
+  names: string[] | (() => string),
+  packs = [makePack('mypack')],
+  opts: CatalogueSyncOptions = {},
+) {
   const t = memoryDb();
   const registry = new PackRegistry(packs);
   seedPacks(t.stations, registry);
-  const fetchText = vi.fn(async () => ({
-    text: typeof names === 'function' ? names() : JSON.stringify(names.map((name) => ({ name }))),
+  const fetchBytes = vi.fn(async () => ({
+    bytes: Buffer.from(
+      typeof names === 'function' ? names() : JSON.stringify(names.map((name) => ({ name }))),
+    ),
     finalUrl: new URL('https://lists.example.org/stations.json'),
-    status: 200,
     headers: {},
   }));
   const sync = new CatalogueSync(
     t.stations,
     t.meta,
-    { fetchText } as unknown as SafeHttpClient,
+    { fetchBytes } as unknown as SafeHttpClient,
     registry,
     silentLogger(),
+    opts,
   );
-  return { ...t, registry, sync, fetchText };
+  return { ...t, registry, sync, fetchBytes };
 }
 
 const ALL = STATIONS.map((s) => s.displayName);
@@ -107,14 +119,14 @@ describe('CatalogueSync: last sync and staleness', () => {
 
 describe('CatalogueSync: failures change nothing', () => {
   it('refuses a pack it does not know, naming it by its ID', async () => {
-    const { sync, fetchText } = setup(ALL);
+    const { sync, fetchBytes } = setup(ALL);
     const r = await sync.sync('nopack', 'admin');
     expect(r).toMatchObject({
       ok: false,
       packName: 'nopack',
       error: expect.stringMatching(/no official list/),
     });
-    expect(fetchText).not.toHaveBeenCalled();
+    expect(fetchBytes).not.toHaveBeenCalled();
   });
 
   it('refuses a pack without an official list', async () => {
@@ -128,10 +140,10 @@ describe('CatalogueSync: failures change nothing', () => {
   it('refuses an adapter that does not exist', async () => {
     const pack = makePack('mypack');
     (pack.meta.sync as { adapter: string }).adapter = 'no-such-adapter';
-    const { sync, fetchText } = setup(ALL, [pack]);
+    const { sync, fetchBytes } = setup(ALL, [pack]);
     const r = await sync.sync('mypack', 'admin');
     expect(r.error).toMatch(/Unknown sync adapter "no-such-adapter"/);
-    expect(fetchText).not.toHaveBeenCalled();
+    expect(fetchBytes).not.toHaveBeenCalled();
   });
 
   it('refuses a list that shrank to too few names', async () => {
@@ -143,8 +155,8 @@ describe('CatalogueSync: failures change nothing', () => {
   });
 
   it('reports a fetch error as the error message', async () => {
-    const { sync, fetchText } = setup(ALL);
-    fetchText.mockRejectedValueOnce(new Error('socket hang up'));
+    const { sync, fetchBytes } = setup(ALL);
+    fetchBytes.mockRejectedValueOnce(new Error('socket hang up'));
     const r = await sync.sync('mypack', 'startup');
     expect(r).toMatchObject({ ok: false, error: 'socket hang up' });
   });
@@ -203,5 +215,155 @@ describe('CatalogueSync: applying a list', () => {
     stations.setSourceEnabled('three-a', false, 'gone');
     const r = await sync.sync('mypack', 'admin');
     expect(r.unreachable).toEqual(['Example One']);
+  });
+});
+
+describe('CatalogueSync: staying off the voice thread', () => {
+  it('reads the list on a worker thread, returning only names and IDs', async () => {
+    const apidata = {
+      webradios: [
+        { id: 'abc', label: 'Example &amp; One', hd: 'https://streams.example.org/play/signed?format=hd' },
+        { id: 'def', label: 'Example Two' },
+      ],
+    };
+    const html = `<html><script>var apidata = ${JSON.stringify(apidata)};</script></html>`;
+    expect(await parseOfficialListInWorker('webradio-apidata', Buffer.from(html))).toEqual([
+      { externalId: 'abc', name: 'Example & One' },
+      { externalId: 'def', name: 'Example Two' },
+    ]);
+  });
+
+  it('passes on what went wrong in the worker, and can be cancelled', async () => {
+    await expect(parseOfficialListInWorker('json-name-list', Buffer.from('{ nope'))).rejects.toThrow(/JSON/);
+    await expect(parseOfficialListInWorker('no-such-adapter', Buffer.from('[]'))).rejects.toThrow(
+      /Unknown sync adapter/,
+    );
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      parseOfficialListInWorker('json-name-list', Buffer.from('[]'), abort.signal),
+    ).rejects.toMatchObject({ code: 'CANCELLED' });
+  });
+
+  it('sends back at most one entry more than the limit, and only names and IDs', () => {
+    const list = Array.from({ length: 10 }, (_, i) => ({
+      id: i,
+      name: `Example ${i}`,
+      url: 'https://x.example',
+    }));
+    const r = parseOfficialList({
+      adapter: 'json-name-list',
+      bytes: Buffer.from(JSON.stringify(list)),
+      maxEntries: 3,
+    });
+    expect(r).toEqual({
+      ok: true,
+      entries: [0, 1, 2, 3].map((i) => ({ externalId: String(i), name: `Example ${i}` })),
+    });
+    // Reads a view into a larger buffer correctly.
+    const padded = Buffer.from(`xx${JSON.stringify(list.slice(0, 1))}yy`);
+    expect(
+      parseOfficialList({
+        adapter: 'json-name-list',
+        bytes: padded.subarray(2, padded.length - 2),
+        maxEntries: 5,
+      }),
+    ).toEqual({ ok: true, entries: [{ externalId: '0', name: 'Example 0' }] });
+    expect(parseOfficialList({ adapter: 'nope', bytes: Buffer.from('[]'), maxEntries: 5 })).toEqual({
+      ok: false,
+      error: 'Unknown sync adapter "nope".',
+    });
+  });
+
+  it('refuses a list with more names than any station group has', async () => {
+    const { sync, stations } = setup(() =>
+      JSON.stringify(Array.from({ length: MAX_OFFICIAL_ENTRIES + 1 }, (_, i) => ({ name: `Example ${i}` }))),
+    );
+    const r = await sync.sync('mypack', 'admin');
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/too many names/) });
+    expect(stations.listProviderStations('mypack')).toHaveLength(4);
+  });
+
+  it('gives the event loop turns, and splits a very large change into several transactions', async () => {
+    const extra = Array.from({ length: 20 }, (_, i) => `New Example ${i}`);
+    // Every look at this clock takes 1 ms, so a 2 ms slice ends almost at once; 5 changes per transaction.
+    let clock = 0;
+    const sliced = setup([...ALL, ...extra], undefined, { now: () => ++clock, sliceMs: 2, batchSize: 5 });
+    const transactions = vi.spyOn(sliced.stations, 'transaction');
+    let turns = 0;
+    let done = false;
+    const spin = () => {
+      if (done) return;
+      turns++;
+      setImmediate(spin);
+    };
+    setImmediate(spin);
+    const r = await sliced.sync.sync('mypack', 'admin');
+    done = true;
+    expect(r.ok).toBe(true);
+    // The stations still listed (one statement), then 20 new ones, 5 to a transaction.
+    expect(transactions).toHaveBeenCalledTimes(5);
+    expect(turns).toBeGreaterThan(10);
+
+    // The same outcome as a sync done in one go.
+    const whole = setup([...ALL, ...extra], undefined, { sliceMs: 60_000, batchSize: 1000 });
+    const one = vi.spyOn(whole.stations, 'transaction');
+    const w = await whole.sync.sync('mypack', 'admin');
+    expect(one).toHaveBeenCalledOnce();
+    const view = (rep: typeof r) => ({ ...rep, checkedAt: null });
+    expect(view(r)).toEqual(view(w));
+    const names = (s: typeof sliced.stations) =>
+      s.listProviderStations('mypack').map((st) => [st.id, st.displayName, st.catalogueStatus]);
+    expect(names(sliced.stations)).toEqual(names(whole.stations));
+    expect(r.added).toEqual(extra);
+  });
+
+  it('keeps what an earlier transaction wrote when a later one fails, and reports just that', async () => {
+    // One change per transaction.
+    const { sync, stations } = setup([...ALL, 'New One', 'New Two'], undefined, { batchSize: 1 });
+    const insert = stations.upsertProviderStation.bind(stations);
+    let inserts = 0;
+    stations.upsertProviderStation = (seed) => {
+      if (++inserts === 2) throw new Error('disk full');
+      return insert(seed);
+    };
+    const r = await sync.sync('mypack', 'admin');
+    expect(r).toMatchObject({ ok: false, error: 'disk full', added: ['New One'], unchanged: 4 });
+    expect(stations.getStation('mypack:new-one')?.displayName).toBe('New One');
+    expect(stations.getStation('mypack:new-two')).toBeNull();
+  });
+
+  it('runs one sync at a time, so two never interleave their changes', async () => {
+    const { sync, fetchBytes } = setup(ALL);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = fetchBytes.getMockImplementation()!;
+    fetchBytes.mockImplementationOnce(async () => {
+      await gate;
+      return original();
+    });
+    const first = sync.sync('mypack', 'scheduled');
+    const second = sync.sync('mypack', 'admin');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchBytes).toHaveBeenCalledOnce();
+    release();
+    const reports = await Promise.all([first, second]);
+    expect(reports.map((x) => x.ok)).toEqual([true, true]);
+    expect(fetchBytes).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops before writing once cancelled', async () => {
+    const abort = new AbortController();
+    const { sync, stations } = setup(ALL, undefined, {
+      parse: async () => {
+        abort.abort();
+        return ALL.map((name) => ({ externalId: null, name }));
+      },
+    });
+    const r = await sync.sync('mypack', 'scheduled', abort.signal);
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/cancelled/) });
+    expect(stations.getStation('mypack:one')?.officialLastSeenAt).toBeNull();
   });
 });

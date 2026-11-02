@@ -105,3 +105,28 @@ export const SYNC_ADAPTERS: Record<string, SyncAdapter> = {
   'webradio-apidata': parseWebradioApidata,
   'json-name-list': parseJsonNameList,
 };
+
+export interface ParseRequest {
+  adapter: string;
+  bytes: Uint8Array;
+  /** Entries beyond this are not returned (one more is, so the caller can tell the list was too long). */
+  maxEntries: number;
+}
+
+export type ParseReply = { ok: true; entries: OfficialEntry[] } | { ok: false; error: string };
+
+/**
+ * Decodes a fetched list and runs its adapter. This is what the sync's worker thread does (see
+ * sync-parse-worker.ts): it never throws, and returns only names and IDs.
+ */
+export function parseOfficialList(req: ParseRequest): ParseReply {
+  try {
+    const adapter = SYNC_ADAPTERS[req.adapter];
+    if (!adapter) throw new Error(`Unknown sync adapter "${req.adapter}".`);
+    const text = Buffer.from(req.bytes.buffer, req.bytes.byteOffset, req.bytes.byteLength).toString('utf8');
+    const entries = adapter(text).slice(0, req.maxEntries + 1);
+    return { ok: true, entries: entries.map((e) => ({ externalId: e.externalId, name: e.name })) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}

@@ -317,7 +317,7 @@ describe('createApp: ready', () => {
     const order: string[] = [];
     const { app, ctx, client, heartbeat } = build();
     const restore = vi.spyOn(ctx.sessions, 'restoreOnBoot').mockImplementation(async () => {
-      order.push(`restore (ready=${heartbeat().discordReady})`);
+      order.push('restore');
     });
     const refresh = vi.spyOn(RadioController.prototype, 'refreshPanel').mockImplementation(async (g) => {
       order.push(`panel ${g}`);
@@ -345,7 +345,9 @@ describe('createApp: ready', () => {
       ],
     ]);
     expect(restore).toHaveBeenCalledOnce();
-    expect(order).toEqual(['restore (ready=true)', 'panel 223456789012345678']);
+    expect(order).toEqual(['restore', 'panel 223456789012345678']);
+    // The heartbeat taken on ready is written in the background, without holding up the restore.
+    await vi.waitFor(() => expect(heartbeat().discordReady).toBe(true));
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
@@ -403,7 +405,7 @@ describe('createApp: health heartbeat', () => {
     const { app, ctx, client, heartbeat } = build();
     await app.start();
     // Written first thing at start, before FFmpeg has been checked.
-    let hb = heartbeat();
+    const hb = heartbeat();
     expect(hb).toMatchObject({ pid: process.pid, discordReady: false, activeStreams: 0, dbOk: true });
     expect(hb.ffmpegProcesses).toBe(0);
     expect(Date.parse(hb.at)).toBeGreaterThan(Date.now() - 60_000);
@@ -412,8 +414,10 @@ describe('createApp: health heartbeat', () => {
     client.ready = true;
     vi.spyOn(ctx.sessions, 'activeStreams').mockReturnValue(2);
     await vi.advanceTimersByTimeAsync(30_000);
-    hb = heartbeat();
-    expect(hb).toMatchObject({ discordReady: true, activeStreams: 2, ffmpegOk: true, dbOk: true });
+    // Written asynchronously: wait for it to land.
+    await vi.waitFor(() =>
+      expect(heartbeat()).toMatchObject({ discordReady: true, activeStreams: 2, ffmpegOk: true, dbOk: true }),
+    );
   });
 
   it('reports a failing database and an FFmpeg without libopus', async () => {
@@ -425,7 +429,7 @@ describe('createApp: health heartbeat', () => {
       throw new Error('disk I/O error');
     });
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(heartbeat()).toMatchObject({ dbOk: false, ffmpegOk: false });
+    await vi.waitFor(() => expect(heartbeat()).toMatchObject({ dbOk: false, ffmpegOk: false }));
   });
 
   it('reports FFmpeg as missing when the check fails, and keeps running', async () => {
@@ -437,7 +441,7 @@ describe('createApp: health heartbeat', () => {
     expect(ctx.ffmpegInfo).toBeNull();
     expect(client.logins).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(heartbeat().ffmpegOk).toBe(false);
+    await vi.waitFor(() => expect(heartbeat().ffmpegOk).toBe(false));
   });
 
   it('logs, rather than throws, when the heartbeat cannot be written', async () => {
@@ -448,7 +452,7 @@ describe('createApp: health heartbeat', () => {
     await app.start();
     mkdirSync(join(dir, 'health.json.tmp'));
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(warn).toHaveBeenCalledWith(expect.anything(), 'could not write heartbeat');
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.anything(), 'could not write heartbeat'));
   });
 });
 
@@ -615,10 +619,17 @@ describe('createApp: catalogue sync', () => {
     expect(o.packIds).toEqual(ctx.catalogueSync.syncablePacks().map((p) => p.meta.id));
     expect(o.intervalMs).toBe(12 * 3_600_000);
     expect(o.lastSync('mypack')).toBeNull();
+    // A scheduled sync is background work: it waits its turn with the source checks.
+    const background = vi.spyOn(ctx.sources, 'runInBackground');
     await o.sync('mypack');
-    expect(sync).toHaveBeenCalledWith('mypack', 'scheduled');
+    expect(background).toHaveBeenCalledOnce();
+    expect(sync).toHaveBeenCalledWith('mypack', 'scheduled', expect.any(AbortSignal));
+    const signal = sync.mock.calls[0]![2]!;
+    expect(signal.aborted).toBe(false);
     await app.stop('SIGTERM');
     expect(fake.schedules[0]!.stopped).toBe(true);
+    // Shutdown stops a scheduled sync that is still running.
+    expect(signal.aborted).toBe(true);
   });
 
   it('schedules nothing when catalogue sync is off', async () => {
@@ -673,6 +684,15 @@ describe('createApp: diagnostics endpoint', () => {
   });
 });
 
+describe('createApp: database checkpoints', () => {
+  it('checkpoints on a worker thread once started, not inside the bot’s own commits', async () => {
+    const { app, ctx } = build();
+    expect(ctx.db.autoCheckpoint()).toBe(1000);
+    await app.start();
+    expect(ctx.db.autoCheckpoint()).toBe(0);
+  });
+});
+
 describe('createApp: shutdown', () => {
   it('stops sync and timers, releases sessions and Discord, then closes the database last', async () => {
     const { app, ctx, client, heartbeat } = build();
@@ -694,6 +714,7 @@ describe('createApp: shutdown', () => {
     spy(ctx.notifier, 'close', 'notifier.close');
     spy(client as never as { destroy: () => Promise<void> }, 'destroy', 'client.destroy');
     spy(ctx.registry, 'killAll', 'registry.killAll');
+    spy(ctx.db, 'checkpoint', 'db.checkpoint');
     spy(ctx.db, 'close', 'db.close');
     const prune = vi.spyOn(ctx.stations, 'pruneProbeResults');
     const refresh = vi.spyOn(RadioController.prototype, 'refreshPanel').mockResolvedValue();
@@ -701,7 +722,8 @@ describe('createApp: shutdown', () => {
 
     await app.stop('SIGTERM');
     expect(order[0]).toBe('sync.stop');
-    expect(order.at(-1)).toBe('db.close');
+    // A final checkpoint, once the checkpoint worker has stopped, then the database closes.
+    expect(order.slice(-2)).toEqual(['db.checkpoint', 'db.close']);
     expect(order.indexOf('sessions.shutdown')).toBeLessThan(order.indexOf('client.destroy'));
     expect(order.indexOf('client.destroy')).toBeLessThan(order.indexOf('db.close'));
     expect(order).toContain('eventLoop.stop');

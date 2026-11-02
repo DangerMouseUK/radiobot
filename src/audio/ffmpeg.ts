@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
 import { constants, setPriority } from 'node:os';
 import { RadioError } from '../shared/errors.ts';
 import { redactText } from '../shared/redact.ts';
@@ -121,18 +122,30 @@ export class StderrTail {
   }
 }
 
+/** Test seams for `lowerPriority()`: the platform, and how `/proc/<pid>/oom_score_adj` is written. */
+export interface LowerPriorityDeps {
+  platform?: NodeJS.Platform;
+  write?: (path: string, data: string) => Promise<unknown>;
+}
+
 /**
  * Gives a background process the lowest CPU priority, so on a busy or single-core host the
- * operating system always serves the live encoder and the voice packets first. Best effort:
- * where it isn't permitted, the process simply keeps normal priority.
+ * operating system always serves the live encoder and the voice packets first. On Linux it also
+ * makes the process the kernel's first choice when memory runs out, so a stream check is killed
+ * before the bot or its live encoder. Raising that score needs no privilege. Best effort: where
+ * either isn't permitted, the process simply keeps its normal priority.
  */
-export function lowerPriority(child: ChildProcess): void {
+export function lowerPriority(child: ChildProcess, deps: LowerPriorityDeps = {}): void {
   if (child.pid === undefined) return;
   try {
     setPriority(child.pid, constants.priority.PRIORITY_LOW);
   } catch {
     /* not permitted on this host */
   }
+  if ((deps.platform ?? process.platform) !== 'linux') return;
+  // Asynchronous, so the main thread does no blocking file I/O; a process that has already exited,
+  // or a /proc that refuses the write, just keeps its score.
+  (deps.write ?? writeFile)(`/proc/${child.pid}/oom_score_adj`, '1000').catch(() => undefined);
 }
 
 /**

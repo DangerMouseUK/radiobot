@@ -92,13 +92,13 @@ describe('scripts/validate-catalogue', () => {
 });
 
 describe('scripts/healthcheck', () => {
-  it('exits 1 without a heartbeat and 0 with a fresh one', () => {
+  it('exits 1 without a heartbeat and 0 with a fresh one', async () => {
     const dir = tempDir();
     const env = { DATABASE_PATH: join(dir, 'radio-bot.sqlite') };
     const missing = run('healthcheck.ts', [], env);
     expect(missing.code).toBe(1);
     expect(missing.out).toBe('unhealthy: no heartbeat file\n');
-    writeHeartbeat(join(dir, 'health.json'), {
+    await writeHeartbeat(join(dir, 'health.json'), {
       at: new Date().toISOString(),
       pid: 1,
       discordReady: true,

@@ -157,6 +157,7 @@ Provenance details for each station are recorded in the pack folder's `SOURCE_PR
   - `webradio-apidata`, used by the starter pack, reads a webradio list embedded in a station website's page (a `webradios[]` array in its `var apidata` JSON) and ignores, and never stores, any short-lived signed play URLs on that page;
   - `json-name-list` reads a plain JSON list of `{ id, name }`.
 - Runs on its own jittered schedule for each enabled pack that declares a list (daily by default; `CATALOG_SYNC_INTERVAL_HOURS` from 6 hours to 30 days, each waited out in full), and on admin request (`/radio sync [pack]`), with rate limits.
+- Scheduled syncs run as background work: one at a time with background source checks, and never during a stream's first 30 s. The list is parsed off the main thread and changes are written in short steps (parts of 50). A list with more than 5,000 names is refused.
 - Renames are detected by stable ID (or a single clearly similar name); the station keeps its ID and favourites, and the old name becomes an alias.
 - Stations no longer listed are marked *missing from official list* but kept. New names are added as catalogued-only and reported as needing a reviewed source mapping.
 - A failed or implausible fetch changes nothing. A list is implausible when it has fewer than 10 names, or fewer than half the pack's stations for small packs. The pack's list is flagged as possibly stale.
@@ -211,7 +212,7 @@ Per station, in order (§7.4):
 
 1. **Eligible:** enabled, not blocked, identity-verified, successfully probed, not cooling down.
 2. **Transport tier, first:** direct stream (tier 0), then unknown transport (tier 1), then **HLS (tier 2), which is a last resort**. HLS plays only when no direct stream of the station is eligible, even if it measures higher. Segmented delivery makes live playback slower to start, further behind live and less smooth to recover. The explanation states when HLS was chosen only because no direct stream was eligible.
-3. **Fidelity, within the tier:** compare measured evidence. Same codec: a measured bitrate difference of 15 % or more decides. Different codecs are **never** ranked by bitrate. Stereo beats mono; a ≥ 44.1 kHz source beats one below 32 kHz.
+3. **Fidelity, within the tier:** compare measured evidence. Same codec: a bitrate difference decides when it is 3 % or more between two measured figures, or 15 % or more otherwise. Different codecs are **never** ranked by bitrate, with one narrow exception: measured AAC-LC of at least 96 kbps and at least twice the measured HE-AAC rate beats HE-AAC. Stereo beats mono; a ≥ 44.1 kHz source beats one below 32 kHz.
 4. **Stability:** health score difference of 20 points or more.
 5. **Latency:** startup time difference over 1.5 s.
 6. **Catalogue order** as the documented default.
@@ -239,7 +240,10 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 
 - Detects stream end, FFmpeg exit, missing audio progress, failed HLS segments and playlists, voice disconnection and a feed that starts identifying as another station.
 - Reconnects the same source with jittered backoff (about 1, 3 and 8 s), then fails over to the next eligible source, then reports an error and retries every 2 minutes while playback is still wanted.
-- A source with 4 consecutive failures (the first plus every retry) cools down (10 minutes, doubling to 2 hours).
+- A source that keeps failing for more than a minute (at least 4 failures in a row) cools down (10 minutes, doubling to 2 hours). Failures of one source within 0.5 s (several servers, one blip) count once. When nothing else can play, a cooling source is checked every 2 minutes and a good check ends its cooldown.
+- An HTTP 404 during playback is retried on the same source before failing over.
+- A steady stream moves back to its station's better source once that source has worked again, at most once every 10 minutes and never over a listener's choice, and re-encodes when its source measures clearly higher. A move back that fails before it plays steadily returns straight to the working source, and the wait before trying that source again doubles each time (up to 4 hours).
+- Asking for the station already playing in that channel doesn't restart it.
 - A failure in the bot's own domain (FFmpeg failing to start, an internal error) says nothing about the source: it is retried on the same source and never counts against it. If FFmpeg can't start and those retries run out, the bot reports an error and tries again after 2 minutes, with no failover, since any source would fail the same way. An unexpected internal error may be specific to that source's data, so once its retries run out the bot fails over to a verified fallback.
 - Desired state (playing, stopped, left, kicked, paused) is stored separately from runtime state. An explicit stop or leave is never overridden.
 - Every FFmpeg process and network input is closed on switch, stop, leave, server removal and shutdown.
@@ -451,8 +455,8 @@ Each server has at most one authoritative pipeline. A process registry owns ever
 - No encoder output for 15 s counts as a stall.
 - Same-source retries at about 1, 3 and 8 s (±25 % jitter), then failover.
 - A source playing stably for 30 s resets its failure streak.
-- Voice reconnects at about 2, 5, 10, 30 and 60 s, then a visible error.
-- With no eligible source, retry every 2 minutes while playback is wanted.
+- Voice reconnects at about 2, 5, 10, 30 and 60 s, then a visible error, then every 2 minutes while playback is wanted.
+- With no eligible source, retry after 15, 30 and 60 s, then every 2 minutes while playback is wanted.
 - After `/radio stop`, leave the channel after 5 minutes unless the idle mode is 24/7.
 
 ### 9.3 Boot policy
@@ -661,6 +665,7 @@ These are engineering targets, not guarantees about broadcasters or Discord.
 | NFR-12 | Truthful reporting | Output settings reported accurately; unknown values marked unknown |
 | NFR-13 | Bounded resources | Stream, probe, buffer and process limits enforced |
 | NFR-14 | Accessibility | Usable on Discord mobile, with text labels alongside any icons |
+| NFR-15 | Stream priority | Voice packets leave on time while the bot does other work: database checkpoints, the heartbeat write and catalogue parsing run off the voice thread; stream checks run at the lowest CPU and disk priority and are the first to go if memory runs out; the supported deployments give the bot a high CPU weight and protect it from the out-of-memory killer, with no CPU quota or memory limit |
 
 Diagnostics attribute faults to upstream, Discord, the bot, the operator or the user.
 

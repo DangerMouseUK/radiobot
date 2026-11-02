@@ -8,6 +8,15 @@ services:
     build: .
     container_name: radio-bot
     restart: unless-stopped
+    # Voice packets go out every 20 ms, so the stream gets the processor ahead of other containers
+    # and services when the host is busy. 26214 becomes a cgroup v2 CPU weight of about 1000 (runc
+    # before 1.3.2) or 1400 (1.3.2 and later), against the default 100; 1024 would give only 39 on
+    # older runc. It is a share, never a limit: no cpus:, mem_limit or quota, which would stall the audio.
+    cpu_shares: 26214
+    # If the host runs out of memory, the kernel stops other processes before the bot. Stream checks
+    # raise their own score, so they go first. Rootless Docker can't go below its own score, so it
+    # quietly uses that instead and the container still starts.
+    oom_score_adj: -500
     env_file:
       - path: .env
         required: false

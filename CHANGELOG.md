@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- After a failover, the bot stayed on the fallback source (often HLS or a lower bitrate) until someone played the station again, even once the better source was back. A steady stream now moves back to its station's better source once a background check shows that source works again, if it is a real step up: a direct stream instead of HLS, clearly better measured quality, or the source an admin chose. Each move is a brief cut, so it happens at most once every 10 minutes, and never when a listener chose the source that is playing. If the better source fails again before it has played steadily, the bot goes straight back to the source that was working, and waits twice as long each time before trying it again.
+- A short blip on a station's only source, such as its encoder reconnecting, could leave the station silent for 10 minutes or more. Four quick failures within about 12 seconds put the source on hold, and a station on hold was never checked again until the hold ended. Now:
+  - only failures that keep coming for more than a minute put a source on hold;
+  - several servers hearing the same blip at the same moment count as one failure;
+  - when nothing else can play, a source on hold is checked every 2 minutes, and a good check ends the hold;
+  - with no source to play, the bot looks again after 15, 30 and 60 seconds instead of waiting 2 minutes.
+- "Not found" (HTTP 404) from a station during playback switched source at once. Icecast servers answer 404 for a few seconds while the station's own encoder reconnects, so a 404 is now retried on the same source first.
+- A background check of the playing source could mark it as failing (some stations refuse a second connection), and the next small hiccup then switched source or stopped the station. The playing source is no longer checked in the background, and 30 seconds of steady playback clears a failed check.
+- A source that failed during playback was never checked again while another source played, so the bot couldn't tell when it was back. It is now checked again 5 minutes after the failure.
+- After a Discord voice outage of more than about 6 minutes, the bot stopped trying to reconnect until someone played a station again. It now keeps trying every 2 minutes while playback is wanted, and says so once.
+- Asking for the station that is already playing in that channel (`/radio play`, a Play button, a favourite) restarted it, cutting the audio and dropping a listener's chosen source. It now keeps playing.
+- If saving the playback state failed (a full disk, for example), the stream stopped. It now keeps playing and logs the error.
+- The "behind live" check counted the gap left when the HLS reader skipped forward to the live edge, so a healthy stream could be restarted for nothing.
+- For HLS, the encoder could follow a lower rendition's bitrate than the one actually playing, if the last check couldn't load the best rendition. It now follows the rendition it opened when that is clearly higher.
+- A check whose sample was too short to measure replaced the earlier measurement with the codec metadata figure, which for AAC is only an estimate. It now keeps the earlier measurement of the same stream.
+
 - With `CATALOG_SYNC_INTERVAL_HOURS` above 596 (the allowed range goes up to 720), catalogue sync ran again and again without a pause, because Node can't wait that long with a single timer. Long intervals are now waited out in full.
 - For stations with the longest allowed IDs, the admin buttons on the sources view (**Prefer the playing source** and **Back to automatic choice**) failed with "Something went wrong", because the button's ID went over Discord's 100-character limit. Button and menu IDs now fit that limit by design, whatever the station. A new, shorter way of writing the expiry leaves room for the longest station ID with every action, and it lasts until 2140 (the old one would have grown by a character in December 2038). Buttons sent by an earlier version say they have expired: run the command again. The control panel is redrawn when the bot starts.
 - The detailed sources view of a station with many sources and a server override could go over Discord's 6000-character message limit and fail to send.
@@ -38,6 +54,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Docker installs now put the stream first on a busy host. `compose.yaml` gives the bot a large CPU share (`cpu_shares`), and tells the kernel to stop other programs before the bot if memory runs out (`oom_score_adj`). These are shares, never limits, so they can't hold the stream back. Rootless Docker quietly uses its own score instead, and the container still starts.
+- The systemd unit adds `CPUWeight=1000`, `IOWeight=1000` and `OOMScoreAdjust=-500` beside `Nice=-5`, so the bot also comes ahead of other services, not only other processes in its own service.
+- On Linux, stream checks mark themselves as the first processes to stop if memory runs out, so a check can never take the bot or its encoder down with it.
+- `radio-bot` runs backups and health checks at the lowest disk priority as well as the lowest CPU priority.
+- `radio-bot update` warns that the new version is downloaded (or built) while the station plays, which can cause small cuts on a small server.
+- Smoother playback: the database's write-ahead log is now copied back into the database file on a separate thread every few minutes, not inside whichever write happened to fill it. On slow storage that copy, and its sync to disk, could hold up voice packets for 20–100 ms. If the separate thread can't run, SQLite's own copying takes over.
+- Smoother playback: the health heartbeat (`health.json`) is written without blocking. Its contents and location are unchanged.
+- Catalogue sync now waits its turn with background source checks, and never runs while a stream is starting. The official list is read on a separate thread, and changes are written in short steps. `/radio sync` still starts at once. A list with more than 5,000 names is refused as not a real station list. A sync with more than 50 changes is written in parts of 50, so if it fails part-way the parts already written stay (the next sync completes it); a normal sync is still all or nothing.
+- AAC-LC now ranks above HE-AAC when both bitrates are measured and the AAC-LC stream is at least 96 kbps and at least twice the HE-AAC rate. Before, the two counted as different codecs that can't be compared, so a 48 kbps HE-AAC stream could play instead of a 320 kbps AAC-LC one. This is the only case where bitrates of different kinds of codec are compared.
+- Two measured bitrates of the same codec now count as equal only within 3 % (it was 15 %), so a 128 kbps stream beats a 112 kbps one of the same codec. Codec metadata and advertised figures keep the 15 % margin, because they are looser.
+- Alternate HLS audio renditions are now chosen by the bandwidth of the variants that use them, not just by which one is marked as the default.
+- When a quality change briefly restarts the playing station, the reply to the admin now says so.
 - In `maximum` mode the Opus target now follows the bitrate the bot measured for a source before the one its codec metadata reports, and is rounded up rather than to the nearest whole number. For AAC, the metadata is only an estimate: streams that measure 128.1 kbps reported anything from 114 to 176 kbps, so they were encoded below or above what the station sends. They are now encoded at 129 kbps, just above the source, never below it. MP3 streams are unchanged.
 - Database migration 4 adds indexes, so deleting a station or source no longer reads every server's favourites, queue and source preferences. It is applied automatically at the next start, after a backup.
 - Adding, editing or removing a custom station re-reads only that server's custom stations, not the whole catalogue.

@@ -121,8 +121,11 @@ export class FakeSession {
     this.connected = true;
     this.channelId = channelId;
   }
+  /** Whether a quality change re-encodes (and so briefly restarts) the stream. */
+  reencodes = true;
   refreshEncoder() {
     this.encoderRefreshes++;
+    return this.reencodes;
   }
   onListenersChanged(n: number) {
     this.listenerCounts.push(n);

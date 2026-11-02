@@ -37,7 +37,7 @@ Each source has a `verification_state`. The PRD (§7.2) describes a longer chain
 | `unverified` | The check succeeded but the identity is not verified. | No: "not verified as this station" |
 | `offline` | The last check failed: access denied (401/403/451), another HTTP status, a timeout, a decode failure, no audio and so on. See [Failed checks](#failed-checks). | No: "last check failed (code)" |
 | `blocked_by_policy` | The check failed on a safety rule: `ADDRESS_BLOCKED`, a URL host, port, scheme or credentials that aren't allowed, or `HLS_ENCRYPTED`. | No: "rejected by URL safety policy" |
-| `cooldown` | The circuit breaker tripped after 4 playback failures in a row (the first plus three retries). The bot's own faults, such as FFmpeg failing to start, don't count. | No, until the cooldown ends: "cooling down after repeated failures until …" |
+| `cooldown` | The circuit breaker tripped: at least 4 playback failures in a row over more than a minute. The bot's own faults, such as FFmpeg failing to start, don't count, and several servers failing at the same moment count once. When nothing else can play, the bot checks it every 2 min, and a good check ends the cooldown. | No, until the cooldown ends: "cooling down after repeated failures until …" |
 
 The type definitions also reserve `resolved`, `transport_healthy`, `codec_verified`, `identity_verified` and `retired` for finer tracking later; this version doesn't set them. Each check stores its findings in `source_probe_results` instead.
 
@@ -129,7 +129,8 @@ What counts as verified for a pack source is shared by every server on the insta
    - Stereo beats mono.
    - A clear difference in audio bandwidth counts: one source below 32 kHz and the other at 44.1 kHz or above.
    - **Different codecs are never ranked by bitrate.** AAC against MP3, for example, is "different codecs are not ranked by bitrate". An unknown codec is inconclusive too.
-   - Within the same codec (AAC-LC, HE-AAC, MP3 and so on each count separately), bitrates within 15 % of each other are equal. A bigger gap counts only if both figures are measured or from codec metadata; if either is only advertised, the result is inconclusive.
+   - **One narrow exception: AAC-LC against HE-AAC.** Both are AAC, but HE-AAC encodes only the lower half of the sound and rebuilds the treble from hints. That sounds good at low bitrates, but not as good as a full-rate stream. So AAC-LC wins only when both bitrates are measured, and AAC-LC is at least 96 kbps and at least twice the HE-AAC rate (128 against 64, say). Anything closer stays inconclusive, and HE-AAC never wins on bitrate.
+   - Within the same codec (AAC-LC, HE-AAC, MP3 and so on each count separately), two **measured** bitrates within 3 % of each other are equal (a measurement is precise, so 112 against 128 kbps is a real difference). Otherwise figures within 15 % are equal, because codec metadata (for AAC only an estimate) and advertised figures are looser. A bigger gap counts only if both figures are measured or from codec metadata; if either is only advertised, the result is inconclusive.
 4. **Reliability.** A difference in health score of 20 points or more decides.
 5. **Start-up time.** A difference of more than 1.5 s in measured start-up time decides.
 6. **The pack's `priority`** (lower first), then the source ID. This is what decides between, say, a 128 kbps MP3 and a 128 kbps AAC stream of similar health: different codecs aren't ranked, so the station pack's priority settles it, and the explanation says so.
@@ -164,7 +165,7 @@ While a station plays, anyone who can control the radio can switch it to another
 
 When someone plays a station (`prepareForPlayback`):
 
-- **If an eligible source exists, it plays straight away.** The station's other sources that are due a check (last checked more than 24 h ago, or failing and past their wait) are checked in the background, but only once the stream has played steadily for 30 s. Background checks run one at a time, at the lowest CPU priority, so a live stream is never disturbed:
+- **If an eligible source exists, it plays straight away.** The station's other sources that are due a check (last checked more than 24 h ago, or failing and past their wait) are checked in the background, but only once the stream has played steadily for 30 s, and again about once a minute while it plays (that is how a source that failed earlier shows it works again, so the bot can move back to it). The source that is playing is never checked in the background: its steady playback is better evidence than a check, and 30 s of it clears a failed check. Background checks run one at a time, at the lowest CPU priority, so a live stream is never disturbed:
   - a source is queued once, and skipped if it was checked in the meantime;
   - no background check starts while any stream on the installation is in its first 30 s;
   - a check someone is waiting for interrupts a background check on the same stream host; the interrupted check records nothing and runs again later.
@@ -306,7 +307,7 @@ docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe my
 
 ## Catalogue sync
 
-`CatalogueSync` (`src/catalogue/sync.ts`) keeps each **enabled pack that declares `sync`** in its `pack.json` in line with that pack's official station list. Each pack has its own schedule: once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, 6 to 720) plus a random delay of up to 15 minutes. A pack that has never synced is first synced about 10 minutes after the bot starts. `CATALOG_SYNC_ENABLED=false` turns the schedule off. Admins can also run `/radio sync [pack]`. The list is read by the adapter the pack names, from `src/catalogue/sync-adapters.ts`:
+`CatalogueSync` (`src/catalogue/sync.ts`) keeps each **enabled pack that declares `sync`** in its `pack.json` in line with that pack's official station list. Each pack has its own schedule: once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, 6 to 720) plus a random delay of up to 15 minutes. A pack that has never synced is first synced about 10 minutes after the bot starts. A scheduled sync follows the rules for background work: it runs one at a time with the background source checks and waits while any stream is in its first 30 s. `CATALOG_SYNC_ENABLED=false` turns the schedule off. Admins can also run `/radio sync [pack]`, which starts at once (after any sync already running). The list is read by the adapter the pack names, from `src/catalogue/sync-adapters.ts`:
 
 - `webradio-apidata` reads a list of web radios embedded in a station website's page (a `webradios[]` array in the page's `var apidata` JSON);
 - `json-name-list` reads a plain JSON list of `{ id, name }`.
@@ -316,12 +317,13 @@ A sync:
 - fetches the pack's `sync` URL through the bot's safe HTTP client, at most 6 MiB and 20 s;
 - reads **only station names and stable IDs**. With `webradio-apidata` that is each `webradios` entry's `label` and `id`, skipping entries with `displayOnWebsite: false`, with the page's navigation menu as a fallback;
 - **never collects stream URLs, and ignores any short-lived signed play URLs on the page.** New sources are only ever added by a reviewed change to the pack's `sources.json`;
-- treats a list as implausible, and changes nothing, when it has fewer than 10 names (or, for packs with fewer than 20 stations, fewer than half the pack's stations);
+- reads the list on a separate worker thread, so a large page never holds up the stream;
+- treats a list as implausible, and changes nothing, when it has fewer than 10 names (or, for packs with fewer than 20 stations, fewer than half the pack's stations), or more than 5,000;
 - matches stations by stable ID, then by name (ignoring case, accents and punctuation). An unmatched new name that closely resembles a single missing station is treated as a rename;
 - on a **rename**, keeps the station ID, favourites and preferences, and keeps the old name as an alias;
 - on a **new station**, adds it with no source and reports that it needs a reviewed source before it can play;
 - on a **missing** station, marks it `missing_from_official`, keeps it (so favourites still work) and reports it. A station that reappears is reported as "Back on the list";
-- applies all its changes together or none of them;
+- applies all its changes together or none of them. Only a sync with more than 50 changes at once is written in parts of 50; the report then lists what was written, and if a part fails, the next sync finishes the job;
 - on **failure**, keeps the existing entries and records a failed report. `/radio list` for that pack shows "list may be out of date" when no sync has succeeded within three intervals.
 
 Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio sync` shows one report per pack: added, renamed, no longer on the official list, back on the list, new stations with no stream yet, and stations whose sources all failed their last check.

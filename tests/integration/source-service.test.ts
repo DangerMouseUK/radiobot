@@ -131,11 +131,14 @@ describe('SourceService', () => {
 
   it('trips the circuit breaker after repeated playback failures', () => {
     const t = setup('/mp3');
+    // Failures a few seconds apart, as the session's retries make them.
+    const start = Date.now();
     for (let n = 1; n < CIRCUIT_BREAK_FAILURES; n++) {
-      expect(t.service.recordPlaybackFailure('test-src', 'STREAM_STALLED')).toBe(false);
+      expect(t.service.recordPlaybackFailure('test-src', 'STREAM_STALLED', start + n * 5_000)).toBe(false);
     }
     expect(t.stations.getSource('test-src')!.cooldownUntil).toBeNull();
-    expect(t.service.recordPlaybackFailure('test-src', 'STREAM_STALLED')).toBe(true);
+    // The last one, more than a minute into the streak, trips it.
+    expect(t.service.recordPlaybackFailure('test-src', 'STREAM_STALLED', start + 65_000)).toBe(true);
     expect(t.stations.getSource('test-src')!.cooldownUntil).not.toBeNull();
   });
 });

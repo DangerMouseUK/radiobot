@@ -15,7 +15,8 @@ export type PlaybackState =
 const ACTIVE: PlaybackState[] = ['BUFFERING', 'PLAYING', 'SWITCHING', 'RECOVERING', 'FAILING_OVER'];
 
 const TRANSITIONS: Record<PlaybackState, readonly PlaybackState[]> = {
-  IDLE: ['JOINING'],
+  // ERROR from IDLE: a voice connection that was lost and still can't be rebuilt (it keeps trying).
+  IDLE: ['JOINING', 'ERROR'],
   JOINING: ['CONNECTED', 'ERROR', 'LEAVING'],
   CONNECTED: ['BUFFERING', 'SWITCHING', 'JOINING', 'STOPPING', 'LEAVING', 'ERROR'],
   BUFFERING: [

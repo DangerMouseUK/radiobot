@@ -88,6 +88,20 @@ export function isPaused(
  * same-source retry step (the session's backoff of about 1, 3 and 8 s), so every retry runs first.
  */
 export const CIRCUIT_BREAK_FAILURES = 4;
+/**
+ * …and the failures must span at least this long. A short upstream blip (a station's encoder
+ * reconnecting) uses up the quick retries in about 12 s; it must not put the source on hold.
+ */
+export const CIRCUIT_BREAK_MIN_SPAN_MS = 60_000;
+/**
+ * Failures of one source this close together are one event: several servers hearing the same blip
+ * at once. It is well under the first retry step (about 1 s), so one server's retries all count.
+ */
+export const FAILURE_DEDUP_MS = 500;
+/** A play with nothing else to use re-checks a source on hold this often, instead of waiting it out. */
+export const COOLDOWN_RECHECK_MS = 2 * 60_000;
+/** A source that failed in playback since its last check is checked again this long after, to see if it is back. */
+export const PLAYBACK_FAILURE_RECHECK_MS = 5 * 60_000;
 
 export interface SourceServiceDeps {
   stations: StationRepository;
@@ -141,6 +155,8 @@ export class SourceService {
   readonly #queued = new Set<string>();
   /** Background checks wait until this time while a stream is starting somewhere. */
   #holdUntil = 0;
+  /** Per source with a playback failure streak: when the streak started and its last counted failure. */
+  readonly #failureStreaks = new Map<string, { since: number; last: number }>();
   readonly #log: Logger;
 
   constructor(deps: SourceServiceDeps) {
@@ -331,6 +347,14 @@ export class SourceService {
     state: VerificationState,
     decision: IdentityDecision,
   ): void {
+    // A check whose sample was too short to measure keeps the earlier measurement of the same
+    // stream, rather than falling back to codec metadata, which for AAC is only an estimate.
+    const keepMeasured =
+      o.success &&
+      o.measuredBitrateKbps === null &&
+      source.measuredBitrateKbps !== null &&
+      source.codec === o.codec &&
+      source.transport === o.transport;
     this.#d.stations.applyProbePatch(source.id, {
       lastProbeAt: o.startedAt,
       verificationState: state,
@@ -346,9 +370,10 @@ export class SourceService {
             channelLayout: o.channelLayout,
             advertisedBitrateKbps: o.advertisedBitrateKbps,
             codecBitrateKbps: o.codecBitrateKbps,
-            measuredBitrateKbps: o.measuredBitrateKbps,
-            bitrateConfidence: o.bitrateEvidence,
-            qualityConfidence: o.bitrateEvidence === 'measured' ? 'measured' : 'not-conclusive',
+            measuredBitrateKbps: keepMeasured ? source.measuredBitrateKbps : o.measuredBitrateKbps,
+            bitrateConfidence: keepMeasured ? 'measured' : o.bitrateEvidence,
+            qualityConfidence:
+              keepMeasured || o.bitrateEvidence === 'measured' ? 'measured' : 'not-conclusive',
             icyName: o.icyName,
             startupMs: o.startupMs,
             identityStatus: decision.status,
@@ -357,8 +382,14 @@ export class SourceService {
           }
         : {}),
     });
-    if (o.success) this.#d.stations.recordSuccess(source.id);
-    else this.#d.stations.recordFailure(source.id, o.failureCode ?? 'PROBE_FAILED');
+    if (o.success) {
+      this.#d.stations.recordSuccess(source.id);
+      // A working check ends a hold early (the station came back): nothing else would play.
+      if (state === 'eligible' && source.cooldownUntil && Date.parse(source.cooldownUntil) > Date.now()) {
+        this.#d.stations.setCooldown(source.id, null);
+        this.#failureStreaks.delete(source.id);
+      }
+    } else this.#d.stations.recordFailure(source.id, o.failureCode ?? 'PROBE_FAILED');
     this.#d.stations.insertProbeResult({
       sourceId: source.id,
       startedAt: o.startedAt,
@@ -449,6 +480,23 @@ export class SourceService {
     if (!s.enabled || s.rightsStatus === 'blocked') return false;
     if (s.lastProbeAt === null) return true;
     const age = now - Date.parse(s.lastProbeAt);
+    // On hold after repeated failures: a play with nothing else to use checks it every couple of
+    // minutes, and a successful check ends the hold, rather than leaving the station silent.
+    if (mode === 'foreground' && s.cooldownUntil && Date.parse(s.cooldownUntil) > now) {
+      const lastTry = Math.max(Date.parse(s.lastProbeAt), Date.parse(s.lastFailureAt ?? s.lastProbeAt));
+      return now - lastTry >= COOLDOWN_RECHECK_MS;
+    }
+    // It failed in playback since its last check, while still working by its checks (a failed check
+    // marks it offline or blocked instead, with their own waits): check it again a few minutes later,
+    // so that a session that moved away can move back once it works.
+    const onHold = s.cooldownUntil !== null && Date.parse(s.cooldownUntil) > now;
+    const working =
+      s.verificationState === 'eligible' ||
+      s.verificationState === 'degraded' ||
+      s.verificationState === 'cooldown';
+    if (working && !onHold && s.lastFailureAt && s.lastFailureAt > s.lastProbeAt) {
+      return now - Date.parse(s.lastFailureAt) >= PLAYBACK_FAILURE_RECHECK_MS;
+    }
     if (s.verificationState === 'offline') {
       if (isPaused(s, now)) return false;
       if (mode === 'background') return now >= (nextAutomaticCheck(s) ?? 0);
@@ -503,10 +551,14 @@ export class SourceService {
     return selection;
   }
 
-  /** Re-checks a station's due sources in the background (after its stream has played steadily). */
-  refreshStation(stationId: string): void {
+  /**
+   * Re-checks a station's due sources in the background (after its stream has played steadily).
+   * The source that is playing is left alone: its steady playback is better evidence than a check,
+   * which would open a second connection that some stations refuse.
+   */
+  refreshStation(stationId: string, playingSourceId?: string): void {
     if (this.isStationDisabled(stationId)) return;
-    const due = this.sourcesFor(stationId).filter((s) => this.needsProbe(s));
+    const due = this.sourcesFor(stationId).filter((s) => s.id !== playingSourceId && this.needsProbe(s));
     if (due.length > 0) this.refreshInBackground(due.map((s) => s.id));
   }
 
@@ -532,6 +584,18 @@ export class SourceService {
           this.#log.debug({ sourceId: id, code: errorCode(err) }, 'background probe failed');
         });
     }
+  }
+
+  /**
+   * Runs other background work (a scheduled catalogue sync, say) under the same rules as background
+   * checks: it waits for its turn in the same one-at-a-time queue, and then until no stream is
+   * starting, so it never runs alongside a check or during a stream's first moments.
+   */
+  runInBackground<T>(fn: () => Promise<T>): Promise<T> {
+    return this.#background.run(async () => {
+      await this.#waitForQuiet();
+      return fn();
+    });
   }
 
   /** A stream is starting: background checks wait `ms` so they don't compete with its start-up. */
@@ -616,21 +680,34 @@ export class SourceService {
   // ---- playback health feedback ----
 
   recordPlaybackSuccess(sourceId: string): void {
+    this.#failureStreaks.delete(sourceId);
     this.#d.stations.recordSuccess(sourceId);
     const s = this.#d.stations.getSource(sourceId);
+    // Steady playback proves the source works: a failed background check (a second connection the
+    // station refused, say) or an expired hold no longer counts against it.
     if (
       s &&
-      s.verificationState === 'cooldown' &&
-      (!s.cooldownUntil || Date.parse(s.cooldownUntil) <= Date.now())
+      (s.verificationState === 'offline' ||
+        (s.verificationState === 'cooldown' &&
+          (!s.cooldownUntil || Date.parse(s.cooldownUntil) <= Date.now())))
     ) {
       this.#d.stations.applyProbePatch(sourceId, { verificationState: 'eligible' });
     }
   }
 
-  /** Records a playback failure; trips the circuit breaker after repeated failures. Returns true if tripped. */
-  recordPlaybackFailure(sourceId: string, code: string): boolean {
+  /**
+   * Records a playback failure; trips the circuit breaker after repeated failures over at least a
+   * minute. Returns true if tripped.
+   */
+  recordPlaybackFailure(sourceId: string, code: string, now = Date.now()): boolean {
+    const prev = this.#failureStreaks.get(sourceId);
+    if (prev && now - prev.last < FAILURE_DEDUP_MS) return false;
     const consecutive = this.#d.stations.recordFailure(sourceId, code);
-    if (consecutive >= CIRCUIT_BREAK_FAILURES) {
+    // The first failure after any success (a check, or steady playback) starts a new streak.
+    const streak = prev && consecutive > 1 ? { since: prev.since, last: now } : { since: now, last: now };
+    this.#failureStreaks.set(sourceId, streak);
+    if (consecutive >= CIRCUIT_BREAK_FAILURES && now - streak.since >= CIRCUIT_BREAK_MIN_SPAN_MS) {
+      this.#failureStreaks.delete(sourceId);
       const s = this.#d.stations.getSource(sourceId);
       const until = new Date(Date.now() + cooldownMs((s?.cooldownTrips ?? 0) + 1)).toISOString();
       this.#d.stations.setCooldown(sourceId, until);
