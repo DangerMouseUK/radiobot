@@ -198,6 +198,26 @@ describe('background checks stay out of the way', () => {
     expect(t.log).toEqual([]);
   });
 
+  it('runs other background work (a scheduled sync) in the same queue, and not while a stream starts', async () => {
+    const t = harness([{ id: 'a', host: 'a.example.net' }]);
+    const held = Date.now();
+    t.service.holdBackground(150);
+    t.service.refreshInBackground(['a']);
+    let ranAt = 0;
+    let checksRunning = -1;
+    const result = await t.service.runInBackground(async () => {
+      ranAt = Date.now();
+      checksRunning = t.service.activeProbes;
+      return 'synced';
+    });
+    expect(result).toBe('synced');
+    // After the hold, and after the check queued before it had finished: never alongside it.
+    expect(ranAt - held).toBeGreaterThanOrEqual(140);
+    expect(t.log).toHaveLength(1);
+    expect(ranAt).toBeGreaterThanOrEqual(t.log[0]!.end);
+    expect(checksRunning).toBe(0);
+  });
+
   it('never lets a shorter hold cut a longer one short', async () => {
     const t = harness([{ id: 'a', host: 'a.example.net' }]);
     const held = Date.now();

@@ -44,7 +44,7 @@ There are no other services. State lives in one SQLite file. All network traffic
 `createApp(config, logger)` constructs everything in this order:
 
 1. **Database.** `new Db(DATABASE_PATH)` opens SQLite with WAL, foreign keys and `busy_timeout`, then runs `db.migrate()`. If the database already has a schema and migrations are pending, a backup is written to the `backups/` folder next to the database first. `Db` keeps each prepared statement and reuses it, since compiling one costs more than running a small query (the cache holds up to 500 statements and is emptied when full), and counts rollbacks. `StationRepository`, the only writer of the station tables, caches stations and sources separately, parsed and frozen:
-   - a change to one source (every check and playback result) or to one station's status re-reads only that row;
+   - a change to one source (every check and playback result) or to one station's status re-reads only that row, and a catalogue sync marking the stations still on its list as seen re-reads only those rows, in one query;
    - adding, editing or removing a server's custom station re-reads only that server's custom stations;
    - any other change to which stations exist, or to their order (seeding, catalogue sync), re-reads the station list;
    - a rollback re-reads both caches.
@@ -65,19 +65,20 @@ There are no other services. State lives in one SQLite file. All network traffic
 `start()` then does the following:
 
 - Writes a heartbeat at once, replacing any left by a previous run, so health checks wait for this process.
+- Starts the database's checkpoint worker (`WalCheckpointer`, see [`persistence/`](#persistence)). From then on the bot's own connection never checkpoints.
 - Runs `ffmpeg -version`, `ffprobe -version` and `ffmpeg -encoders`. It logs an error if a binary is missing or `libopus` is absent.
 - Subscribes to interactions, client errors, shard disconnects (recorded as incidents) and `GuildCreate` (registers commands for a newly joined server, always, since a server that removed and re-invited the bot has lost them).
-- On `ClientReady`, fetches the application (needed for the owner check), registers guild commands, writes a heartbeat, runs `restoreOnBoot()`, sets the bot's status and re-renders each server's control panel, one at a time (`guildsWithPanel()`). On every `ShardReady` it sends the status again, because a new gateway session starts without it.
+- On `ClientReady`, fetches the application (needed for the owner check), registers guild commands, writes a heartbeat (in the background: the restore doesn't wait for the disk), runs `restoreOnBoot()`, sets the bot's status and re-renders each server's control panel, one at a time (`guildsWithPanel()`). On every `ShardReady` it sends the status again, because a new gateway session starts without it.
 - Starts the event-loop monitor and these timers:
-  - a heartbeat every 30 s;
+  - a heartbeat every 30 s. It is written asynchronously (`HeartbeatWriter`), so a slow disk never holds up voice packets: the snapshot goes to `health.json.tmp`, which is then renamed over `health.json`, so a reader always sees a whole file. Writes never overlap: one asked for while another is under way waits, and if several wait, only the newest is written;
   - every 20 s, the bot's status (`PresenceUpdater`) and each server's voice channel status (`VoiceStatusUpdater`), each sending only changes;
   - every hour, rate-limit sweeping and probe-history pruning by age. The per-source limit is applied as each check is written; the first hourly run also trims every source to it, in case `PROBE_HISTORY_LIMIT` was lowered;
   - every 5 min, a refresh of the control panel of each server that has a session, one server at a time, yielding to the event loop in between;
-  - the catalogue sync. Each enabled pack that declares an official list gets its own schedule (`scheduleCatalogueSyncs()` in `sync-schedule.ts`). It first runs when it is due, or about 10 min after start if it has never run, and never sooner than 1 min; then every `CATALOG_SYNC_INTERVAL_HOURS`, with up to 15 min of jitter on each run. Each pack has one pending timer, and nothing is scheduled once shutdown begins. Node can't wait longer than about 24.8 days with one timer, so a longer wait is made of several timers in a row.
+  - the catalogue sync. Each enabled pack that declares an official list gets its own schedule (`scheduleCatalogueSyncs()` in `sync-schedule.ts`). It first runs when it is due, or about 10 min after start if it has never run, and never sooner than 1 min; then every `CATALOG_SYNC_INTERVAL_HOURS`, with up to 15 min of jitter on each run. Each pack has one pending timer, and nothing is scheduled once shutdown begins. Node can't wait longer than about 24.8 days with one timer, so a longer wait is made of several timers in a row. A scheduled sync is background work: when its timer fires it joins the queue that background source checks use (`SourceService.runInBackground()`), so it runs one at a time with them and waits while any stream is in its first 30 s. A sync an admin starts with `/radio sync` runs at once, since someone is waiting for it. Shutdown cancels a scheduled sync that is still running.
 - Starts the optional diagnostics HTTP server on `127.0.0.1:DIAGNOSTICS_PORT`. If the port is in use, it logs a warning and the bot runs without it.
 - Logs in.
 
-`stop()` clears the timers and the sync schedule, clears every voice channel status (waiting at most 2 s), stops the event-loop monitor, closes the diagnostics server, destroys every session, closes the notifier, destroys the client, writes a last heartbeat, kills any remaining child processes and closes the database.
+`stop()` clears the timers and the sync schedule, clears every voice channel status (waiting at most 2 s), stops the event-loop monitor, closes the diagnostics server, destroys every session, closes the notifier, destroys the client, writes a last heartbeat (and waits for it), kills any remaining child processes, stops the checkpoint worker, runs a final checkpoint that empties the write-ahead log into the database file, and closes the database.
 
 ## Modules
 
@@ -159,7 +160,11 @@ There are no other services. State lives in one SQLite file. All network traffic
   - that source IDs are unique across all packs.
 
   `PackRegistry` exposes the enabled packs, pack order, categories and per-pack brand labels. `seedPacks()` writes the packs to the database. The authoring guide is [catalog/README.md](../catalog/README.md).
-- **`sync.ts`** (`CatalogueSync`) reconciles each pack that declares `sync` in its `pack.json` with that pack's official list. **`sync-adapters.ts`** holds the list parsers (`webradio-apidata` for a webradio list embedded in a station website's page, and `json-name-list`). Adapters read station names and stable IDs only. See [station-verification.md](station-verification.md#catalogue-sync).
+- **`sync.ts`** (`CatalogueSync`) reconciles each pack that declares `sync` in its `pack.json` with that pack's official list. **`sync-adapters.ts`** holds the list parsers (`webradio-apidata` for a webradio list embedded in a station website's page, and `json-name-list`). Adapters read station names and stable IDs only. See [station-verification.md](station-verification.md#catalogue-sync). A sync is written so that it can't hold up voice packets:
+  - the list page (up to 6 MB) is fetched on the main thread through `SafeHttpClient`, like all other traffic, and then handed to a short-lived worker thread (`sync-parse-worker.ts`), which decodes it, runs the adapter and sends back only the names and IDs. Parsing a 6 MB page takes 20–30 ms, too long for the main thread. A list of more than 5,000 names is refused;
+  - matching the list against the catalogue (including the comparison of new names with missing ones) runs in slices of about 2 ms, giving the event loop a turn in between;
+  - the changes are then written in one transaction: every station still on the list is marked as seen today in a single statement, followed by any renames, new stations and stations missing from the list. A sync with more than 50 changes at once (hundreds of new stations, say) is written in transactions of 50, with a turn for the event loop in between; each of those is all or nothing, and the report lists only what was written, so if one fails, the next sync finishes the job;
+  - only one sync runs at a time: an admin's `/radio sync` waits for a scheduled one that is already running.
 - **`custom-provider.ts`** (`CustomStationService`) handles guild-scoped custom stations. It cleans the text fields, validates the URL with `UrlPolicy`, probes the source, and rolls back if the probe fails. It enforces the per-guild cap.
 - **`search.ts`** does ranked fuzzy search. `resolveStation()` returns a match only for an exact identity (ID, slug, name or alias) or a single clearly dominant hit. Otherwise the controller shows an "ambiguous" picker. Each station's normalised names are worked out once and kept per row.
 
@@ -182,7 +187,17 @@ There are no other services. State lives in one SQLite file. All network traffic
 - `0003_probe_results_started_index.sql`: an index for the hourly clean-up of old check results;
 - `0004_foreign_key_indexes.sql`: indexes on the favourites, queue and source-preference columns that point to stations and sources, so deleting a station or source doesn't read those whole tables.
 
-Checksums are verified: an edited applied migration aborts start-up, and so does a database that is newer than the build. `backup()` uses `VACUUM INTO` to write a consistent copy into the `backups/` folder next to the database and rotates each kind separately: the newest 5 pre-migration backups (`pre-vN`) and the newest 10 manual ones (`backup.js`, which lowers its own process priority so that it yields to the live encoder). The rotation class is the label without its trailing digits. The tables are listed in [rights-and-disclaimer.md](rights-and-disclaimer.md#privacy-policy-for-a-self-hosted-instance).
+Checksums are verified: an edited applied migration aborts start-up, and so does a database that is newer than the build. `backup()` uses `VACUUM INTO` to write a consistent copy into the `backups/` folder next to the database and rotates each kind separately: the newest 5 pre-migration backups (`pre-vN`) and the newest 10 manual ones (`backup.js`, which lowers its own process priority so that it yields to the live encoder). The rotation class is the label without its trailing digits. A backup reads through SQLite, so it includes everything, whether or not it has been checkpointed yet.
+
+**Checkpoints.** The database runs in WAL mode: a commit appends to the write-ahead log (`radio-bot.sqlite-wal`), and a *checkpoint* later copies the log back into the database file and syncs that file to disk. By default SQLite checkpoints inside whichever commit takes the log past 1000 pages, and that commit waits for the copy and the sync to disk, 20–100 ms on slow storage, on the thread that sends voice packets. So, once the bot has started, its own connection never checkpoints (`PRAGMA wal_autocheckpoint = 0`). `WalCheckpointer` (`checkpoint.ts`) runs them instead on a worker thread with a connection of its own (`checkpoint-worker.ts`):
+
+- every 5 min, and sooner if the log file grows past 4 MB (its size is looked at every 30 s; SQLite reuses the file after a checkpoint, so only growth beyond its largest size so far counts);
+- always PASSIVE: such a checkpoint copies what it can without waiting for any lock, and takes none that the bot's connection waits for, so the bot's reads and writes carry on meanwhile. Whatever it can't copy now is copied next time;
+- one at a time. The worker uses a small page cache and a heap of at most 16 MB.
+
+If the worker can't start, stops, or fails three times in a row, SQLite's own automatic checkpoints are switched back on, with a warning in the log, so the log can never grow without bound. At shutdown the worker is stopped first, then the bot's connection runs a final checkpoint that empties the log, and closes the database.
+
+The tables are listed in [rights-and-disclaimer.md](rights-and-disclaimer.md#privacy-policy-for-a-self-hosted-instance).
 
 ### `import-export/`
 
@@ -192,7 +207,7 @@ Checksums are verified: an edited applied migration aborts start-up, and so does
 
 - **`logger.ts`**: Pino, writing JSON lines to stdout.
 - **`metrics.ts`**: in-process counters and a ring buffer of 200 incidents. Repeats of the same code are coalesced within 5 minutes, and each incident is tagged with a fault domain: `upstream`, `discord`, `bot`, `operator` or `user`.
-- **`health.ts`**: the heartbeat file (`health.json` next to the database), read by `scripts/healthcheck.ts`, and the optional local diagnostics server.
+- **`health.ts`**: the heartbeat file (`health.json` next to the database), read by `scripts/healthcheck.ts` and `radio-bot update`, and the optional local diagnostics server. `HeartbeatWriter` writes the file asynchronously and one write at a time, atomically (a temporary file renamed over the old one).
 - **`event-loop.ts`** (`EventLoopMonitor`): Node's event-loop delay, sampled every 10 ms and summarised per minute (typical, 99th percentile, worst). Voice packets are sent every 20 ms from that loop, so `/radio stats` flags a delay of 20 ms or more, a minute with 50 ms or more is logged as a warning (other minutes at debug level), and the diagnostics endpoint includes the figures.
 
 ## Data flow: `/radio play`

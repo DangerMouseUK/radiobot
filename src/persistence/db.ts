@@ -231,6 +231,36 @@ export class Db {
     return target;
   }
 
+  /**
+   * After how many pages of write-ahead log a commit on this connection checkpoints it (SQLite's
+   * default is 1000). 0 means never: the bot turns it off and checkpoints on a worker thread instead
+   * (see checkpoint.ts), because the commit that checkpoints also syncs the file to disk.
+   */
+  setAutoCheckpoint(pages: number): void {
+    this.raw.exec(`PRAGMA wal_autocheckpoint = ${Math.max(0, Math.floor(pages))}`);
+  }
+
+  autoCheckpoint(): number {
+    return Number(this.raw.prepare('PRAGMA wal_autocheckpoint').get()?.wal_autocheckpoint ?? 0);
+  }
+
+  /**
+   * Copies the write-ahead log into the database file on this connection. It blocks, so the bot
+   * only calls it while nothing plays (at shutdown); TRUNCATE also empties the log file.
+   */
+  checkpoint(mode: 'PASSIVE' | 'TRUNCATE' = 'PASSIVE'): {
+    busy: boolean;
+    walFrames: number;
+    checkpointedFrames: number;
+  } {
+    const r = this.raw.prepare(`PRAGMA wal_checkpoint(${mode})`).get() as {
+      busy: number;
+      log: number;
+      checkpointed: number;
+    };
+    return { busy: r.busy !== 0, walFrames: r.log, checkpointedFrames: r.checkpointed };
+  }
+
   close(): void {
     if (this.raw.isOpen) this.raw.close();
   }

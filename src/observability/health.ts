@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { dirname, join } from 'node:path';
 import { type Logger, safeErr } from './logger.ts';
@@ -18,12 +19,56 @@ export function heartbeatPath(databasePath: string): string {
   return join(dirname(databasePath), 'health.json');
 }
 
-/** Atomically writes the heartbeat file the Docker HEALTHCHECK reads (no network port needed). */
-export function writeHeartbeat(path: string, snap: HealthSnapshot): void {
-  mkdirSync(dirname(path), { recursive: true });
+/**
+ * Atomically replaces the heartbeat file the Docker HEALTHCHECK reads (no network port needed):
+ * written to a temporary file, then renamed over the old one. Asynchronous, so a slow disk never
+ * holds up the thread that sends voice packets. Two writes to the same path must not overlap
+ * (they share the temporary file); `HeartbeatWriter` takes care of that.
+ */
+export async function writeHeartbeat(path: string, snap: HealthSnapshot): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(snap));
-  renameSync(tmp, path);
+  await writeFile(tmp, JSON.stringify(snap));
+  await rename(tmp, path);
+}
+
+/**
+ * Writes heartbeats one at a time. A heartbeat asked for while one is being written waits for it,
+ * and if several are waiting only the newest is written. The promise settles once the heartbeat
+ * asked for (or a newer one) is on disk; a failed write is passed to `onError`, never thrown.
+ */
+export class HeartbeatWriter {
+  readonly #path: string;
+  readonly #onError: (err: unknown) => void;
+  #writing: Promise<void> | null = null;
+  #next: HealthSnapshot | null = null;
+
+  constructor(path: string, onError: (err: unknown) => void) {
+    this.#path = path;
+    this.#onError = onError;
+  }
+
+  write(snap: HealthSnapshot): Promise<void> {
+    this.#next = snap;
+    this.#writing ??= this.#drain();
+    return this.#writing;
+  }
+
+  async #drain(): Promise<void> {
+    try {
+      for (let snap = this.#next; snap; snap = this.#next) {
+        this.#next = null;
+        try {
+          await writeHeartbeat(this.#path, snap);
+        } catch (err) {
+          this.#onError(err);
+        }
+      }
+    } finally {
+      // Cleared in the same step as the last look at #next, so no heartbeat is ever left unwritten.
+      this.#writing = null;
+    }
+  }
 }
 
 export function checkHeartbeat(path: string, maxAgeMs = 90_000): { healthy: boolean; reason: string } {
