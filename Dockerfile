@@ -2,7 +2,7 @@
 # Radio Bot — reproducible multi-stage build. Pin the base image; bump deliberately.
 # The base image is written out in both FROM lines (not an ARG) so Dependabot can propose bumps;
 # keep the two the same.
-FROM node:24.22.1-trixie-slim AS build
+FROM node:24.22.2-trixie-slim AS build
 WORKDIR /app
 ENV CI=true
 RUN corepack enable
@@ -18,7 +18,7 @@ COPY scripts ./scripts
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
   pnpm run build && pnpm prune --prod --ignore-scripts
 
-FROM node:24.22.1-trixie-slim AS base
+FROM node:24.22.2-trixie-slim AS base
 # Debian's FFmpeg includes libopus (required) and is LGPL/GPL-licensed; see docs/rights-and-disclaimer.md.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
