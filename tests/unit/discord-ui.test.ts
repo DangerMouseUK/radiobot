@@ -9,6 +9,8 @@ import { ComponentIds } from '../../src/discord/components/custom-id.ts';
 import type { AppContext } from '../../src/discord/context.ts';
 import {
   availabilityBadge,
+  COLOR,
+  checkedLine,
   DISCLAIMER,
   errorEmbed,
   identityLine,
@@ -18,6 +20,7 @@ import {
   qualityEmbed,
   sourceFormat,
   sourcesEmbed,
+  stateColor,
   stationLine,
   transportLabel,
 } from '../../src/discord/ui/format.ts';
@@ -32,6 +35,7 @@ import {
   type View,
 } from '../../src/discord/ui/views.ts';
 import { Metrics } from '../../src/observability/metrics.ts';
+import type { ProbeOutcome } from '../../src/streams/probe.ts';
 import { selectSource } from '../../src/streams/ranking.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { SourceService } from '../../src/streams/source-service.ts';
@@ -208,23 +212,38 @@ describe('control buttons', () => {
 });
 
 describe('browse and list views', () => {
-  it('pages the catalogue 25 stations at a time with a matching picker', () => {
+  it('pages the catalogue 20 stations at a time with a matching picker', () => {
     const { ctx, ids } = context();
+    const pageButtons = (v: View) =>
+      checkComponents(v).filter(
+        (c) =>
+          c.type === 2 && (ids.parse(GUILD, String(c.custom_id)) as { action?: string })?.action === 'browse',
+      );
     const first = browseView(ctx, GUILD, { pack: null, category: null, search: null }, 'tok123', 0);
     const comps = checkComponents(first);
     const select = comps.find((c) => c.type === 3)!;
-    expect((select.options as unknown[]).length).toBe(25);
-    const [prev, next] = comps.filter((c) => c.type === 2);
+    expect((select.options as unknown[]).length).toBe(20);
+    const [prev, next] = pageButtons(first);
     expect(prev!.disabled).toBe(true);
     expect(next!.disabled).toBe(false);
     expect(ids.parse(GUILD, String(next!.custom_id))).toMatchObject({ action: 'browse', arg: 'tok123:p1' });
-    expect(first.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/3 · 63 stations/);
+    // Browse and list number their pages the same way.
+    expect(first.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/4 · 63 stations\. /);
+    // The page buttons come last, as a pair, under the favourites switch.
+    expect(first.components.at(-1)!.toJSON().components).toHaveLength(2);
     embedSize(first.embeds[0]!);
 
     const last = browseView(ctx, GUILD, { pack: null, category: null, search: null }, 'tok123', 99);
-    expect(last.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 3\/3/);
-    const lastButtons = checkComponents(last).filter((c) => c.type === 2);
-    expect(lastButtons[1]!.disabled).toBe(true);
+    expect(last.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 4\/4/);
+    expect(pageButtons(last)[1]!.disabled).toBe(true);
+  });
+
+  it('shows no page buttons when every station fits on one page', () => {
+    const { ctx, ids } = context();
+    const one = browseView(ctx, GUILD, { pack: null, category: null, search: 'techno' }, 'tok123', 0);
+    const actions = parseAll(ids, checkComponents(one)).map((p) => p && 'action' in p && p.action);
+    expect(actions).not.toContain('browse');
+    expect(actions).toContain('bfav');
   });
 
   it('has a Favourites button that filters the list, and back', () => {
@@ -243,8 +262,23 @@ describe('browse and list views', () => {
     expect(view(null)).toMatchObject({ label: 'Show favourites (2)', disabled: false });
     expect(ids.parse(GUILD, String(view(null).custom_id))).toMatchObject({ action: 'bfav', arg: 'tok123' });
     expect(view('favourites')).toMatchObject({ label: 'Show all stations', disabled: false });
-    const empty = browseView(ctx, GUILD, { pack: null, category: 'favourites', search: 'zzzz' }, 't', 0);
-    expect(empty.embeds[0]!.toJSON().description).toMatch(/No favourites yet|No stations match/);
+  });
+
+  it('says "No favourites yet" only when there are none, not when a search leaves none', () => {
+    const { ctx, guilds } = context();
+    const empty = () =>
+      browseView(
+        ctx,
+        GUILD,
+        { pack: null, category: 'favourites', search: 'zzzz' },
+        't',
+        0,
+      ).embeds[0]!.toJSON();
+    expect(empty().description).toMatch(/^No favourites yet\./);
+    guilds.toggleFavourite(GUILD, ctx.stations.listStations(GUILD)[0]!.id);
+    // There is a favourite now; the search is what found nothing, so say that.
+    expect(empty().description).toMatch(/^No stations match\. Try a shorter search/);
+    expect(empty().footer?.text).toMatch(/^Page 1\/1 · 0 stations · favourites only · search: "zzzz"\./);
   });
 
   it('explains the default station, and says when autostart is missing what it needs', () => {
@@ -265,6 +299,20 @@ describe('browse and list views', () => {
     expect(text()).not.toMatch(/Autostart needs/);
   });
 
+  it('says when Channel lock is on without a preferred voice channel', () => {
+    const { ctx, guilds } = context();
+    const text = () =>
+      configView(ctx, GUILD, guilds.getSettings(GUILD), 'playback').embeds[0]!.toJSON().fields![0]!.value;
+    guilds.updateSettings(GUILD, { voiceLock: true });
+    expect(text()).toContain('⚠️ Channel lock needs a preferred voice channel, so it does nothing yet.');
+    guilds.updateSettings(GUILD, { preferredVoiceChannelId: '700000000000000001' });
+    expect(text()).not.toMatch(/Channel lock needs/);
+    // And that changes save straight away, since there is no Save button.
+    const e = configView(ctx, GUILD, guilds.getSettings(GUILD), 'notify').embeds[0]!.toJSON();
+    expect(e.description).toMatch(/Changes save as soon as you make them\./);
+    expect(e.fields![0]!.value).toMatch(/optional Set Voice Channel Status permission/);
+  });
+
   it('filters by search, category and favourites and says when nothing matches', () => {
     const { ctx, guilds } = context();
     const search = browseView(ctx, GUILD, { pack: 'fg', category: null, search: 'techno' }, 't', 0);
@@ -273,10 +321,16 @@ describe('browse and list views', () => {
     guilds.toggleFavourite(GUILD, 'fg:fg-yoga');
     const fav = browseView(ctx, GUILD, { pack: null, category: 'favourites', search: null }, 't', 0);
     expect(fav.embeds[0]!.toJSON().description).toMatch(/FG YOGA/);
-    expect(fav.embeds[0]!.toJSON().footer?.text).toMatch(/· 1 station\./);
+    expect(fav.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/1 · 1 station · favourites only\./);
     const none = browseView(ctx, GUILD, { pack: 'custom', category: null, search: null }, 't', 0);
-    expect(none.embeds[0]!.toJSON().description).toBe('No stations match.');
+    expect(none.embeds[0]!.toJSON().description).toMatch(/^No stations match\./);
     expect(none.components.every((r) => r.toJSON().components.every((c) => c.type === 2))).toBe(true);
+    // One page: only the favourites switch, no page buttons.
+    expect(none.components).toHaveLength(1);
+    // A category filter is named as the suggestions name it, not by its ID.
+    const cat = ctx.packs.categories()[0]!;
+    const byCategory = browseView(ctx, GUILD, { pack: null, category: cat.id, search: null }, 't', 0);
+    expect(byCategory.embeds[0]!.toJSON().footer?.text).toContain(`category: ${cat.name}`);
   });
 
   it('lists packs 20 per page with numbered ids, coverage and the generic disclaimer', () => {
@@ -299,7 +353,8 @@ describe('browse and list views', () => {
   it('shows empty custom and favourite lists without paging buttons', () => {
     const { ctx } = context();
     const custom = listView(ctx, GUILD, 'custom', null, 0);
-    expect(custom.embeds[0]!.toJSON().description).toBe('No stations.');
+    expect(custom.embeds[0]!.toJSON().description).toMatch(/^This server has no custom stations yet\./);
+    expect(custom.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/1 · 0 stations\. /);
     expect(custom.components).toEqual([]);
     expect(listView(ctx, GUILD, 'favourites', null, 0).embeds[0]!.toJSON().description).toMatch(
       /No favourites yet/,
@@ -322,6 +377,37 @@ describe('browse and list views', () => {
     const v = ambiguityView(ctx, GUILD, 'fg', stations.listStations(null).slice(0, 3), null);
     expect(v.components).toEqual([]);
     expect(v.embeds[0]!.toJSON().description).toMatch(/Run the command again/);
+    expect(v.embeds[0]!.toJSON().footer?.text).toBe(DISCLAIMER);
+  });
+
+  it('names the pack of each match only when the matches come from more than one', () => {
+    const { ctx, ids, stations } = context();
+    stations.insertCustomStation({
+      id: 'custom:my-station',
+      guildId: GUILD,
+      slug: 'my-station',
+      displayName: 'My Station',
+      description: null,
+      category: null,
+      websiteUrl: null,
+      language: null,
+      createdById: '900000000000000001',
+    });
+    const pack = stations.listStations(null)[0]!;
+    const custom = stations.getStation('custom:my-station')!;
+    const mixed = ambiguityView(ctx, GUILD, 'my', [pack, custom], { channelId: null });
+    expect(mixed.embeds[0]!.toJSON().description).toContain('· Custom (this server)');
+    const [select] = checkComponents(mixed);
+    const options = select!.options as Array<{ description: string }>;
+    expect(options[1]!.description).toMatch(/^.+ · Custom \(this server\)$/);
+    expect(parseAll(ids, [select!])[0]).toMatchObject({ action: 'pick' });
+    const samePack = ambiguityView(ctx, GUILD, 'x', stations.listStations(null).slice(0, 2), {
+      channelId: null,
+    });
+    const [one] = checkComponents(samePack);
+    // One pack: the availability alone, no pack name.
+    for (const o of one!.options as Array<{ description: string }>)
+      expect(o.description).not.toContain(' · ');
   });
 });
 
@@ -487,7 +573,8 @@ describe('status embeds', () => {
 
   it('lays out the song, three short facts and why this source plays', () => {
     const e = nowEmbed(station, status(), '999').toJSON();
-    expect(e.title).toBe('▶ FG CHIC');
+    expect(e.title).toBe('▶ Playing: FG CHIC');
+    expect(e.color).toBe(COLOR.ok);
     expect(e.description).toBe('-# The station isn’t sending a song or show title right now.');
     const fields = Object.fromEntries((e.fields ?? []).map((f) => [f.name, f]));
     expect(fields.Channel).toMatchObject({ value: '<#999>', inline: true });
@@ -530,6 +617,71 @@ describe('status embeds', () => {
     ).toJSON();
     expect(e.title).toBe('Reconnecting to the stream: FG CHIC');
     expect(e.description).toContain('⚠️ The stream stalled.');
+    expect(e.color).toBe(COLOR.warn);
+  });
+
+  it('colours each playback state the same way in every view', () => {
+    expect(stateColor('PLAYING')).toBe(COLOR.ok);
+    expect(stateColor('ERROR')).toBe(COLOR.error);
+    expect(stateColor('RECOVERING')).toBe(COLOR.warn);
+    expect(stateColor('FAILING_OVER')).toBe(COLOR.warn);
+    // Starting up is normal, not a fault: grey, like the "Joining…" message for the same moment.
+    expect(stateColor('BUFFERING')).toBe(COLOR.neutral);
+    expect(stateColor(undefined)).toBe(COLOR.neutral);
+    expect(nowEmbed(station, status({ state: 'BUFFERING' }), null).toJSON().color).toBe(COLOR.neutral);
+  });
+
+  it('says Stopped after a listener stops it, without an old error, a fallback or empty stream facts', () => {
+    const e = nowEmbed(
+      station,
+      status({
+        state: 'CONNECTED',
+        desiredState: 'stopped',
+        selection: { degraded: true } as never,
+        lastError: { code: 'STREAM_STALLED', message: 'The stream stalled.', at: '' },
+      }),
+      '999',
+    ).toJSON();
+    expect(e.title).toBe('Stopped: FG CHIC');
+    expect(e.color).toBe(COLOR.neutral);
+    expect(e.description).toBe('Nothing is playing. Press **Browse** or use `/radio play` to start again.');
+    expect(e.description).not.toMatch(/⚠️|fallback/);
+    expect((e.fields ?? []).map((f) => f.name)).toEqual(['Channel']);
+  });
+
+  it('says Paused while the channel is empty, and that it plays again when someone joins', () => {
+    const e = nowEmbed(station, status({ state: 'CONNECTED', desiredState: 'paused_empty' }), '999').toJSON();
+    expect(e.title).toBe('Paused: FG CHIC');
+    expect(e.color).toBe(COLOR.neutral);
+    expect(e.description).toMatch(/plays again when someone joins/);
+  });
+
+  it('writes a check just made the way every view writes a source', () => {
+    const o = {
+      codec: 'aac',
+      profile: 'LC',
+      measuredBitrateKbps: null,
+      codecBitrateKbps: 127.9,
+      advertisedBitrateKbps: null,
+      sampleRateHz: 44_100,
+      channels: 2,
+      transport: 'http-continuous',
+    } as unknown as ProbeOutcome;
+    expect(checkedLine(o)).toBe(
+      'AAC-LC · ≈128 kbps (codec metadata) · 44.1 kHz · stereo · Direct HTTP stream',
+    );
+    const unknown = {
+      ...o,
+      codec: null,
+      profile: null,
+      codecBitrateKbps: null,
+      sampleRateHz: null,
+      channels: null,
+      transport: 'hls',
+    } as unknown as ProbeOutcome;
+    expect(checkedLine(unknown)).toBe(
+      'codec unknown · bitrate unknown · sample rate unknown · channels unknown · HLS (delivery protocol)',
+    );
   });
 
   it('reports one lossy encode and no processing in the quality embed', () => {
@@ -540,6 +692,22 @@ describe('status embeds', () => {
     expect(text).toContain('exactly one lossy encode (MP3 → Opus)');
     expect(text).toContain('44100 Hz → 48000 Hz');
     expect(text).toContain('Volume/normalisation/EQ/compression: off');
+    // The bitrate and its evidence are written as in every other view.
+    expect(text).toContain('Bitrate: ≈128 kbps (measured)');
+    const manifest = JSON.stringify(
+      qualityEmbed(
+        station,
+        status({
+          source: makeSource({
+            transport: 'hls',
+            measuredBitrateKbps: null,
+            codecBitrateKbps: null,
+            advertisedBitrateKbps: 96,
+          }),
+        }),
+      ).toJSON(),
+    );
+    expect(manifest).toContain('Bitrate: ≈96 kbps (manifest, unverified)');
     const opus = JSON.stringify(
       qualityEmbed(station, status({ source: makeSource({ codec: 'opus' }) })).toJSON(),
     );
@@ -569,6 +737,8 @@ describe('status embeds', () => {
     // Usable sources come first, in rank order; the best one heads the list.
     const fields = e.toJSON().fields ?? [];
     expect(fields[0]!.name).toMatch(/^#1 .*best choice/);
+    // Inspect marks identity with the same ✅/❌/❔ as Sources.
+    expect(fields[0]!.value.split('\n')[1]).toMatch(/^(✅|❌|❔) (Verified|Plays|Not yet)/);
     // What plays now, and a listener's choice, are marked.
     const live = sourcesEmbed(station, sources, selection, false, {
       playingId: selection.ordered[1]!.id,

@@ -57,7 +57,7 @@ These mean the server limits who can control the radio (the *listener control mo
 | `VOICE_KICKED` | A moderator disconnected the bot. | Deliberate: the bot won't rejoin or autostart. Use `/radio play` to start again. |
 | `VOICE_DISCONNECTED` | The voice connection dropped and couldn't be rebuilt after several quick attempts (spread over about 2 min). The bot says so once, then keeps trying every 2 min while playback is wanted, so the station comes back by itself after a Discord outage. | Check connectivity, and Discord's status page. Wait for it to reconnect, or `/radio stop` to stop it trying. |
 | `STREAM_LIMIT` | The bot is already playing in as many servers as `MAX_ACTIVE_GUILD_STREAMS` allows (3 by default). The limit also applies when a server resumes from pause, retries or reconnects; the bot then posts one notice and tries again about every 2 minutes. | Wait for another server to stop, or raise the limit in `.env` if your hardware can take it. |
-| `RATE_LIMITED` | "Too many … in a short time. Try again in N s." A per-user or per-server rate limit was hit (see [permissions.md](permissions.md#rate-limits)). | Wait the number of seconds shown. |
+| `RATE_LIMITED` | "Too many … in a short time. Try again in N s." (or "N min" for longer waits). A per-user or per-server rate limit was hit (see [permissions.md](permissions.md#rate-limits)). | Wait the time shown. |
 | `CUSTOM_STATION_LIMIT` | The server already has `MAX_CUSTOM_STATIONS_PER_GUILD` custom stations. | Remove one with `/radio remove`, or raise the limit. |
 | `CANCELLED` | A newer command replaced this one before it finished (for example, a second `/radio play` while the first was still connecting), or a probe was stopped. | Nothing to fix: the newer command wins. |
 | `INTERNAL` | Something the bot didn't expect, or an action that doesn't apply (for example "This pack has no official list to sync with."). The message says which. | If the message doesn't explain it, check `radio-bot logs` (or `docker compose logs`) for the error and report it as a bug. |
@@ -136,7 +136,7 @@ A custom station is only saved if the bot's check of its stream succeeds. Otherw
 | `FFMPEG_EXIT` | The encoder exited. The message includes the last FFmpeg error lines, redacted. |
 | `IDENTITY_MISMATCH` | When the bot connected, the stream named itself (`icy-name`) as a *different* catalogue station. The source is marked as a mismatch, and the bot fails over to another verified source. An admin can re-compare it with `/radio rescan <station> compare:true`; the operator (or, for a custom station, a server admin) can review it with `/radio source verify`. |
 
-- "The usual source failed, so the radio is playing from a fallback (…)", and **Degraded** in `/radio now`, mean the best source failed and another verified source of the same station is playing. The bot moves back to the usual source by itself once a check shows that it works again (see [audio-quality.md → Recovery and continuity](audio-quality.md#recovery-and-continuity)).
+- "The radio is now playing from a fallback source (…)", and "Playing from a fallback" in `/radio now`, mean the best source failed and another verified source of the same station is playing. The bot moves back to the usual source by itself once a check shows that it works again (see [audio-quality.md → Recovery and continuity](audio-quality.md#recovery-and-continuity)).
 - If a notification channel is set, the first notice of each kind is posted, and repeats within 5 minutes are summarised in one follow-up message.
 - **The voice channel status doesn't show what's playing:** the bot needs **Set Voice Channel Status** in that voice channel. Invites made with the current link include it; for an older invite, re-invite the bot with `radio-bot invite` or give its role the permission. Check that `/radio config` → Notifications shows **Voice channel status: on**. The status follows the stream's titles, so it shows only the station during adverts or on stations that send no titles.
 - **Short drops followed by a speed-up, with no error logged:** voice packets reached Discord late, and Discord's player is catching up. To find out why:
@@ -169,10 +169,11 @@ A custom station is only saved if the bot's check of its stream succeeds. Otherw
 ## Catalogue sync
 
 - **"…: the sync failed. …"**: the pack's official list couldn't be fetched, or looked implausible (fewer than 10 names, or fewer than half the pack's stations for small packs). Nothing changed, and existing entries are kept. `/radio list pack:<pack>` shows "list may be out of date" if no sync has succeeded within three intervals.
-- **"No enabled station pack has an official list to sync with."**: none of the enabled packs declares `sync` in its `pack.json`.
-- **"That pack is not enabled or has no official list to sync with."**: the pack you named is disabled, or doesn't declare `sync`.
-- **"Needs a reviewed source mapping before it can play"**: a new station appeared on the official list. The sync deliberately never collects stream URLs, so someone has to add the station's sources to the pack's `sources.json` through a reviewed change.
-- **"No longer listed"**: the station was kept (marked `missing_from_official`), and favourites are intact.
+- **"None of the enabled station packs has an official list to check against."**: none of the enabled packs declares `sync` in its `pack.json`.
+- **"That pack is either not enabled or has no official list to check against."**: the pack you named is disabled, or doesn't declare `sync`.
+- **"Added: … (no stream yet: they can't play until a reviewed source is added to the pack)"**: new stations appeared on the official list. The sync deliberately never collects stream URLs, so someone has to add the station's sources to the pack's `sources.json` through a reviewed change.
+- **"No longer on the official list: … (kept here, so favourites still work)"**: the station was kept (marked `missing_from_official`), and favourites are intact.
+- Long lists show the first 15 names and how many more there are.
 
 ## After a restart nothing plays
 

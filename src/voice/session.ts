@@ -852,7 +852,7 @@ export class GuildSession {
           guildId: this.guildId,
           kind: 'degraded',
           code: null,
-          message: `The usual source failed, so the radio is playing from a fallback (${source.label ?? source.id}).`,
+          message: `The radio is now playing from a fallback source (${source.label ?? source.id}).`,
         });
       } else if (opts.reason === 'upgrade') {
         this.#d.notify({

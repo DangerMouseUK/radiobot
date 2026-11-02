@@ -11,7 +11,7 @@ import {
 } from 'discord.js';
 import { searchStations } from '../../catalogue/search.ts';
 import { AVAILABILITY_LABEL, type Station } from '../../catalogue/types.ts';
-import type { GuildSettings } from '../../persistence/repositories/guilds.ts';
+import type { GuildSettings, QueueEntry } from '../../persistence/repositories/guilds.ts';
 import { truncate } from '../../shared/text.ts';
 import type { ComponentAction } from '../components/custom-id.ts';
 import type { AppContext } from '../context.ts';
@@ -27,7 +27,45 @@ export interface View {
   components: Row[];
 }
 
-const PAGE_SIZE = 25;
+/** Stations per page in browse and list. List lines carry IDs, so 20 keeps a page under 4000 characters. */
+const PAGE_SIZE = 20;
+
+/** "Page 1/3 · 63 stations": how every paged station list starts its footer. */
+const pageLine = (p: number, pages: number, count: number) =>
+  `Page ${p + 1}/${pages} · ${count} ${count === 1 ? 'station' : 'stations'}`;
+
+/** Previous page and Next page, last in the message; nothing when everything fits on one page. */
+function pageRow(
+  ctx: AppContext,
+  guildId: string,
+  action: 'browse' | 'list',
+  arg: (page: number) => string,
+  p: number,
+  pages: number,
+): Row[] {
+  if (pages <= 1) return [];
+  return [
+    row(
+      new ButtonBuilder()
+        .setCustomId(ctx.ids.make(guildId, action, arg(p - 1)))
+        .setLabel('Previous page')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(p === 0),
+      new ButtonBuilder()
+        .setCustomId(ctx.ids.make(guildId, action, arg(p + 1)))
+        .setLabel('Next page')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(p >= pages - 1),
+    ),
+  ];
+}
+
+/** A browse filter in the words the category suggestions use ("Electronic", not its ID). */
+function categoryFilter(ctx: AppContext, category: string): string {
+  if (category === 'favourites') return 'favourites only';
+  if (category === 'custom') return 'category: custom stations';
+  return `category: ${ctx.packs.categories().find((c) => c.id === category)?.name ?? category}`;
+}
 
 export interface BrowseState {
   /** A pack id, "custom" or null for everything. */
@@ -91,10 +129,12 @@ export function browseView(
   const p = Math.min(Math.max(0, page), pages - 1);
   const slice = all.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
   const current = ctx.sessions.get(guildId)?.stationId ?? null;
+  const favourites = ctx.guilds.listFavourites(guildId).length;
+  const onlyFavourites = state.category === 'favourites';
   const lines = groupedLines(ctx, slice, current);
   const filter = [
     state.pack ? `pack: ${groupName(ctx, state.pack)}` : null,
-    state.category ? `category: ${state.category}` : null,
+    state.category ? categoryFilter(ctx, state.category) : null,
     state.search ? `search: "${state.search}"` : null,
   ]
     .filter(Boolean)
@@ -106,15 +146,14 @@ export function browseView(
       truncate(
         lines.length > 0
           ? lines.join('\n')
-          : state.category === 'favourites'
+          : // "No favourites yet" only when there are none: a search can also leave the favourites empty.
+            onlyFavourites && favourites === 0
             ? 'No favourites yet. Press Favourite under a playing station to add one.'
-            : 'No stations match.',
+            : 'No stations match. Try a shorter search or another filter, or run `/radio browse` on its own to see every station.',
         4000,
       ),
     )
-    .setFooter({
-      text: `Page ${p + 1}/${pages}${filter ? ` · ${filter}` : ''} · ${all.length} ${all.length === 1 ? 'station' : 'stations'}. ${DISCLAIMER}`,
-    });
+    .setFooter({ text: `${pageLine(p, pages, all.length)}${filter ? ` · ${filter}` : ''}. ${DISCLAIMER}` });
   const components: Row[] = [];
   if (slice.length > 0) {
     const select = new StringSelectMenuBuilder()
@@ -133,20 +172,9 @@ export function browseView(
       );
     components.push(row(select));
   }
-  const favourites = ctx.guilds.listFavourites(guildId).length;
-  const onlyFavourites = state.category === 'favourites';
+  // The favourites switch has a row of its own, so the page buttons below it stay an even pair.
   components.push(
     row(
-      new ButtonBuilder()
-        .setCustomId(ctx.ids.make(guildId, 'browse', `${token}:p${p - 1}`))
-        .setLabel('Previous page')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(p === 0),
-      new ButtonBuilder()
-        .setCustomId(ctx.ids.make(guildId, 'browse', `${token}:p${p + 1}`))
-        .setLabel('Next page')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(p >= pages - 1),
       new ButtonBuilder()
         .setCustomId(ctx.ids.make(guildId, 'bfav', token))
         .setLabel(
@@ -159,14 +187,15 @@ export function browseView(
         .setStyle(onlyFavourites ? ButtonStyle.Primary : ButtonStyle.Secondary)
         .setDisabled(!onlyFavourites && favourites === 0),
     ),
+    ...pageRow(ctx, guildId, 'browse', (n) => `${token}:p${n}`, p, pages),
   );
   return { embeds: [embed], components };
 }
 
-/** Station picker used when a typed name is ambiguous — never guesses (FR-001). */
 /**
- * Disambiguation for a station name. Only `/radio play` gets a picker (which plays, in the
- * channel it named); other commands list the matches and ask for the exact name.
+ * Disambiguation for a station name, which never guesses (FR-001). Only `/radio play` gets a
+ * picker (which plays, in the channel it named); other commands list the matches and ask for
+ * the exact name.
  */
 export function ambiguityView(
   ctx: AppContext,
@@ -175,8 +204,12 @@ export function ambiguityView(
   candidates: Station[],
   play: { channelId: string | null } | null,
 ): View {
+  // The pack is shown only when the matches come from more than one, which is when it tells them apart.
+  const several = new Set(candidates.map((s) => s.provider)).size > 1;
+  const where = (s: Station) => (several ? ` · ${groupName(ctx, s.provider)}` : '');
+  const avail = candidates.map((s) => ctx.sources.availability(s));
   const list = candidates
-    .map((s) => `• ${s.displayName} — ${availabilityBadge(ctx.sources.availability(s))}`)
+    .map((s, n) => `• ${s.displayName} — ${availabilityBadge(avail[n]!)}${where(s)}`)
     .join('\n');
   const ask = play
     ? 'Pick one below.'
@@ -184,12 +217,19 @@ export function ambiguityView(
   const embed = new EmbedBuilder()
     .setColor(COLOR.warn)
     .setTitle('Which station did you mean?')
-    .setDescription(truncate(`"${query}" matches several stations. ${ask}\n\n${list}`, 4000));
+    .setDescription(truncate(`"${query}" matches several stations. ${ask}\n\n${list}`, 4000))
+    .setFooter({ text: DISCLAIMER });
   if (!play) return { embeds: [embed], components: [] };
   const select = new StringSelectMenuBuilder()
     .setCustomId(ctx.ids.make(guildId, 'pick', play.channelId ?? ''))
     .setPlaceholder('Choose the exact station')
-    .addOptions(candidates.slice(0, 25).map((s) => ({ label: truncate(s.displayName, 100), value: s.id })));
+    .addOptions(
+      candidates.slice(0, 25).map((s, n) => ({
+        label: truncate(s.displayName, 100),
+        value: s.id,
+        description: truncate(`${AVAILABILITY_LABEL[avail[n]!]}${where(s)}`, 100),
+      })),
+    );
   return { embeds: [embed], components: [row(select)] };
 }
 
@@ -220,14 +260,18 @@ export function listView(
   const all = visibleStations(ctx, guildId);
   let list: Station[];
   if (scope === 'favourites') {
-    const fav = ctx.guilds.listFavourites(guildId);
-    list = fav.map((id) => all.find((s) => s.id === id)).filter((s): s is Station => Boolean(s));
+    // A lookup table, not a search per favourite: favourites have no cap, and packs can be large.
+    const byId = new Map(all.map((s) => [s.id, s]));
+    list = ctx.guilds
+      .listFavourites(guildId)
+      .map((id) => byId.get(id))
+      .filter((s): s is Station => Boolean(s));
   } else if (scope === 'custom') {
     list = all.filter((s) => s.provider === 'custom');
   } else {
     list = all.filter((s) => s.provider !== 'custom' && (!pack || s.provider === pack));
   }
-  const per = 20;
+  const per = PAGE_SIZE;
   const pages = Math.max(1, Math.ceil(list.length / per));
   const p = Math.min(Math.max(0, page), pages - 1);
   const lines = groupedLines(ctx, list.slice(p * per, (p + 1) * per), null, true, p * per);
@@ -247,14 +291,16 @@ export function listView(
         lines.join('\n') ||
           (scope === 'favourites'
             ? 'No favourites yet. Press Favourite under a playing station to add one.'
-            : 'No stations.'),
+            : scope === 'custom'
+              ? 'This server has no custom stations yet. Admins can add one with `/radio add`.'
+              : 'No stations.'),
         4000,
       ),
     );
-  let footer = `Page ${p + 1}/${pages}`;
+  let footer = pageLine(p, pages, list.length);
   if (scope === 'packs') {
     const cov = ctx.sources.coverage(list);
-    footer += ` · ${cov.catalogued} stations · ${cov.withSources} with a known stream · ${cov.usable} with a working stream · ${cov.verifiedPlayable} verified and playable`;
+    footer += ` · ${cov.withSources} with a known stream · ${cov.usable} with a working stream · ${cov.verifiedPlayable} verified and playable`;
     const packMeta = pack ? ctx.packs.get(pack) : null;
     if (packMeta?.meta.sync) {
       const sync = ctx.catalogueSync.lastSync(packMeta.meta.id);
@@ -265,27 +311,22 @@ export function listView(
     if (packMeta?.meta.disclaimer) footer += ` · ${packMeta.meta.disclaimer}`;
   }
   embed.setFooter({ text: truncate(`${footer}. ${DISCLAIMER}`, 2048) });
-  const nav = row(
-    new ButtonBuilder()
-      .setCustomId(ctx.ids.make(guildId, 'list', listArg(scope, pack, p - 1)))
-      .setLabel('Previous page')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(p === 0),
-    new ButtonBuilder()
-      .setCustomId(ctx.ids.make(guildId, 'list', listArg(scope, pack, p + 1)))
-      .setLabel('Next page')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(p >= pages - 1),
-  );
-  return { embeds: [embed], components: pages > 1 ? [nav] : [] };
+  return {
+    embeds: [embed],
+    components: pageRow(ctx, guildId, 'list', (n) => listArg(scope, pack, n), p, pages),
+  };
 }
 
-/** Now-playing controls. `persistent` buttons (control panel) do not expire but are re-authorised on click. */
+/**
+ * Now-playing controls. `persistent` buttons (control panel) do not expire but are re-authorised on
+ * click. A caller that has already read the queue (for "Up next") passes it, so it is read once.
+ */
 export function controlRows(
   ctx: AppContext,
   guildId: string,
   stationId: string | null,
   persistent = false,
+  queue: readonly QueueEntry[] = ctx.guilds.listQueue(guildId),
 ): Row[] {
   const ttl = persistent ? null : 15 * 60_000;
   const b = (action: ComponentAction, label: string, style: ButtonStyle, arg = '') =>
@@ -300,7 +341,7 @@ export function controlRows(
     b('prev', 'Previous', ButtonStyle.Secondary),
     b('next', 'Next', ButtonStyle.Secondary),
   ];
-  const queued = ctx.guilds.listQueue(guildId).length;
+  const queued = queue.length;
   if (persistent || queued > 0) {
     tune.push(
       queued > 0
@@ -386,6 +427,9 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
                 `⚠️ Autostart needs a default station and a preferred voice channel, and is missing ${[!station ? 'the default station' : null, !s.preferredVoiceChannelId ? 'the preferred voice channel' : null].filter(Boolean).join(' and ')}, so it does nothing yet.`,
               ]
             : []),
+          ...(s.voiceLock && !s.preferredVoiceChannelId
+            ? ['⚠️ Channel lock needs a preferred voice channel, so it does nothing yet.']
+            : []),
           '-# The default station is what `/radio join` plays, and what autostart plays in the preferred voice channel when the bot starts.',
           '-# Set it with `/radio config default_station`, and a manual bitrate with `manual_bitrate`.',
         ].join('\n'),
@@ -398,7 +442,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
         [
           `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
           `Voice channel status: ${s.voiceChannelStatus ? 'on' : 'off'}`,
-          '-# The voice channel status shows what is playing, under the channel’s name.',
+          '-# The voice channel status shows what is playing, under the channel’s name. It needs the bot’s optional Set Voice Channel Status permission; without it, nothing shows.',
         ].join('\n'),
         1024,
       ),
@@ -407,7 +451,9 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
   const embed = new EmbedBuilder()
     .setTitle(`Radio Bot settings: ${PAGE_LABEL[page]}`)
     .setColor(COLOR.info)
-    .setDescription('Change a setting with the menus and buttons below.')
+    .setDescription(
+      'Change a setting with the menus and buttons below. Changes save as soon as you make them.',
+    )
     .addFields(fields[page]);
   const nav = row(
     ...(['access', 'playback', 'notify'] as ConfigPage[]).map((p) =>

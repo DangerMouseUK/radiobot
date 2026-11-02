@@ -78,7 +78,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('list')
-        .setDescription('List stations and whether they can play')
+        .setDescription('List stations with their IDs and whether they can play')
         .addStringOption((o) =>
           o
             .setName('scope')
@@ -158,7 +158,7 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('remove')
-        .setDescription('Remove a custom station (admins). Stations from packs can’t be removed')
+        .setDescription('Delete a custom station for good (admins). Stations from packs can’t be removed')
         .addStringOption((o) => stationOpt(o, 'Custom station to remove')),
     )
     .addSubcommand((s) =>
@@ -183,7 +183,9 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
     .addSubcommand((s) =>
       s
         .setName('config')
-        .setDescription('Server settings: channels, roles, idle behaviour and quality (admins)')
+        .setDescription(
+          'Server settings: channels, DJ roles, quality and what happens when everyone leaves (admins)',
+        )
         .addStringOption((o) =>
           o
             .setName('default_station')

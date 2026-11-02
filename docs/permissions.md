@@ -38,7 +38,7 @@ The invite link asks for two *scopes*: `bot`, which adds the bot to the server, 
 |---|---:|---|
 | View Channels | 1024 | See the target voice channel, the panel channel and the notice channel |
 | Send Messages | 2048 | **Only** for the optional control panel (`/radio panel`) and the optional notice channel. Replies to slash commands don't need it |
-| Embed Links | 16384 | Embeds in the control panel and notices |
+| Embed Links | 16384 | The control panel is an embed. Notices are plain text, and replies to slash commands don't need it |
 | Attach Files | 32768 | `/radio export` replies with a JSON file |
 | Connect | 1048576 | Join the voice channel |
 | Speak | 2097152 | Play audio |
@@ -50,7 +50,7 @@ Servers that invited the bot with the earlier integer `3197952` keep working. To
 
 Not needed: Administrator, Manage Server, Manage Channels, Manage Roles, Manage Messages, Read Message History, Mention Everyone, Use Voice Activity, Priority Speaker, Move Members.
 
-Each time it joins a channel, the bot checks that it has View Channel, Connect and Speak in that **particular** channel, so a channel's own permission settings count. It also checks that the channel is a standard voice channel (stage channels are refused) and that it isn't full. Before posting the control panel it checks View Channel and Send Messages in the panel channel. If Send Messages is missing in the notice channel, notices are quietly skipped.
+Each time it joins a channel, the bot checks that it has View Channel, Connect and Speak in that **particular** channel, so a channel's own permission settings count. It also checks that the channel is a standard voice channel (stage channels are refused) and that it isn't full. Before posting the control panel it checks View Channel, Send Messages and Embed Links in the panel channel. If Send Messages is missing in the notice channel, notices are quietly skipped; the settings page warns about this when the notice channel is chosen.
 
 ### Command registration
 
@@ -142,7 +142,7 @@ A button posted in a public channel must not let anyone get round the rules abov
 
 ## Rate limits
 
-These limits are kept in memory (`RateLimits` in `src/discord/context.ts`), so restarting the bot resets them. Each one lets you use the whole allowance at once; it then refills gradually over the stated time. When a limit runs out, the reply says "Too many … in a short time. Try again in N s." (reason code `RATE_LIMITED`).
+These limits are kept in memory (`RateLimits` in `src/discord/context.ts`), so restarting the bot resets them. Each one lets you use the whole allowance at once; it then refills gradually over the stated time. When a limit runs out, the reply says "Too many … in a short time. Try again in N s." (or "N min" when the wait is longer than about a minute and a half; reason code `RATE_LIMITED`).
 
 | Limit | Counted per | Allowance |
 |---|---|---|

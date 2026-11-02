@@ -330,6 +330,6 @@ A sync:
 - applies all its changes together or none of them. Only a sync with more than 50 changes at once is written in parts of 50; the report then lists what was written, and if a part fails, the next sync finishes the job;
 - on **failure**, keeps the existing entries and records a failed report. `/radio list` for that pack shows "list may be out of date" when no sync has succeeded within three intervals.
 
-Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio sync` shows one report per pack: added, renamed, no longer on the official list, back on the list, new stations with no stream yet, and stations whose sources all failed their last check.
+Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio sync` shows one report per pack: what was added (new stations have no stream yet), renamed, dropped from or back on the official list, or "No stations were added, renamed, dropped or brought back."; then the stations whose sources all failed their last check. Long lists show 15 names and how many more.
 
 A rename made by a sync survives restarts. While the pack's `stations.json` still has the old name, and that old name is an alias of the station, the bot keeps the synced name. Updating the pack file makes it permanent. The old name stays as an alias either way.

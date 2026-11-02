@@ -177,13 +177,26 @@ export function previewImport(
   diff('Number of voice channels', cur.allowedVoiceChannelIds.length, s.allowedVoiceChannelIds.length);
   diff('Number of DJ roles', cur.djRoleIds.length, s.djRoleIds.length);
   diff('Who else can control the radio', cur.memberControlMode, s.memberControlMode);
-  diff('Default station', cur.defaultStationId, importedDefault(guildId, data, guilds, stations));
+  // Every setting applyImport changes is listed, by the names the settings pages use.
+  const stationName = (id: string | null) =>
+    id === null ? null : (stations.getVisibleStation(guildId, id)?.displayName ?? id);
+  // Channels the file names that this server lacks are dropped, as applyImport does.
+  const channel = (id: string | null) => (id && existingChannelIds.has(id) ? `<#${id}>` : null);
+  const kbps = (n: number | null) => (n === null ? null : `${n} kbps`);
+  diff(
+    'Default station',
+    stationName(cur.defaultStationId),
+    stationName(importedDefault(guildId, data, guilds, stations)),
+  );
+  diff('Preferred voice channel', channel(cur.preferredVoiceChannelId), channel(s.preferredVoiceChannelId));
   diff('Quality', cur.qualityMode, s.qualityMode);
+  diff('Manual bitrate', kbps(cur.manualBitrateKbps), kbps(s.manualBitrateKbps));
   diff('When the channel is empty', cur.idleMode, s.idleMode);
   diff('Autostart', cur.autostart, s.autostart);
   diff('Resume after restart', cur.resumeOnRestart, s.resumeOnRestart);
-  diff('Voice channel status', cur.voiceChannelStatus, s.voiceChannelStatus);
   diff('Channel lock', cur.voiceLock, s.voiceLock);
+  diff('Problem notices', channel(cur.notificationChannelId), channel(s.notificationChannelId));
+  diff('Voice channel status', cur.voiceChannelStatus, s.voiceChannelStatus);
   const unknownChannels = [
     ...s.allowedTextChannelIds,
     ...s.allowedVoiceChannelIds,
@@ -202,12 +215,12 @@ export function previewImport(
     warnings.push(`${unknownStations.length} station ID(s) are not in this catalogue and will be skipped.`);
   const customFavourites = guilds.listFavourites(guildId).filter(isCustom).length;
   lines.push(
-    `• Favourites: ${data.favourites.length}` +
+    `• Favourites: the file’s ${data.favourites.length} replace this server’s list` +
       (customFavourites > 0
         ? ` (this server’s ${customFavourites} custom-station favourite(s) are kept)`
         : ''),
   );
-  lines.push(`• Source preferences: ${data.sourcePreferences.length}`);
+  lines.push(`• Source preferences: ${data.sourcePreferences.length} added or updated`);
   const importable = data.customStations.filter((c) => !c.urlRedacted);
   lines.push(`• Custom stations to add: ${importable.length} (each one is checked again before it is added)`);
   const redacted = data.customStations.length - importable.length;

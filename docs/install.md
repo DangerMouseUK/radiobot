@@ -173,7 +173,7 @@ The bot asks only for what it needs:
 |---|---|
 | View Channels | See the voice channel and the channels it posts in |
 | Send Messages | Only for the optional control panel and problem notices |
-| Embed Links | Show the panel and notices as tidy cards |
+| Embed Links | Show the control panel as a tidy card |
 | Attach Files | `/radio export` sends a settings file |
 | Connect | Join a voice channel |
 | Speak | Play the radio |

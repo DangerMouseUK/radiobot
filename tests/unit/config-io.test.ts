@@ -135,9 +135,13 @@ describe('guild settings import', () => {
     expect(p.lines).toEqual(
       expect.arrayContaining([
         '• Who else can control the radio: listeners in the bot’s channel → DJs and admins only',
-        '• Default station: none → fg:fg-chic',
-        '• Favourites: 3',
-        '• Source preferences: 1',
+        // By name, as the settings page shows it.
+        `• Default station: none → ${t.stations.getStation('fg:fg-chic')!.displayName}`,
+        // Every setting the import changes is listed, the channels and bitrate included.
+        `• Preferred voice channel: none → <#${VOICE}>`,
+        '• Manual bitrate: none → 320 kbps',
+        '• Favourites: the file’s 3 replace this server’s list',
+        '• Source preferences: 1 added or updated',
         '• Custom stations to add: 1 (each one is checked again before it is added)',
       ]),
     );
@@ -213,7 +217,7 @@ describe('guild settings import', () => {
     const preview = previewImport(SRC, data, t.guilds, t.stations, existingChannels, existingRoles);
     expect(preview.lines.join('\n')).not.toMatch(/Default station/);
     expect(preview.lines).toContain(
-      `• Favourites: ${data.favourites.length} (this server’s 2 custom-station favourite(s) are kept)`,
+      `• Favourites: the file’s ${data.favourites.length} replace this server’s list (this server’s 2 custom-station favourite(s) are kept)`,
     );
     applyImport(SRC, data, t.guilds, t.stations, existingChannels, existingRoles, (fn) =>
       t.db.transaction(fn),

@@ -3,11 +3,13 @@ import pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { ComponentIds } from '../../src/discord/components/custom-id.ts';
 import { describeInteraction, RadioController } from '../../src/discord/controller.ts';
+import { COLOR } from '../../src/discord/ui/format.ts';
 import { exportGuild } from '../../src/import-export/config-io.ts';
 import {
   ADMIN,
   type CommandSpec,
   decode,
+  embedText,
   GUILD,
   internalIncidents,
   OTHER_GUILD,
@@ -338,7 +340,13 @@ describe('/radio import', () => {
     const first = await preview(t);
     const applied = await t.click(t.people.admin, first);
     expect(applied.violations).toEqual([]);
-    expect(applied.calls.map((c) => c.method)).toEqual(['deferUpdate', 'editReply']);
+    // The preview turns into a progress message at once and loses its buttons, so a second click
+    // can't land on a preview that is already being applied.
+    expect(applied.calls.map((c) => c.method)).toEqual(['update', 'editReply']);
+    expect(applied.calls[0]!.payload.components).toEqual([]);
+    expect(embedText(applied.calls[0]!.payload.embeds![0]!.toJSON())).toMatch(
+      /^Applying import…\nSettings first, then each custom station is checked/,
+    );
     expect(applied.text).toMatch(/Custom stations added: Imported Radio/);
 
     const replayed = await t.click(t.people.admin, first);
@@ -584,8 +592,13 @@ describe('favourites and the default station', () => {
     const filtered = await t.click(t.people.member, toggle);
     expect(filtered.violations).toEqual([]);
     const embed = filtered.calls[0]!.payload.embeds![0]!.toJSON();
-    expect(embed.footer?.text).toMatch(/· 1 station\./);
+    expect(embed.footer?.text).toMatch(/· 1 station · favourites only\./);
     expect(embed.description).toContain(station.displayName);
+    // The title says what happened, and it is green because something changed.
+    expect(fav.calls[0]!.payload.embeds![0]!.toJSON()).toMatchObject({
+      title: 'Added to favourites',
+      color: COLOR.ok,
+    });
   });
 
   it('never undoes itself: Favourite only adds and Unfavourite only removes', async () => {
@@ -598,12 +611,25 @@ describe('favourites and the default station', () => {
     const again = await t.click(t.people.admin, add);
     expect(again.violations).toEqual([]);
     expect(again.text).toMatch(/already one of this server’s favourites/);
+    // Nothing changed, so grey, with a title that says so.
+    expect(again.calls[0]!.payload.embeds![0]!.toJSON()).toMatchObject({
+      title: 'Already a favourite',
+      color: COLOR.neutral,
+    });
     expect(t.guilds.isFavourite(GUILD, station.id)).toBe(true);
     const remove = t.ids.make(GUILD, 'unfav', station.id);
     const removed = await t.click(t.people.admin, remove);
     expect(removed.text).toMatch(/no longer one of this server’s favourites/);
+    expect(removed.calls[0]!.payload.embeds![0]!.toJSON()).toMatchObject({
+      title: 'Removed from favourites',
+      color: COLOR.ok,
+    });
     const twice = await t.click(t.people.admin, remove);
     expect(twice.text).toMatch(/isn’t one of this server’s favourites/);
+    expect(twice.calls[0]!.payload.embeds![0]!.toJSON()).toMatchObject({
+      title: 'Not a favourite',
+      color: COLOR.neutral,
+    });
     expect(t.guilds.isFavourite(GUILD, station.id)).toBe(false);
   });
 });
@@ -814,14 +840,15 @@ describe('open browse lists', () => {
 describe('the Favourites filter in Browse', () => {
   it('goes back to the category the list was opened with', async () => {
     const t = setup();
-    const category = t.ctx.packs.categories()[0]!.id;
+    const { id: category, name } = t.ctx.packs.categories()[0]!;
     t.guilds.toggleFavourite(GUILD, t.stations.listStations(GUILD)[0]!.id);
     const browse = await t.command(t.people.member, { sub: 'browse', strings: { category } });
     const toggle = browse.componentIds.find((id) => decode(t.ids, id)?.action === 'bfav')!;
     const footer = (i: {
       calls: Array<{ payload: { embeds?: Array<{ toJSON(): { footer?: { text: string } } }> } }>;
     }) => i.calls[0]!.payload.embeds![0]!.toJSON().footer?.text ?? '';
-    expect(footer(await t.click(t.people.member, toggle))).toMatch(/category: favourites/);
-    expect(footer(await t.click(t.people.member, toggle))).toContain(`category: ${category}`);
+    expect(footer(await t.click(t.people.member, toggle))).toMatch(/· favourites only\./);
+    // Named as the category suggestions name it, not by its ID.
+    expect(footer(await t.click(t.people.member, toggle))).toContain(`category: ${name}`);
   });
 });

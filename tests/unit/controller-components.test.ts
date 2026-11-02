@@ -209,11 +209,11 @@ describe('now-playing buttons', () => {
     playingIn(t, V1, st.id).fullStatus = { state: 'PLAYING', stationId: st.id, channelId: V1 };
     const card = await t.click(t.people.member, t.ids.make(GUILD, 'now'));
     expect(methods(card)).toEqual(['update']);
-    expect(firstEmbed(card).title).toBe('▶ My Station');
+    expect(firstEmbed(card).title).toBe('▶ Playing: My Station');
     t.guilds.updateSettings(GUILD, { panelChannelId: '800000000000000010', panelMessageId: PANEL_MESSAGE });
     const panel = await t.click(t.people.member, t.ids.make(GUILD, 'now'), 'button', [], PANEL_MESSAGE);
     expect(panel.calls[0]).toMatchObject({ method: 'reply', payload: { flags: EPHEMERAL } });
-    expect(firstEmbed(panel).title).toBe('▶ My Station');
+    expect(firstEmbed(panel).title).toBe('▶ Playing: My Station');
   });
 
   it('Favourite and Unfavourite refuse a station that has gone, and listeners who cannot control', async () => {
@@ -389,6 +389,22 @@ describe('settings menus and buttons', () => {
       preferredVoiceChannelId: null,
       notificationChannelId: null,
     });
+  });
+
+  it('says when the bot cannot post in the notice channel just chosen', async () => {
+    const t = setup();
+    t.guild.members.me = { id: '900000000000000099' };
+    const muted = t.textChannel('800000000000000022');
+    muted.canSend = false;
+    const i = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', [muted.id]);
+    expect(i.calls[0]!.payload.content).toBe(
+      '⚠️ I can’t post in <#800000000000000022> yet. Give me View Channel and Send Messages there.',
+    );
+    // The setting is saved anyway: the admin may be about to fix the channel's permissions.
+    expect(t.guilds.getSettings(GUILD).notificationChannelId).toBe(muted.id);
+    muted.canSend = true;
+    const fine = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', [muted.id]);
+    expect(fine.calls[0]!.payload.content).toBe('');
   });
 
   it('the DJ role menu never stores @everyone', async () => {

@@ -104,7 +104,7 @@ Step-by-step instructions are in [docs/install.md](docs/install.md#1-create-your
   |---|---|
   | View Channels | See the voice channel and the panel/notice channels |
   | Send Messages | Only for the optional control panel (`/radio panel`) and the recovery/error notice channel |
-  | Embed Links | Embeds in the control panel and notices |
+  | Embed Links | The control panel, which is an embed |
   | Attach Files | `/radio export` returns a JSON file |
   | Connect | Join the voice channel |
   | Speak | Play audio |
@@ -179,11 +179,11 @@ Radio never ends, so the queue moves only when you skip.
 | `/radio config [default_station] [manual_bitrate]` | Admin | Opens the server's settings: which text and voice channels the bot may be used in, DJ roles, idle mode (what the bot does when the channel empties), listener control, quality mode, preferred voice channel, channel lock, autostart, resume after restart, the notice channel, and whether the voice channel status shows what's playing. |
 | `/radio add <name> <url> [website] [description] [category] [language]` | Admin | Adds a custom station for this server. The URL must be a public address (private and local network addresses are refused) and must pass a live probe before it is accepted. |
 | `/radio edit <station> [name] [url] [website] [description]` | Admin | Edits a custom station. A new URL is probed first, and the old one is kept if the probe fails. |
-| `/radio remove <station>` | Admin | Removes a custom station. Pack stations can't be removed. |
+| `/radio remove <station>` | Admin | Removes a custom station for good, with its favourites and queue entries; the reply says what went with it. Pack stations can't be removed. |
 | `/radio rescan <station> [compare]` | Admin | Probes a station's sources again now (rate-limited). `compare:true` also compares about 40 s of the audio with the verified source. |
 | `/radio sync [pack]` | Admin | Checks station names against each pack's official station list (or just the one `pack`). Reports stations that were added, renamed or are missing from the list, and stations whose sources all failed their last check. |
 | `/radio export` | Admin | Downloads this server's settings as a JSON file. No secrets are included: a custom station URL that could hold one (it has a query string after `?`, or a user name or password) is left out, and that station has to be added again with `/radio add` after an import. |
-| `/radio import <file>` | Admin | Checks an export file and shows what would change. Nothing is applied until you press **Apply import** within 10 minutes. Each server has one preview at a time (a new import replaces it), and five imports per 10 minutes. This server's custom-station favourites and custom default station are kept. |
+| `/radio import <file>` | Admin | Checks an export file and shows what would change. The file's favourites replace this server's. Nothing is applied until you press **Apply import** within 10 minutes. Each server has one preview at a time (a new import replaces it), and five imports per 10 minutes. This server's custom-station favourites and custom default station are kept. |
 | `/radio panel [channel]` | Admin | Posts a control panel that stays in the channel and keeps working after restarts. Its buttons still check permissions on every click. |
 | `/radio source pin <station> <source>` | Admin | Always uses this source. While it can't be used, playback is marked Degraded and a fallback plays. |
 | `/radio source prefer <station> <source>` | Admin | Uses this source whenever it can be used, and lets the bot choose otherwise. |

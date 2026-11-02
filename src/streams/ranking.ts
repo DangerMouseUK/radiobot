@@ -65,7 +65,9 @@ export function checkEligibility(s: StationSource, now: number): EligibilityRepo
 }
 
 /** Best bitrate evidence available, with its strength. */
-export function effectiveBitrate(s: StationSource): { kbps: number | null; strong: boolean } {
+export function effectiveBitrate(
+  s: Pick<StationSource, 'measuredBitrateKbps' | 'codecBitrateKbps' | 'advertisedBitrateKbps'>,
+): { kbps: number | null; strong: boolean } {
   if (s.measuredBitrateKbps !== null) return { kbps: s.measuredBitrateKbps, strong: true };
   if (s.codecBitrateKbps !== null) return { kbps: s.codecBitrateKbps, strong: true };
   return { kbps: s.advertisedBitrateKbps, strong: false };

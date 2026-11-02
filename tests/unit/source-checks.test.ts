@@ -390,7 +390,7 @@ describe('dead sources stop being checked', () => {
       src({ failures: 9, lastSuccessDaysAgo: 10, addedDaysAgo: 30, code: 'NOT_FOUND' }),
     );
     expect(line).toBe(
-      'Paused: no successful check for over a week (9 failed in a row, last NOT_FOUND). It is no longer checked automatically; use Check sources again to test it.',
+      'Paused: no successful check for over a week (9 failed in a row, last NOT_FOUND). It is no longer checked automatically; an admin can test it with **Check sources again**.',
     );
   });
 });

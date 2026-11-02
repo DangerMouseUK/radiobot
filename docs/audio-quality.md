@@ -109,12 +109,12 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 - The station and the source ID.
 - **Transport:** "Direct HTTP stream" or "HLS (delivery protocol)", plus the HLS version chosen and why. HLS is how the audio is delivered; it says nothing about quality.
 - **Codec** (for example MP3, AAC-LC or HE-AAC) and container, as found by `ffprobe` when the source was checked.
-- **Bitrate,** with its evidence:
+- **Bitrate,** with its evidence, written as in every other view (for example "≈128 kbps (measured)"):
   - `measured`: audio data divided by audio duration, from the packets of a sample the bot checked;
   - `codec metadata`: the figure `ffprobe` reported for the stream;
-  - `manifest`: the bandwidth an HLS playlist declares (not checked);
-  - `advertised`: the station's `icy-br` header (not checked);
-  - `unknown`: no figure at all.
+  - `manifest, unverified`: the bandwidth an HLS playlist declares;
+  - `advertised, unverified`: the station's `icy-br` header;
+  - "unknown" when there is no figure at all.
 - The **live network rate:** data per second arriving during playback, shown after 5 s. It includes container and metadata overhead and bursts, so it is for information only.
 - **Sample rate and channels,** with the channel layout.
 
