@@ -72,7 +72,29 @@ What the unit does:
   - Stream checks still run their FFmpeg processes at the lowest priority, and mark them as the first to stop if memory runs out, so they never take the processor or memory from the stream.
 - Don't add `CPUQuota=` or `MemoryMax=` to the unit: when the bot reaches a limit, the kernel makes it wait, and listeners hear a cut.
 
+- `ExecReload=` sends the bot `SIGHUP`, so `systemctl reload radio-bot` makes it load station packs you changed with `packs.js` (see [Station packs](#station-packs)) without a restart.
+
 Then invite the bot with the link in [install.md, step 3](install.md#3-invite-the-bot-to-your-server), using your own Application ID.
+
+## Station packs
+
+The bot ships with no stations: they come in station packs from the official pack library. Add some before you play anything, either from Discord (the owner of the bot's Discord application, or a user in `OPERATOR_USER_IDS`, runs `/radio packs library`) or on the machine with `dist/scripts/packs.js`.
+
+Run `packs.js` with the bot's database path, so it writes to the bot's `installed-packs` folder (`/var/lib/radio-bot/installed-packs/`). If you set `EXTRA_PACKS_DIR` in the env file, pass that too, so it can spot a clash with your own packs. After a change, tell the running bot to load it:
+
+```bash
+cd /opt/radio-bot
+sudo DATABASE_PATH=/var/lib/radio-bot/radio-bot.sqlite node dist/scripts/packs.js browse          # the library's packs (add words, --country GB or --language fr)
+sudo DATABASE_PATH=/var/lib/radio-bot/radio-bot.sqlite node dist/scripts/packs.js add mypack      # or --collection <id>
+sudo DATABASE_PATH=/var/lib/radio-bot/radio-bot.sqlite node dist/scripts/packs.js list            # installed packs, and updates available
+sudo DATABASE_PATH=/var/lib/radio-bot/radio-bot.sqlite node dist/scripts/packs.js update          # every installed pack, or name some
+sudo DATABASE_PATH=/var/lib/radio-bot/radio-bot.sqlite node dist/scripts/packs.js remove mypack
+sudo systemctl reload radio-bot
+```
+
+`info <pack>` shows one pack's details, and `--from <address>` uses another pack library (the address of its `index.json`, or a path to one). Run with `sudo`, `packs.js` gives the files it writes to the owner of the bot's data folder, so the bot can still install and remove packs from Discord. If the bot isn't running, it loads the change when it starts.
+
+The bot needs outbound HTTPS to `github.com` to install packs, for its daily check of the library (updates are noted, never installed by themselves; packs the library has withdrawn are removed) and to put back packs at start-up.
 
 ## Where the data lives
 
@@ -83,6 +105,7 @@ Everything the bot stores is under **`/var/lib/radio-bot/`**. This is systemd's 
 | `radio-bot.sqlite` (+ `-wal`, `-shm`) | Server settings, favourites, station queues, custom stations, source evidence |
 | `backups/` | Automatic backups taken before a database migration (`radio-bot-pre-v<N>-…`, newest 5 kept) and manual backups (`radio-bot-manual-…`, newest 10 kept) |
 | `health.json` | Heartbeat, rewritten every 30 s |
+| `installed-packs/` | Station packs installed from the pack library, and `installed.json`, which records where each came from |
 
 Nothing is written anywhere else. Back up `/var/lib/radio-bot/` like any other application data, and keep a copy off the machine.
 
@@ -115,6 +138,10 @@ sudo pnpm run build
 sudo pnpm prune --prod --ignore-scripts
 sudo systemctl restart radio-bot
 ```
+
+If the release changed `deploy/systemd/radio-bot.service`, copy it to `/etc/systemd/system/` again (keeping any change you made to its `ExecStart=` line) and run `sudo systemctl daemon-reload` before the restart. Releases after 1.1.0 add `ExecReload=`, which `systemctl reload radio-bot` needs.
+
+**From 1.1.0 or earlier:** those releases included a station pack. Newer ones include none, so on its first start the new version reinstalls, from the official pack library and before anything plays, every pack its database has stations from but no longer has. Favourites and queues keep working. This needs outbound HTTPS to `github.com`; if the library can't be reached, the bot tries again at its daily check.
 
 Database migrations run at start-up, and take a backup into `backups/` first. An older build never opens a database that a newer one has migrated: it stops with "Database has migrations newer than this build". To go back to an older release after a migration, check it out and build it as above, then restore the `radio-bot-pre-v<N>-…` backup taken just before the migration.
 

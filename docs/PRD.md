@@ -6,7 +6,7 @@
 **Product type:** Self-hosted Discord voice bot for live internet radio
 **Licence:** MIT for the project's own code (see §14)
 
-> **Central promise:** Make it easy to listen to live internet radio in a Discord voice channel, organised in reviewable **station packs** and starting with a bundled starter pack of 63 webradios, using the **best *verified* live source** that can legitimately be reached, with uninterrupted playback and truthful information about source and Discord audio quality.
+> **Central promise:** Make it easy to listen to live internet radio in a Discord voice channel, organised in reviewable **station packs** installed from an official pack library, using the **best *verified* live source** that can legitimately be reached, with uninterrupted playback and truthful information about source and Discord audio quality.
 
 > **Unofficial.** Radio Bot is an independent open-source project. It is not affiliated with, endorsed by or sponsored by any broadcaster. Station packs name stations only so that people can find them; the names, audio and artwork belong to their owners.
 
@@ -16,7 +16,7 @@ Section numbers and requirement IDs (FR-xxx, NFR-xx) are stable: the source code
 
 ## 1. Executive summary
 
-Radio Bot is an open-source Discord application that plays live internet radio in voice channels. Its stations come from **station packs**. A pack is a folder of three reviewable JSON files, and nothing in the code is specific to any pack. The bot ships with one starter pack: the 63 webradios on one broadcaster's official list. Operators can add their own packs, and each server can add its own public streams.
+Radio Bot is an open-source Discord application that plays live internet radio in voice channels. Its stations come from **station packs**. A pack is a folder of three reviewable JSON files, and nothing in the code is specific to any pack. The bot ships with no packs: operators install them from the official pack library, which holds one reviewed pack per radio company (up to 1.1.0 the bot shipped with one pack, which is now the library's first). Operators can also add their own packs, and each server can add its own public streams.
 
 What distinguishes it from a generic music bot is that it treats **station identity**, **delivery transport**, **codec**, **measured source quality** and **Discord output quality** as separate facts. It inspects every candidate stream itself, records the evidence, prefers the best *verified* source, and says plainly when something is unknown. It never claims a stream is "HD" because of a label, never treats HLS as a codec, and never plays a different station because its feed looked better.
 
@@ -24,7 +24,7 @@ Anyone can run their own instance with their own Discord application token. It r
 
 ### 1.1 What success looks like
 
-- A server can use the bot immediately after setup, without building a station list by hand.
+- A server can use the bot immediately after setup and installing a pack or two, without building a station list by hand.
 - A pack's flagship station is never confused with a similarly named station of the same broadcaster, or with any other station.
 - Each pack lists every station on its official list. Stations that cannot be played are shown honestly, never silently mapped to another feed.
 - Every station shown as playable has at least one working, identity-verified source with codec and bitrate evidence.
@@ -36,7 +36,7 @@ Anyone can run their own instance with their own Discord application token. It r
 
 ### 1.2 Priorities
 
-**P0 (in 1.0.0):** station packs (with the starter pack bundled), correct station identity, real audio inspection, live playback, single high-quality Opus encode, recovery, permissions, persistent settings, Docker and Linux installation.
+**P0 (in 1.0.0):** station packs (with a starter pack bundled until 1.1.0; from the pack library since), correct station identity, real audio inspection, live playback, single high-quality Opus encode, recovery, permissions, persistent settings, Docker and Linux installation.
 **P1 (in 1.0.0):** interactive browser, now-playing metadata where available, source comparison, health scores and fallback, custom stations, import/export, documentation.
 **P2 (future):** web management panel, shared community station directory, metrics dashboard, a centrally hosted public instance, languages beyond English.
 
@@ -44,7 +44,7 @@ Anyone can run their own instance with their own Discord application token. It r
 
 ## 2. Product principles
 
-1. **Curated station packs come first.** The default experience is the enabled packs, which out of the box means the bundled starter pack, flagship first. Custom stations come second. There is no music search, playlist or song queue; the only queue lines up whole stations (FR-010).
+1. **Curated station packs come first.** The default experience is the enabled packs, chosen by the operator from the reviewed pack library, each with its flagship first. Custom stations come second. There is no music search, playlist or song queue; the only queue lines up whole stations (FR-010).
 2. **Correct station before higher bitrate.** A supposedly better feed is rejected if it carries another programme.
 3. **Evidence over labels.** A source is described only by what was measured. Unknown values are shown as unknown.
 4. **Quality is bounded by the source and by Discord.** Lost detail cannot be restored. HLS is a delivery protocol, not a codec.
@@ -71,46 +71,29 @@ Anyone can run their own instance with their own Discord application token. It r
 
 ## 3. Station packs
 
-Pack stations come from **station packs**. Each pack is a folder in `catalog/packs/` (bundled) or `EXTRA_PACKS_DIR` (the operator's own), with three files:
+Pack stations come from **station packs**, one pack per radio company. The bot ships with none. Packs are made, reviewed and published in the official pack library (a separate repository, `DangerMouseUK/radiobot-packs`), which publishes an `index.json` and one bundle per pack as release assets. Operators install packs from it in Discord or on the host (FR-001), or keep their own in `EXTRA_PACKS_DIR`. Each pack has three files:
 
-- `pack.json`: the ID, name, description, disclaimer, order, `enabledByDefault`, categories, brand labels and optional official-list `sync`;
+- `pack.json`: the ID, name, description, version, owner, countries, regions, languages, minimum bot version, disclaimer, order, `enabledByDefault`, categories, brand labels and optional official-list `sync`;
 - `stations.json`: the stations;
 - `sources.json`: the candidate stream URLs, each with provenance.
 
-Station IDs are `<pack-id>:<slug>`. A pack is enabled unless its `enabledByDefault` is `false`. Operators opt in with `ENABLED_PACKS` and switch packs off with `DISABLED_PACKS`. Every pack is validated at start-up, and an invalid pack stops start-up with a precise message. The authoring guide is `catalog/README.md`, and the formats are in Appendix B.
-
-The rest of this section describes the bundled **starter pack**.
+Station IDs are `<pack-id>:<slug>`. A pack is enabled unless its `enabledByDefault` is `false`. Operators opt in with `ENABLED_PACKS` and switch packs off with `DISABLED_PACKS`. Every pack is validated when it is loaded. An invalid pack in `EXTRA_PACKS_DIR` stops start-up with a precise message; an invalid installed pack is skipped and reported. The format and the authoring tools are in `catalog/README.md`, the formats in Appendix B, and the step-by-step process for making a pack in the library's playbook. This repository keeps only `catalog/packs/_template/`, a complete example pack that is never loaded.
 
 ### 3.1 Station list and identity
 
-The starter pack is seeded from its broadcaster's official webradio list as published on 31 October 2026: **63 stations** (Appendix A). The list is a snapshot of names and the site's stable station IDs, not proof that each station has a reachable stream.
+Each pack is seeded from its broadcaster's official station list. The list is a snapshot of names and, where the site has them, stable station IDs, not proof that each station has a reachable stream.
 
 - Every station has a stable ID (`<pack-id>:<slug>`, for example `mypack:my-station`), its official display name, aliases, category, tags and pack order.
-- The flagship station's ID always means the flagship programme, even if its display name changes.
-- The broadcaster's own brand and network names are publisher or brand labels, declared in the pack's `brandLabels`. Seeing one in stream metadata says nothing about which programme a feed carries, so such labels never confirm or contradict a station's identity. Every pack declares its own brand labels.
+- A pack's flagship station ID always means the flagship programme, even if its display name changes.
+- A broadcaster's own brand and network names are publisher or brand labels, declared in the pack's `brandLabels`. Seeing one in stream metadata says nothing about which programme a feed carries, so such labels never confirm or contradict a station's identity. Every pack declares its own brand labels.
 
 ### 3.2 Candidate sources
 
-The starter pack lists **126 candidate sources** (in its `sources.json`):
+- Sources have `official-player` provenance (the broadcaster's own player or site maps the address to the station) or `curated` provenance (a reviewed mapping with recorded evidence), with the date and place each address was found. Short-lived signed play URLs are never stored or used: a pack holds only the plain, public addresses they lead to.
+- Library packs record every source in their `SOURCE_PROVENANCE.md` and keep probe evidence in `evidence/`. A broken source ships disabled with a reason, and is never deleted.
+- Codec and bitrate hints in the catalogue are not evidence. Every source is probed at runtime (§7).
 
-- **Official-player sources (125).** On 31 October 2026, each station entry of the official web player redirected to an unsigned stream mount on the broadcaster's stream host. That mapping, taken from the broadcaster's own player, is the source's provenance. Most stations have a direct MP3 (two have direct AAC) and an HLS rendition.
-- **One curated source.** The flagship's direct AAC mount comes from an earlier technical investigation. It is the same mount as the official FM entry's HLS stream.
-- **4 sources ship disabled** because they were broken or refused on the official site at discovery time (two HLS playlists returning 404, one HLS address serving plain MP3, one mount answering HTTP 401).
-
-Codec and bitrate hints in the catalogue are not evidence. Every source is probed at runtime (§7). Short-lived signed play URLs from the official site were never stored or used.
-
-**Live evidence (31 October 2026, in the pack folder's `evidence/`).** Three stations, the flagship and two others, were probed:
-
-- direct MP3 at 128 kbps on all three;
-- HLS AAC-LC at 128 kbps on all three;
-- direct AAC-LC at 128 kbps on the flagship's curated mount;
-- all 44.1 kHz stereo.
-
-One flagship HLS address redirects and then never answers. No higher-bitrate feed exists among these sources. The other 60 stations use the same host and pattern, and have not been probed yet.
-
-The host refuses unknown clients (HTTP 401) but serves standard media players. That is why the bot identifies as FFmpeg (§10.2).
-
-Provenance details for each station are recorded in the pack folder's `SOURCE_PROVENANCE.md`, and probe evidence in its `evidence/` folder.
+**The first library pack.** The pack that shipped with the bot up to 1.1.0 (63 webradios from one broadcaster's official list of 31 October 2026) is now the first pack in the library. It lists 126 candidate sources: 125 official-player sources (each station entry of the official web player redirected to an unsigned stream mount; most stations have a direct MP3, two have direct AAC, and an HLS rendition) and one curated direct AAC mount; 4 ship disabled. Live evidence of 31 October 2026, in that pack's `evidence/`: three stations probed, with direct MP3 at 128 kbps on all three, HLS AAC-LC at 128 kbps on all three, direct AAC-LC at 128 kbps on the flagship's curated mount, all 44.1 kHz stereo; one flagship HLS address redirects and then never answers; the other 60 stations use the same host and pattern and have not been probed yet. That host refuses unknown clients (HTTP 401) but serves standard media players, which is why the bot identifies as FFmpeg (§10.2).
 
 ### 3.3 Coverage policy
 
@@ -134,29 +117,36 @@ Provenance details for each station are recorded in the pack folder's `SOURCE_PR
 
 ### FR-001 — Station packs (P0)
 
-- Stations are loaded from **station packs**: versioned, reviewable folders (`pack.json`, `stations.json`, `sources.json`) in `catalog/packs/` and `EXTRA_PACKS_DIR` (§3). No pack is special-cased in code.
+- Stations are loaded from **station packs**: versioned, reviewable folders (`pack.json`, `stations.json`, `sources.json`) (§3). No pack is special-cased in code. The bot ships with none; packs load from three places:
+  - `catalog/packs/` (shipped with the bot; only the ignored `_template/` example now) and `EXTRA_PACKS_DIR` (the operator's own): a mistake stops start-up;
+  - the installed-packs folder next to the database: a pack that fails its checks or clashes with another is skipped, logged and listed in `/radio packs installed`, and never stops the bot.
+- Packs are installed from the **official pack library**, whose `index.json` address is fixed in the code. Downloads go through the safe HTTP client; each bundle's SHA-256 must match the index, and the pack is validated with the same rules as a folder, on a worker thread, before anything is written (`PACK_INVALID` otherwise). Installs, updates and removals happen while the bot runs, without a restart: the database is written in short slices, as background work that waits for starting streams. Installed packs are recorded in `installed.json` (version, source, SHA-256, install time, and packs removed on purpose).
+  - In Discord, `/radio packs library [search] [country]` lists the official library's packs and `/radio packs installed` lists every loaded pack with its version, origin, available updates, skipped packs and notices; each has a menu that opens a pack's card with **Install**, **Update** or **Remove** (which asks first). Viewing needs *admin*; changing packs also needs an operator, because packs are shared by every server, and is limited to 10 changes an hour per installation. Discord installs only from the official library, so only reviewed packs can be installed that way.
+  - On the host, `radio-bot packs list|browse|info|add|update|remove` (`dist/scripts/packs.js`) does the same, may name another library with `--from`, and then sends the running bot `SIGHUP` to load the change (`systemctl reload` on a systemd install). The installer offers to add packs on a first install.
+- At start-up, before anything plays, packs the database has stations from but that aren't loaded (and weren't removed on purpose) are restored from the official library, so an installation that relied on the formerly bundled pack keeps its favourites and queues. A daily check (first 15–30 minutes after start) notes updates for an admin to install (nothing updates by itself), removes official packs the library has withdrawn (stopping their playback, with a notice), and retries restores.
+- A pack can declare the oldest bot version that can use it (`minBotVersion`); older bots refuse it.
 - Station IDs are `<pack-id>:<slug>` and never change. The station's provider is its pack ID, or `custom` for custom stations.
-- Each pack is validated at start-up:
+- Each pack is validated when it is loaded:
   - schema, and pack IDs unique (`custom` is reserved);
   - slugs unique within the pack, and no name or alias shared by two of its stations;
   - declared categories, and source-to-station references;
   - no URL mapped to two stations;
   - source IDs unique across all packs.
-- Packs are enabled by `enabledByDefault`, `ENABLED_PACKS` and `DISABLED_PACKS`. Stations of a disabled or missing pack are hidden.
-- The bundled starter pack has all 63 names on its broadcaster's official list (Appendix A), with aliases and six categories.
+- Packs are enabled by `enabledByDefault`, `ENABLED_PACKS` and `DISABLED_PACKS`. Stations of a disabled, removed or missing pack are hidden; their favourites and queue entries are kept and come back with the pack.
+- Each library pack lists all the names on its broadcaster's official list; the first one (Appendix A) has all 63, with aliases and six categories.
 - Partial and fuzzy search by name, alias, tag or category (for example `techno`, `deep`, `lounge`, or part of a station's name).
 - `/radio browse` and `/radio list` group stations under pack headings in pack order, with custom stations last. They filter by pack and by category (categories come from the enabled packs), and are paged to fit Discord's component limits. `/radio list` shows every station by default, custom ones included, with a button to hide or show the custom stations. Both have a menu that plays a station from the page, and Browse has a **Search** button that opens a search box.
 - Visible statuses: Available, Degraded, Unverified, Temporarily unavailable, No stream source known, Retired.
 - Ambiguous input is never resolved silently: only an exact ID, name or alias match, or a single clearly dominant match, plays directly; otherwise the user picks from a list.
 
-**Acceptance:** every pack station is listed with its status; similarly named stations are never substituted; adding a group of stations means adding a pack folder, not code.
+**Acceptance:** every pack station is listed with its status; similarly named stations are never substituted; adding a group of stations means installing or adding a pack, not code, and never interrupts playback; a broken download never takes the bot off the air.
 
 ### FR-002 — Catalogue synchronisation (P0/P1)
 
 - A pack may declare an official list in `pack.json` (`sync: { adapter, url }`). The generic `CatalogueSync` fetches that list through the safe HTTP client, and a named **adapter** (`src/catalogue/sync-adapters.ts`) extracts station names and stable IDs:
-  - `webradio-apidata`, used by the starter pack, reads a webradio list embedded in a station website's page (a `webradios[]` array in its `var apidata` JSON) and ignores, and never stores, any short-lived signed play URLs on that page;
+  - `webradio-apidata`, used by the first library pack, reads a webradio list embedded in a station website's page (a `webradios[]` array in its `var apidata` JSON) and ignores, and never stores, any short-lived signed play URLs on that page;
   - `json-name-list` reads a plain JSON list of `{ id, name }`.
-- Runs on its own jittered schedule for each enabled pack that declares a list (daily by default; `CATALOG_SYNC_INTERVAL_HOURS` can be set from 6 hours to 30 days, and even the longest interval is waited out in full), and on admin request (`/radio sync [pack]`), with rate limits.
+- Runs on its own jittered schedule for each enabled pack that declares a list (daily by default; `CATALOG_SYNC_INTERVAL_HOURS` can be set from 6 hours to 30 days, and even the longest interval is waited out in full), and on admin request (`/radio packs sync [pack]`), with rate limits.
 - Scheduled syncs run as background work: one at a time with background source checks, and never during a stream's first 30 s. The list is parsed off the main thread and changes are written in short steps (parts of 50). A list with more than 5,000 names is refused.
 - Renames are detected by stable ID (or a single clearly similar name); the station keeps its ID and favourites, and the old name becomes an alias.
 - Stations no longer listed are marked *missing from official list* but kept. New names are added as catalogued-only and reported as needing a reviewed source mapping.
@@ -345,7 +335,9 @@ One top-level `/radio` command, registered per server.
 | `/radio edit <station> …` | Admin | Edit a custom station |
 | `/radio remove <station>` | Admin | Remove a custom station |
 | `/radio rescan <station> [compare]` | Admin | Re-probe; optional ~40 s audio comparison |
-| `/radio sync [pack]` | Admin | Reconcile packs with their official station lists |
+| `/radio packs installed` | Admin (changes: Admin who is also an Operator) | Every loaded pack with version, origin, updates, skipped packs and notices; a menu opens a pack's card with Update and Remove |
+| `/radio packs library [search] [country]` | Admin (installing: Admin who is also an Operator) | The official pack library, filtered; a menu opens a pack's card with Install |
+| `/radio packs sync [pack]` | Admin | Reconcile packs with their official station lists (formerly `/radio sync`) |
 | `/radio config [default_station] [manual_bitrate]` | Admin | Interactive settings panel |
 | `/radio export` / `/radio import <file>` | Admin | Settings as JSON; import shows a preview first |
 | `/radio panel [channel]` | Admin | Post a persistent control panel |
@@ -379,7 +371,7 @@ One top-level `/radio` command, registered per server.
 2. Resolve DNS and reject the connection if **any** address is loopback, private, link-local, multicast, metadata, reserved or otherwise non-public (IPv4, IPv6, IPv4-mapped, NAT64, 6to4).
 3. Connect to the validated address only, with header size and time limits; follow at most 5 redirects, validating each.
 4. Resolve PLS and M3U playlists (depth 2, bounded size).
-5. For HLS, choose the best audio rendition: audio-only variants by declared audio bandwidth first, never the largest audio+video figure. `BANDWIDTH` values that are really sample rates (such as 44100, which the starter pack's host declares) or that are implausibly low are ignored. Encrypted HLS is refused.
+5. For HLS, choose the best audio rendition: audio-only variants by declared audio bandwidth first, never the largest audio+video figure. `BANDWIDTH` values that are really sample rates (such as 44100, which the first library pack's host declares) or that are implausibly low are ignored. Encrypted HLS is refused.
 6. Collect a sample of up to 7 s / 2 MB in memory, then run `ffprobe` (format, codec, packets) and an FFmpeg decode check on it. FFmpeg only ever reads standard input.
 7. Discard the sample.
 8. Decide identity (FR-005) and store the evidence.
@@ -403,7 +395,7 @@ Calibration on live radio on 31 October 2026:
 - the same station across MP3, AAC and HLS scored **0.38–0.90**;
 - different stations scored **0.08–0.14**.
 
-A match is strong identity evidence. No match is *inconclusive*, not proof of a different station: one of the starter pack's probed stations, for example, matched in two runs and was inconclusive in a third. Listening reviews are recorded as subjective admin overrides.
+A match is strong identity evidence. No match is *inconclusive*, not proof of a different station: one of the first library pack's probed stations, for example, matched in two runs and was inconclusive in a third. Listening reviews are recorded as subjective admin overrides.
 
 ### 7.6 Refresh
 
@@ -475,10 +467,11 @@ On start-up, for each server: if playback was wanted and **resume after restart*
 | Play, switch, stop, leave, favourite, skip, queue changes | Per listener control mode | Yes | Yes |
 | Add, edit, remove custom stations | No | No | Yes |
 | Rescan, sync, source overrides | No | No | Yes |
-| Configure, import, export, panel, stats | No | No | Yes |
+| Configure, import, export, panel, stats, view station packs | No | No | Yes |
 | Identity review of station-pack sources | No | No | Admins who are also Operators |
+| Install, update or remove station packs | No | No | Admins who are also Operators |
 
-Admin = the server owner, or a member with Discord's **Administrator** permission. Manage Server does not count, and there is no admin-role setting. Operator = the Discord application's owner (or a member of the team that owns it) or a user listed in `OPERATOR_USER_IDS`; recording a review also needs admin rights in the server where the command is used. Admins may use commands outside the approved command channels. Bot permissions: View Channels, Send Messages, Embed Links, Attach Files, Connect, Speak, and the optional Set Voice Channel Status (permission integer 281474979908608; without the optional one the integer is 3197952 and everything but the channel status works). Intents: Guilds and Guild Voice States only.
+Admin = the server owner, or a member with Discord's **Administrator** permission. Manage Server does not count, and there is no admin-role setting. Operator = the Discord application's owner (or a member of the team that owns it) or a user listed in `OPERATOR_USER_IDS`; recording a review or changing a station pack also needs admin rights in the server where the command is used. Admins may use commands outside the approved command channels. Bot permissions: View Channels, Send Messages, Embed Links, Attach Files, Connect, Speak, and the optional Set Voice Channel Status (permission integer 281474979908608; without the optional one the integer is 3197952 and everything but the channel status works). Intents: Guilds and Guild Voice States only.
 
 ### 10.2 URL and host security
 
@@ -494,7 +487,7 @@ Admin = the server owner, or a member with Discord's **Administrator** permissio
 
 ### 10.3 Abuse resistance
 
-Rate limits: station switches and joins 6 per user and 12 per server per 30 s; stream checks (rescans and custom-station URL changes) 3 per server per 10 minutes; adding stations 5 per server per hour; sync 2 per server per hour and 1 per installation per 10 minutes; imports 5 per server per 10 minutes (with one pending import preview per server); component clicks 20 per user per 20 s. Rapid repeated switches are superseded rather than queued. Installation-wide caps: active streams (default 3) and concurrent probes (default 2).
+Rate limits: station switches and joins 6 per user and 12 per server per 30 s; stream checks (rescans and custom-station URL changes) 3 per server per 10 minutes; adding stations 5 per server per hour; sync 2 per server per hour and 1 per installation per 10 minutes; imports 5 per server per 10 minutes (with one pending import preview per server); station pack installs, updates and removals 10 per installation per hour; component clicks 20 per user per 20 s. Rapid repeated switches are superseded rather than queued. Installation-wide caps: active streams (default 3) and concurrent probes (default 2).
 
 ---
 
@@ -513,6 +506,8 @@ SQLite (`node:sqlite`) with versioned SQL migrations in `migrations/`: 0001 crea
 - `guild_favourites` — per-server favourites.
 - `guild_queue` — per-server station queue: station, who added it, and when. At most 25 entries.
 - `catalogue_sync_reports` — sync reports, keyed by pack ID in the provider column.
+
+Installed station packs are not in the database: they are pack folders in `installed-packs/` next to it, with a record file, `installed.json` (§3, FR-001). Their stations and sources are copied into `stations` and `station_sources` like any pack's.
 - `app_meta` — the component signing secret and other small values.
 - `schema_migrations` — version, time applied, checksum.
 
@@ -556,7 +551,8 @@ Authorisation (per command and per click)
 Session manager → one GuildSession per server (state machine, recovery)
      │                     │                         │
 Catalogue (packs,      Source service             Audio pipeline
-custom, search, sync)  (probe, identity, ranking) (FFmpeg → Ogg Opus)
+library, custom,       (probe, identity, ranking) (FFmpeg → Ogg Opus)
+search, sync)
      │                     │                         │
           SQLite repositories              @discordjs/voice link
 ```
@@ -573,22 +569,23 @@ radiobot/
 ├── .env.example, Dockerfile, compose.yaml, package.json, pnpm-lock.yaml
 ├── biome.json, tsconfig.json, tsconfig.build.json, vitest.config.ts, .gitleaks.toml
 ├── .github/workflows/        ci.yml, release.yml, security.yml
-├── catalog/                  README.md (pack authoring guide)
-│   └── packs/<pack-id>/      pack.json, stations.json, sources.json, SOURCE_PROVENANCE.md, evidence/
+├── catalog/                  README.md (pack format, libraries and authoring tools)
+│   └── packs/_template/      a complete example pack (never loaded); packs live in the pack library
 ├── deploy/systemd/           radio-bot.service
 ├── docs/                     PRD.md and user/operator guides
 ├── migrations/               versioned SQL
-├── scripts/                  register-commands, healthcheck, backup, validate-catalogue;
+├── scripts/                  register-commands, healthcheck, backup, validate-catalogue, packs (installed packs),
+│                             pack-author (pack and library tools), smoke;
 │                             radio-bot.sh (the `radio-bot` command for Docker Compose installs)
 ├── src/                      app, config, discord, catalogue, streams, audio, voice,
 │                             persistence, import-export, observability, shared
 └── tests/                    unit/, integration/ (synthetic, rights-free audio only),
-                              lifecycle/ (installer and manager against a fake Docker)
+                              fixtures/packs/ (a made-up pack), lifecycle/ (installer and manager against a fake Docker)
 ```
 
 ### 12.4 Deployment profiles
 
-The bot is one long-running process. It needs outbound HTTPS, WebSocket and UDP (for voice), FFmpeg with libopus, and a writable data directory. It needs no inbound port, domain or reverse proxy.
+The bot is one long-running process. It needs outbound HTTPS (including to `github.com` for the pack library), WebSocket and UDP (for voice), FFmpeg with libopus, and a writable data directory, which also holds the installed packs. It needs no inbound port, domain or reverse proxy.
 
 - **Profile A — Docker / Docker Compose.** One container, one named volume at `/app/data`. The image bundles Node.js and FFmpeg, runs as non-root with a read-only root filesystem, and has a health check. See `docs/install-docker.md`.
 - **Profile B — Directly on Linux.** Node.js and FFmpeg installed on the host; a hardened systemd unit; data in `/var/lib/radio-bot`. See `docs/install-linux.md`.
@@ -623,13 +620,13 @@ The software costs nothing to run beyond the host. There is no paid tier and no 
 
 Freely listenable web radio is not automatically licensed for retransmission to third parties. Music and recording rights, a broadcaster's stream terms, territorial restrictions and trademarks can all apply.
 
-- The project is **unofficial**. Station names identify stations only; no logos or artwork are bundled.
+- The project is **unofficial**. Station names identify stations only; no logos or artwork are bundled, and the bot ships no station packs: they are published separately in the pack library.
 - The MIT licence covers the project's own code only, not station names, trademarks, audio, artwork, or third-party binaries such as FFmpeg in the image.
 - **Operators are responsible** for how they run an instance. Personal self-hosting and public or commercial operation are different situations; public operation needs the broadcaster's permission and appropriate music licensing.
-- **Takedown:** an operator can disable stations or sources immediately (`DISABLED_STATION_IDS`, `DISABLED_SOURCE_IDS`) or whole packs (`DISABLED_PACKS`, for example `mypack`). Maintainers remove mappings from a pack on a valid request (see `SECURITY.md`).
-- The bot respects access restrictions and never bypasses them (§2, principle 11). The architecture works with user-supplied streams and operator packs even if the starter pack cannot be used.
+- **Takedown:** an operator can disable stations or sources immediately (`DISABLED_STATION_IDS`, `DISABLED_SOURCE_IDS`) or whole packs (`radio-bot packs remove mypack`, or `DISABLED_PACKS`). The library's maintainers retire mappings in a new pack version, or withdraw a whole pack, on a valid request (the library's `TAKEDOWN.md`); bots remove a withdrawn official pack at their next daily check.
+- The bot respects access restrictions and never bypasses them (§2, principle 11). The architecture works with user-supplied streams and operator packs even if no library pack can be used.
 
-**Release gate (open for 1.0.0):** whether the starter pack's stations may be distributed and used for rebroadcast has not been cleared with the broadcaster. Releasing the code does not settle that question.
+**Release gate (open since 1.0.0):** whether the stations of the pack that shipped with 1.0.0 to 1.1.0 (now the first library pack) may be distributed and used for rebroadcast has not been cleared with the broadcaster, and the same is true of every library pack. Releasing the code does not settle that question.
 
 ---
 
@@ -665,7 +662,7 @@ These are engineering targets, not guarantees about broadcasters or Discord.
 | NFR-12 | Truthful reporting | Output settings reported accurately; unknown values marked unknown |
 | NFR-13 | Bounded resources | Stream, probe, buffer and process limits enforced |
 | NFR-14 | Accessibility | Usable on Discord mobile, with text labels alongside any icons |
-| NFR-15 | Stream priority | Voice packets leave on time while the bot does other work: database checkpoints, the heartbeat write and catalogue parsing run off the voice thread; stream checks run at the lowest CPU and disk priority and are the first to go if memory runs out; the supported deployments give the bot a high CPU weight and protect it from the out-of-memory killer, with no CPU quota or memory limit |
+| NFR-15 | Stream priority | Voice packets leave on time while the bot does other work: database checkpoints, the heartbeat write, catalogue parsing and station pack checks run off the voice thread, and a pack installed while the bot plays is written in short slices; stream checks run at the lowest CPU and disk priority and are the first to go if memory runs out; the supported deployments give the bot a high CPU weight and protect it from the out-of-memory killer, with no CPU quota or memory limit |
 
 Diagnostics attribute faults to upstream, Discord, the bot, the operator or the user.
 
@@ -687,11 +684,11 @@ Fresh install with minimum permissions; audible playback confirmed from a separa
 
 ### 17.4 Audio-quality checks (per release)
 
-Probe each bundled pack's sources on the release candidate's network; confirm labels match probe output; record evidence in the pack's `evidence/` folder (`catalog/packs/<pack-id>/evidence/`); never claim higher fidelity without reproducible evidence.
+Probe each library pack's sources when it is added or changed; confirm labels match probe output; record evidence in the pack's `evidence/` folder in the library (its newest report dates "Streams last checked"); never claim higher fidelity without reproducible evidence.
 
 ### 17.5 Catalogue checks (automated and per release)
 
-All 63 starter-pack names present with stable IDs; every pack validates (`node scripts/validate-catalogue.ts` in CI; `--pack <dir>` for one folder); sync handles additions, renames and removals without losing favourites; the live official list is reviewed before each release.
+The template pack and every pack in `catalog/packs/` validate in CI (`node scripts/validate-catalogue.ts`; `--pack <dir>` for one folder); the library's CI runs the bot's own `validate-catalogue.ts --strict` and `pack-author.ts diff-check` on every change (no ID removed, a new version for any change) and builds the library with `pack-author.ts build-library`; installing a 2000-station pack while a stream plays stays within the main-thread budget (`tests/integration/main-thread-budget.test.ts`); sync handles additions, renames and removals without losing favourites.
 
 ### 17.6 Installer tests (automated, Linux)
 
@@ -706,13 +703,15 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 | 0 — Foundations | Repository, CI, Docker, URL policy, catalogue snapshot, validation harness | Done |
 | 1 — Flagship | Probing, selection, single-encode pipeline, play/stop/leave/now/quality, recovery, SQLite | Done |
 | 2 — Full catalogue | 63 stations with sources, sync, identity rules, browser, roles and permissions, overrides, health scores | Done in code; 3 stations verified live, 60 not yet probed |
+| 3a — Pack library | Packs moved out of the bot into a reviewed library; install, update and remove from Discord and the host while playing; restore at start-up; daily check for updates and withdrawals | Done in code; the library's GitHub workflows and live Discord installs not yet verified |
 | 3 — Public self-hosted 1.0.0 | Custom stations, import/export, migrations and backups, documentation, security policy, Docker/Linux/platform guides | Done in code; release gates open |
 | 4 — Later | Public hosted instance, user favourites, Opus pass-through, richer metadata, web dashboard, more languages | Not started |
 
 **Open release gates for 1.0.0:**
 
-- **Starter pack: 3 of 63 stations confirmed playable by live probe.** The flagship and two other stations were confirmed (the probe report is in the pack folder's `evidence/`). Audio correlation also supports identity for two of the three, while the third was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed.
-- One live Discord test (1 November 2026), and no 72-hour soak test. With the minimum permissions, the starter pack's flagship station played in a voice channel and was heard in the Discord client: the direct MP3 source at 128 kbps, one Opus encode at 128 kbps, and DAVE end-to-end encryption negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live.
+- **First library pack (the former starter pack): 3 of 63 stations confirmed playable by live probe.** The flagship and two other stations were confirmed (the probe report is in the pack folder's `evidence/`). Audio correlation also supports identity for two of the three, while the third was inconclusive in the latest run. The other 60 stations use the same host and pattern but have not been probed.
+- The pack library's GitHub workflows (checks and publishing) have not been verified on GitHub, and installing, updating and removing packs from Discord, and the automatic restore after an update, have not been tried on a live Discord server.
+- One live Discord test (1 November 2026), and no 72-hour soak test. With the minimum permissions, the then-bundled pack's flagship station played in a voice channel and was heard in the Discord client: the direct MP3 source at 128 kbps, one Opus encode at 128 kbps, and DAVE end-to-end encryption negotiated. The Discord-side figures in `/radio stats` (voice server, WebSocket ping, packets per second, encryption) were shown live. Permission scenarios, station switching, and kick, move and delete handling have not been tested live.
 - The three installation profiles have not been smoke-tested on real hosts (the image is published by the release workflow).
 - Resource use measured for a single stream only; no multi-stream, long-run or ARM measurements.
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate a listener receives has **not been measured**.
@@ -724,8 +723,9 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Stream hosts refuse unknown clients (observed on the starter pack's host until the bot identified as FFmpeg) | High | Identify truthfully as FFmpeg (`Lavf/<version>`), never as a browser and with no `Referer`; report `ACCESS_DENIED` honestly; never bypass; operator kill switches |
-| Broadcaster changes its station list or stream mounts | High | Station packs separate from code; per-pack sync adapters; daily name sync; reviewed manifests; sync report |
+| Stream hosts refuse unknown clients (observed on the first library pack's host until the bot identified as FFmpeg) | High | Identify truthfully as FFmpeg (`Lavf/<version>`), never as a browser and with no `Referer`; report `ACCESS_DENIED` honestly; never bypass; operator kill switches |
+| Broadcaster changes its station list or stream mounts | High | Station packs in a separate library, updated without a bot release; per-pack sync adapters; daily name sync; reviewed manifests; sync report |
+| A tampered or broken pack download | High | Official library address fixed in code for Discord installs; SHA-256 of each bundle checked against the index; same validation as any pack, off the main thread; a broken installed pack is skipped, never stops the bot |
 | A better-looking feed carries another station | High | Identity gate; per-pack brand labels; exact-name contradiction before alias match; live metadata check; audio correlation |
 | Codec or transport mistaken for quality | High | Measured evidence; no cross-codec bitrate ranking; explicit unknowns |
 | Rebroadcast rights unclear | Critical | Unofficial status; operator responsibility; takedown switches; release gate |
@@ -744,8 +744,8 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 |---|---|---|
 | 1 | Docker image and documented installation with persistent storage | Done (image published by the release workflow) |
 | 2 | Discord application setup documented; least-privilege permissions | Documented; live test open |
-| 3 | Starter pack includes all official names; nothing falsely shown as playable | Done |
-| 4 | Every station shown as playable has a verified, healthy source with evidence | Enforced by the eligibility gate; 3 starter-pack stations confirmed by live probe, 60 not yet probed |
+| 3 | Starter pack (now the first library pack) includes all official names; nothing falsely shown as playable | Done |
+| 4 | Every station shown as playable has a verified, healthy source with evidence | Enforced by the eligibility gate; 3 stations of the first library pack confirmed by live probe, 60 not yet probed |
 | 5 | Flagship candidates re-probed; no hidden "HD" claims | Done: direct MP3 128k, direct AAC-LC 128k and HLS AAC-LC 128k all work; one HLS address times out; no HD feed exists |
 | 6 | Source format shown separately from Discord output | Done |
 | 7 | DAVE-capable voice, music-suitable Opus, single encode | Done in code and tests; live check open |
@@ -763,7 +763,7 @@ All 63 starter-pack names present with stable IDs; every pack validates (`node s
 
 ## Appendix A — Starter pack station list (63)
 
-The starter pack has 63 stations, taken from its broadcaster's official list as published on 31 October 2026. The names are kept with the pack, not in this document: its `stations.json` lists them in official order, and its `SOURCE_PROVENANCE.md` maps each one to its sources.
+The starter pack, which shipped with the bot up to 1.1.0 and is now the first pack in the pack library, has 63 stations, taken from its broadcaster's official list as published on 31 October 2026. The names are kept with the pack in the library, not in this document: its `stations.json` lists them in official order, and its `SOURCE_PROVENANCE.md` maps each one to its sources.
 
 ---
 
@@ -771,7 +771,7 @@ The starter pack has 63 stations, taken from its broadcaster's official list as 
 
 All pack files have `"schemaVersion": 1`. `stations.json` wraps entries in `{ "schemaVersion": 1, "stations": [...] }`, and `sources.json` in `{ "schemaVersion": 1, "sources": [...] }`. Pack metadata is in B.4. The authoring guide is `catalog/README.md`.
 
-### B.1 Station entry (`catalog/packs/<pack-id>/stations.json`)
+### B.1 Station entry (`<pack-id>/stations.json`)
 
 The station ID is derived: `<pack id>:<slug>`, here `mypack:my-station`. Only `slug`, `displayName` and `order` are required.
 
@@ -790,7 +790,7 @@ The station ID is derived: `<pack id>:<slug>`, here `mypack:my-station`. Only `s
 }
 ```
 
-### B.2 Source entry (`catalog/packs/<pack-id>/sources.json`)
+### B.2 Source entry (`<pack-id>/sources.json`)
 
 `station` is the slug of a station in the same pack. `id` must be unique across all packs. `provenance` is `official-player` or `curated`.
 
@@ -814,7 +814,7 @@ The station ID is derived: `<pack id>:<slug>`, here `mypack:my-station`. Only `s
 
 Input: station and source ID, transport (and HLS rendition), codec and container, bitrate with its evidence strength and the live network rate, sample rate, channels. Output: Opus, 48 kHz, 2 channels, 20 ms, encoder target and mode, the voice channel's bitrate setting (marked as not a cap), observed encoder output rate, encryption state. Processing: number of lossy encodes, resampling, confirmation that no volume or loudness processing is applied, notes. Decision: conclusion and explanation.
 
-### B.4 Pack metadata (`catalog/packs/<pack-id>/pack.json`)
+### B.4 Pack metadata (`<pack-id>/pack.json`)
 
 ```json
 {
@@ -822,6 +822,12 @@ Input: station and source ID, transport (and HLS rendition), codec and container
   "id": "mypack",
   "name": "My Pack",
   "description": "The webradios listed on the broadcaster's website …",
+  "version": "2026.11.03",
+  "owner": { "name": "Example Media Group", "kind": "broadcaster", "brand": null },
+  "countries": ["GB"],
+  "regions": [],
+  "languages": ["en"],
+  "minBotVersion": null,
   "disclaimer": "Unofficial: Radio Bot is not affiliated with or endorsed by any broadcaster. Station names identify the stations only.",
   "order": 10,
   "enabledByDefault": true,
@@ -832,13 +838,17 @@ Input: station and source ID, transport (and HLS rendition), codec and container
 }
 ```
 
-The starter pack's file has the same shape and declares six categories. `sync` is optional (`null` for packs without an official list).
+The first library pack's file has the same shape and declares six categories. `sync` is optional (`null` for packs without an official list). `version`, `owner`, `countries` and `languages` are optional for a pack folder but required for library packs (`validate-catalogue.ts --strict`). A complete example is `catalog/packs/_template/`.
+
+### B.5 Pack library
+
+A library publishes `index.json` (`{ schemaVersion, generatedAt, packs, collections }`: each pack's ID, name, description, version, owner, countries, regions, languages, station and source counts, last-checked date, minimum bot version, status (`available` or `withdrawn`) and its bundle's address, SHA-256 and size) and one bundle per pack (`{ schemaVersion, pack, stations, sources }`). `scripts/pack-author.ts build-library` writes both. The format is in `catalog/README.md`.
 
 ---
 
 ## Appendix C — References
 
-1. The starter pack's official station list: the URL in its `pack.json` `sync` entry, also recorded in its `SOURCE_PROVENANCE.md`.
+1. Each library pack's official station list: the URL in its `pack.json` `sync` entry, also recorded in its `SOURCE_PROVENANCE.md`. The official pack library: <https://github.com/DangerMouseUK/radiobot-packs>
 2. `@discordjs/voice`: <https://discord.js.org/docs/packages/voice/main>
 3. Discord voice connections and DAVE: <https://docs.discord.com/developers/topics/voice-connections>
 4. Discord audio bitrate FAQ: <https://support.discord.com/hc/en-us/articles/11635925354775-Audio-Bitrate-FAQ>
@@ -856,8 +866,8 @@ The starter pack's file has the same shape and declares six categories. `sync` i
 | Decision | Choice |
 |---|---|
 | Product name | Radio Bot (unofficial) |
-| Product focus | Curated station packs first (starting with the bundled starter pack); custom stations second |
-| Station catalogue | Modular station packs (`pack.json`, `stations.json`, `sources.json`); no pack-specific code; per-pack sync adapters; operators can add packs via `EXTRA_PACKS_DIR` |
+| Product focus | Curated station packs first (from the official pack library); custom stations second |
+| Station catalogue | Modular station packs (`pack.json`, `stations.json`, `sources.json`), one per company, in a separate reviewed library; no pack-specific code; per-pack sync adapters; installed and updated while the bot runs; Discord installs only from the official library; operators can add packs via `EXTRA_PACKS_DIR` |
 | Distribution | Public GitHub repository; operators self-host with their own token |
 | Source of truth | Official station names (per pack) + reviewed source mappings + runtime evidence |
 | Quality rule | Best *verified* source; correctness before bitrate |
@@ -865,7 +875,7 @@ The starter pack's file has the same shape and declares six categories. `sync` i
 | Stream client identity | FFmpeg's `Lavf/<version>` User-Agent (truthful; FFmpeg decodes the audio); no browser imitation, no `Referer`; operator override via `STREAM_USER_AGENT` |
 | Output | 48 kHz stereo Opus, one encode, at the source's bitrate up to `MAX_OPUS_BITRATE_KBPS` (default 510 kbps) in `maximum` mode; the channel setting is reported, not used as a cap (what listeners receive has not been measured) |
 | Playback limit | One station and voice connection per server |
-| Interface | One `/radio` command with Discord-native menus and buttons; it uses all 25 top-level options Discord allows, so further commands must go into subcommand groups (as `queue` and `source` do) |
+| Interface | One `/radio` command with Discord-native menus and buttons; it uses all 25 top-level options Discord allows, so further commands must go into subcommand groups (as `queue`, `source` and `packs` do) |
 | Bot administration | Server owner or Discord Administrator permission only; DJ roles for playback control |
 | Station queue | Advances only on skip (radio never ends); max 25 |
 | Storage | Local SQLite |

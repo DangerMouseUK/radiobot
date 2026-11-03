@@ -1,0 +1,44 @@
+{
+  "generatedAt": "2026-11-03T10:00:00.000Z",
+  "note": "Example only: the shape that `node scripts/validate-catalogue.ts --probe --json <file>` writes. These figures are made up.",
+  "probes": [
+    {
+      "stationId": "template:example-hits",
+      "sourceId": "template-example-hits-mp3",
+      "outcome": {
+        "success": true,
+        "failureCode": null,
+        "failureDetail": null,
+        "startedAt": "2026-11-03T09:59:50.000Z",
+        "durationMs": 7200,
+        "startupMs": 40,
+        "transport": "http-continuous",
+        "container": "mp3",
+        "codec": "mp3",
+        "profile": null,
+        "sampleRateHz": 44100,
+        "channels": 2,
+        "channelLayout": "stereo",
+        "advertisedBitrateKbps": 128,
+        "codecBitrateKbps": 128,
+        "measuredBitrateKbps": 128,
+        "bitrateEvidence": "measured",
+        "sampleSeconds": 12,
+        "decodedSeconds": 12,
+        "decodeErrors": 0
+      }
+    },
+    {
+      "stationId": "template:example-news",
+      "sourceId": "template-example-news-mp3-low",
+      "outcome": {
+        "success": false,
+        "failureCode": "NOT_FOUND",
+        "failureDetail": "HTTP 404",
+        "startedAt": "2026-11-03T10:00:00.000Z",
+        "durationMs": 300
+      }
+    }
+  ],
+  "comparisons": []
+}

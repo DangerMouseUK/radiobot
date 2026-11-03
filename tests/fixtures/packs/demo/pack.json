@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "demo",
+  "name": "Radio Demo",
+  "description": "A made-up pack for the tests. None of its stations or stream hosts exist.",
+  "version": "2026.11.03",
+  "owner": {
+    "name": "Demo Media",
+    "kind": "group",
+    "brand": null
+  },
+  "countries": ["GB"],
+  "languages": ["en"],
+  "disclaimer": null,
+  "order": 10,
+  "enabledByDefault": true,
+  "brandLabels": ["Radio Demo", "Demo", "Demo Media", "Demo Network"],
+  "categories": [
+    {
+      "id": "flagship",
+      "name": "Flagship"
+    },
+    {
+      "id": "chic-chill",
+      "name": "Chic & chill"
+    },
+    {
+      "id": "dance-club",
+      "name": "Dance & club"
+    },
+    {
+      "id": "mixes",
+      "name": "Mixes"
+    },
+    {
+      "id": "clubs",
+      "name": "Clubs & festivals"
+    },
+    {
+      "id": "classics",
+      "name": "Classics"
+    }
+  ],
+  "sync": {
+    "adapter": "json-name-list",
+    "url": "https://lists.example.org/demo.json"
+  },
+  "snapshotDate": "2026-11-03"
+}

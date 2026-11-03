@@ -331,8 +331,8 @@ describe('import/export', () => {
 
 describe('small utilities', () => {
   it('slugifies diacritics', () => {
-    expect(slugify('FG USHUAÏA IBIZA')).toBe('fg-ushuaia-ibiza');
-    expect(slugify('FG CHIC & CHILL')).toBe('fg-chic-and-chill');
+    expect(slugify('Demo Café Ibiza')).toBe('demo-cafe-ibiza');
+    expect(slugify('Demo Chic & Chill')).toBe('demo-chic-and-chill');
   });
   it('backoff follows ~1/3/8 s with jitter and cooldown grows to 2 h', () => {
     expect(backoffDelayMs(0, undefined, 0.25, () => 0.5)).toBe(1000);

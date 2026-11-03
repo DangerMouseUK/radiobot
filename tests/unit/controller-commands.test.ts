@@ -1260,7 +1260,7 @@ describe('/radio rescan', () => {
 describe('/radio sync', () => {
   it('says when no enabled pack has an official list', async () => {
     const t = setup();
-    const i = await t.command(t.people.admin, { sub: 'sync' });
+    const i = await t.command(t.people.admin, { group: 'packs', sub: 'sync' });
     expect(i.text).toMatch(/None of the enabled station packs has an official list to check against\./);
     expect(t.sync.calls).toEqual([]);
   });
@@ -1268,7 +1268,7 @@ describe('/radio sync', () => {
   it('refuses a pack it cannot sync', async () => {
     const t = setup();
     t.sync.syncable = [t.ctx.packs.packs[0]!.meta.id];
-    const i = await t.command(t.people.admin, { sub: 'sync', strings: { pack: 'custom' } });
+    const i = await t.command(t.people.admin, { group: 'packs', sub: 'sync', strings: { pack: 'custom' } });
     expect(i.text).toMatch(/That pack is either not enabled or has no official list/);
     expect(t.sync.calls).toEqual([]);
   });
@@ -1286,7 +1286,11 @@ describe('/radio sync', () => {
       needsSourceMapping: ['New One'],
       unreachable: ['Down One'],
     });
-    const i = await t.command(t.people.admin, { sub: 'sync', strings: { pack: pack.meta.id } });
+    const i = await t.command(t.people.admin, {
+      group: 'packs',
+      sub: 'sync',
+      strings: { pack: pack.meta.id },
+    });
     expect(i.calls[0]).toMatchObject({ method: 'deferReply', payload: { flags: EPHEMERAL } });
     expect(t.sync.calls).toEqual([pack.meta.id]);
     const e = lastEmbed(i);
@@ -1311,7 +1315,9 @@ describe('/radio sync', () => {
     t.sync.syncable = [pack.meta.id];
     const added = Array.from({ length: 20 }, (_, n) => `Station ${n + 1}`);
     t.sync.reports.set(pack.meta.id, { officialCount: 20, added, needsSourceMapping: added });
-    const e = lastEmbed(await t.command(t.people.admin, { sub: 'sync', strings: { pack: pack.meta.id } }));
+    const e = lastEmbed(
+      await t.command(t.people.admin, { group: 'packs', sub: 'sync', strings: { pack: pack.meta.id } }),
+    );
     expect(e.description).toMatch(/Added: Station 1, .*, Station 15 and 5 more \(no stream yet/);
     expect(e.description).not.toMatch(/Station 16/);
     expect(e.description).toMatch(/No station has all of its checked sources failing\.$/);
@@ -1321,7 +1327,7 @@ describe('/radio sync', () => {
     const t = setup();
     const pack = t.ctx.packs.packs[0]!;
     t.sync.syncable = [pack.meta.id];
-    const quiet = await t.command(t.people.admin, { sub: 'sync' });
+    const quiet = await t.command(t.people.admin, { group: 'packs', sub: 'sync' });
     expect(t.sync.calls).toEqual(['*']);
     // A quiet sync is two short lines, not a wall of "none".
     expect(lastEmbed(quiet).description).toMatch(
@@ -1331,7 +1337,7 @@ describe('/radio sync', () => {
     const other = setup();
     other.sync.syncable = [pack.meta.id];
     other.sync.reports.set(pack.meta.id, { ok: false, error: 'The list could not be fetched.' });
-    const failed = await other.command(other.people.admin, { sub: 'sync' });
+    const failed = await other.command(other.people.admin, { group: 'packs', sub: 'sync' });
     const e = lastEmbed(failed);
     expect(e.color).toBe(COLOR.warn);
     expect(e.description).toBe(
@@ -1342,8 +1348,8 @@ describe('/radio sync', () => {
   it('is rate-limited for the whole installation', async () => {
     const t = setup();
     t.sync.syncable = [t.ctx.packs.packs[0]!.meta.id];
-    await t.command(t.people.admin, { sub: 'sync' });
-    const again = await t.command(t.people.owner, { sub: 'sync' });
+    await t.command(t.people.admin, { group: 'packs', sub: 'sync' });
+    const again = await t.command(t.people.owner, { group: 'packs', sub: 'sync' });
     expect(again.text).toMatch(/Too many catalogue syncs in a short time/);
     // A long wait reads in minutes, not as hundreds of seconds.
     expect(again.text).toMatch(/Try again in \d+ min\./);

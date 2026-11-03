@@ -54,7 +54,7 @@ tty_run() {
 }
 
 echo "install"
-out=$(printf 'not-an-id\n%s\nshort\n%s\n' "$APP" "$TOKEN" | tty_run "bash $T/origin/install.sh")
+out=$(printf 'not-an-id\n%s\nshort\n%s\ny\nmypack\n' "$APP" "$TOKEN" | tty_run "bash $T/origin/install.sh")
 check "reaches online" has "$out" "Radio Bot is online."
 check "rejects a bad application id" has "$out" "doesn't look like an Application ID"
 check "rejects a bad token" has "$out" "doesn't look like a bot token"
@@ -65,6 +65,10 @@ check "writes the application id" grep -qx "DISCORD_APPLICATION_ID=$APP" "$RADIO
 check "writes the token" grep -qxF "DISCORD_TOKEN=$TOKEN" "$RADIO_BOT_DIR/.env"
 check ".env is private" test "$(mode "$RADIO_BOT_DIR/.env")" = 600
 check "adds the shortcut" test -x "$HOME/.local/bin/radio-bot"
+check "offers station packs on a first install" has "$out" "Add some stations"
+check "lists the library's packs" has "$out" "My Pack"
+check "installs the chosen pack in the container" grep -qF "packs.js add mypack" "$FAKE_STATE/calls.log"
+check "tells the running bot to load it" grep -qF "compose kill -s HUP radio-bot" "$FAKE_STATE/calls.log"
 
 echo "status, invite, version"
 out=$(radio-bot status 2>&1 | strip)
@@ -150,6 +154,13 @@ check "runs the new version once finished" grep -q "radio-bot:v1.0.2 " "$T/state
 out=$(radio-bot update 2>&1 | strip)
 check "nothing to do once the update has finished" has "$out" "Already on the newest version (v1.0.2)."
 
+echo "station packs"
+out=$(radio-bot packs remove mypack 2>&1 | strip)
+check "removes a pack in the running container" grep -qF "packs.js remove mypack" "$FAKE_STATE/calls.log"
+check "says the change loads without interrupting" has "$out" "Nothing that is playing is interrupted."
+radio-bot packs >/dev/null 2>&1
+check "lists installed packs by default" grep -qF "packs.js list" "$FAKE_STATE/calls.log"
+
 echo "backup and crash detection"
 rm -rf "$RADIO_BOT_DIR/backups"
 out=$(radio-bot backup 2>&1 | strip)
@@ -186,6 +197,7 @@ check "a failed restore ends by starting the bot" test "$(grep "compose " "$T/st
 echo "reinstall"
 out=$(tty_run "bash $T/origin/install.sh" </dev/null)
 check "keeps existing settings" has "$out" "Using your existing settings"
+check "doesn't offer packs again once one is installed" test "$(has "$out" "Add some stations" && echo y)" != y
 
 echo "uninstall"
 out=$(printf 'y\ny\nn\n' | tty_run "radio-bot uninstall")

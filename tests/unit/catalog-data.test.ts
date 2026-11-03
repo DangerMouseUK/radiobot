@@ -3,10 +3,12 @@ import { basename, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_PACKS_DIR, discoverPackDirs, loadPack, PackRegistry } from '../../src/catalogue/packs.ts';
 import { COMPONENT_ACTIONS, ComponentIds } from '../../src/discord/components/custom-id.ts';
+import { DEMO_PACK_DIR } from '../helpers.ts';
 
 /**
- * Data checks on the shipped packs, read straight from the JSON (independent of the loader),
- * so a bad edit to catalog/packs is caught even where the schema is permissive.
+ * Data checks on whatever packs ship in catalog/packs (there may be none) and on the tests' own
+ * fixture pack, read straight from the JSON (independent of the loader), so a bad edit is caught
+ * even where the schema is permissive.
  */
 interface RawStation {
   slug: string;
@@ -25,18 +27,19 @@ interface RawSource {
   provenanceDetail: string;
 }
 
-const packDirs = discoverPackDirs(BUILTIN_PACKS_DIR());
+const builtinDirs = discoverPackDirs(BUILTIN_PACKS_DIR());
+const packDirs = [...builtinDirs, DEMO_PACK_DIR];
 const read = <T>(dir: string, file: string): T => JSON.parse(readFileSync(join(dir, file), 'utf8')) as T;
 
 describe('built-in packs', () => {
-  it('ship at least the FG pack and load together without conflicts', () => {
-    expect(packDirs.map((d) => d.split(/[\\/]/).pop())).toContain('fg');
-    const registry = new PackRegistry(packDirs.map(loadPack));
-    expect(registry.enabledPacks().length).toBeGreaterThan(0);
+  it('load together without conflicts, however many there are (none is fine)', () => {
+    const registry = new PackRegistry(builtinDirs.map((d) => loadPack(d, 'builtin')));
+    expect(registry.packs).toHaveLength(builtinDirs.length);
+    for (const p of registry.packs) expect(p.origin).toBe('builtin');
   });
 });
 
-describe.each(packDirs.map((d) => [d.split(/[\\/]/).pop()!, d]))('pack data: %s', (_name, dir) => {
+describe.each(packDirs.map((d) => [basename(d), d]))('pack data: %s', (_name, dir) => {
   const meta = read<{ id: string; categories: Array<{ id: string }>; snapshotDate: string | null }>(
     dir,
     'pack.json',

@@ -63,7 +63,8 @@ Useful optional values:
 ```dotenv
 # Register /radio only in this server (handy while testing)
 DISCORD_DEV_GUILD_ID=
-# Your Discord user ID: allows you to record identity reviews for station-pack sources
+# Your Discord user ID: allows you to install, update and remove station packs from Discord, and to
+# record identity reviews for station-pack sources (the application's owner always can)
 OPERATOR_USER_IDS=
 # How many servers may stream at once from this installation
 MAX_ACTIVE_GUILD_STREAMS=3
@@ -73,7 +74,7 @@ MAX_OPUS_BITRATE_KBPS=510
 PRESENCE_MODE=track
 # User-Agent sent to stream hosts; empty = FFmpeg's own Lavf/<version> (recommended)
 STREAM_USER_AGENT=
-# Station packs: switch packs off/on, or load your own from the data volume
+# Station packs: switch packs off/on, or load your own from the data volume (e.g. /app/data/my-packs)
 DISABLED_PACKS=
 ENABLED_PACKS=
 EXTRA_PACKS_DIR=
@@ -100,7 +101,7 @@ docker compose up -d
 
 The image is a multi-stage build on a pinned `node:24` Debian slim base. It uses Debian's `ffmpeg` package, which includes `libopus`, runs under `tini`, and runs as the unprivileged `node` user.
 
-On first start, the JSON log should include these messages: `database migrated`, `station packs loaded` (with the loaded and enabled pack IDs), `ffmpeg detected` (with `"libopus":true`) and `connected to Discord`. `slash commands registered` follows once the bot is in at least one server and the command needed registering there; it is not logged when nothing changed.
+On first start, the JSON log should include these messages: `database migrated`, `station packs loaded` (with the loaded and enabled pack IDs, and how many installed packs were skipped; a new install has none loaded until you add some, see [Station packs](#station-packs)), `ffmpeg detected` (with `"libopus":true`) and `connected to Discord`. `slash commands registered` follows once the bot is in at least one server and the command needed registering there; it is not logged when nothing changed.
 
 If the configuration is invalid, the container exits with code 78 and prints which variable is wrong. Secret values are never printed. Because of `restart: unless-stopped`, Docker keeps restarting it until you fix `.env` and run `docker compose up -d` again.
 
@@ -120,6 +121,8 @@ What the shipped `compose.yaml` sets up:
 ## 4. First run in Discord
 
 Commands are registered as **server** (guild) commands, so `/radio` appears straight away in every server the bot is in. If you set `DISCORD_DEV_GUILD_ID`, **only that server** gets them, at start-up and when the bot joins servers. Clear it to register everywhere.
+
+The bot starts with no stations. Add station packs first, either with `packs.js` in the container (see [Station packs](#station-packs)) or in Discord: as the owner of the bot's Discord application (or a user listed in `OPERATOR_USER_IDS`), run **`/radio packs library`**, pick a pack from the menu and press **Install**.
 
 As a bot admin (the server owner, or a member with Discord's **Administrator** permission; Manage Server alone is not enough):
 
@@ -146,10 +149,31 @@ Everything the bot keeps is in `/app/data`:
 | `radio-bot.sqlite` (+ `-wal`, `-shm`) | Settings, favourites, station queues, source preferences, custom stations, station and source evidence, probe history, sync reports, desired playback state |
 | `backups/` | Automatic pre-migration backups (`radio-bot-pre-v<N>-…`, the newest 5 are kept) and manual backups (`radio-bot-manual-…`, the newest 10 are kept). Each kind rotates on its own, so one never evicts the other. Copy any backup you want to keep off the host |
 | `health.json` | Heartbeat for the healthcheck, rewritten every 30 s |
+| `installed-packs/` | Station packs installed from the pack library (one folder per pack), and `installed.json`, which records where each came from and which packs were removed on purpose |
 
-Nothing else needs keeping. The bundled station packs (`catalog/packs/`) ship inside the image and are loaded into the database again on each start. Reloading them loses nothing the bot has learnt about each source, and no server's data.
+Nothing else needs keeping. Installed packs are read into the database again on each start. Reloading them loses nothing the bot has learnt about each source, and no server's data. The image itself ships no station packs. If the volume is lost but you restore a database backup, the bot reinstalls the packs that database uses from the official library when it starts.
 
-**Your own station packs:** the image's root filesystem is read-only, so put extra packs inside the data volume, for example `/app/data/packs/<pack-id>/`, and set `EXTRA_PACKS_DIR=/app/data/packs`. Restart the container to load changes. A pack that fails validation stops start-up with a message naming the file and field. The authoring guide is [catalog/README.md](../catalog/README.md).
+## Station packs
+
+The bot ships with no stations: they come in station packs from the official pack library. The library's address is fixed in the bot. Downloads go through the bot's own safe HTTP client, and each pack is checked (its SHA-256 against the library's index, then the same rules as any pack) before it is written to `/app/data/installed-packs/`.
+
+With the installer, `radio-bot packs …` does all of this for you. By hand, run `dist/scripts/packs.js` in the container, then send the running bot `SIGHUP` so it loads the change without a restart and without interrupting what is playing:
+
+```sh
+docker compose exec radio-bot nice -n 19 node dist/scripts/packs.js browse                # the library's packs (add words, --country GB or --language fr to narrow it)
+docker compose exec radio-bot nice -n 19 node dist/scripts/packs.js info mypack           # one pack's details
+docker compose exec radio-bot nice -n 19 node dist/scripts/packs.js add mypack            # install (or --collection <id> for a whole collection)
+docker compose exec radio-bot nice -n 19 node dist/scripts/packs.js list                  # installed packs, and updates available
+docker compose exec radio-bot nice -n 19 node dist/scripts/packs.js update                # update every installed pack (or name some)
+docker compose exec radio-bot nice -n 19 node dist/scripts/packs.js remove mypack         # remove; it isn't reinstalled automatically
+docker compose kill -s HUP radio-bot                                                      # after add, update or remove: load the change now
+```
+
+If the container is stopped, use `docker compose run --rm --no-deps radio-bot node dist/scripts/packs.js …` instead; the bot loads the change when it starts. `--from <address>` uses another pack library (the address of its `index.json`, or a path to one inside the container). Installing from Discord (`/radio packs library` and `/radio packs installed`) uses the official library only, and needs the bot's operator.
+
+The bot checks the official library once a day: it notes updates (it never updates a pack by itself), removes packs installed from the official library that the library has withdrawn, and retries reinstalling missing packs. All of this needs outbound HTTPS to `github.com`.
+
+**Your own station packs:** the image's root filesystem is read-only, so put your own packs inside the data volume, for example `/app/data/my-packs/<pack-id>/`, and set `EXTRA_PACKS_DIR=/app/data/my-packs`. Don't use the `installed-packs` folder for them. Restart the container to load changes. A pack that fails validation stops start-up with a message naming the file and field. The authoring guide is [catalog/README.md](../catalog/README.md).
 
 ## Logs
 
@@ -256,6 +280,8 @@ On start-up, pending database migrations are applied automatically:
 - **Each migration runs in a transaction,** and its checksum is recorded.
 - **Edited migrations are refused.** If an already-applied migration file has changed, start-up stops with a checksum error rather than letting the schema drift.
 - **Downgrades are refused.** If the database is newer than the image (you rolled back), start-up stops with "Database has migrations newer than this build". Restore the `radio-bot-pre-v<N>-…` backup the newer version took just before it migrated (see [Backups](#backups)), or run the newer image again.
+
+**From 1.1.0 or earlier:** those versions included a station pack in the image. Newer images include none, so on its first start the new version reinstalls, from the official pack library and before anything plays, every pack its database has stations from but no longer has. Favourites, queues and preferences keep working. This needs outbound HTTPS to `github.com`; if the library can't be reached, the bot logs a warning and tries again at its daily check. `packs.js list` (or `radio-bot packs`) shows what is installed.
 
 Read [CHANGELOG.md](../CHANGELOG.md) before upgrading.
 

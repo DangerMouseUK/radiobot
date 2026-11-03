@@ -12,7 +12,7 @@ Contributions that keep to these rules are very welcome. By taking part you agre
 
 **Naming:** the product is **Radio Bot** (package and image `radio-bot`; the repository is [DangerMouseUK/radiobot](https://github.com/DangerMouseUK/radiobot)). Never name it after a broadcaster or a station pack, or in any way that implies it is a broadcaster's product. It is unofficial and not affiliated with or endorsed by any broadcaster; see [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md).
 
-**Pack names stay in the pack:** outside a pack's own folder (`catalog/packs/<id>/`), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them. Use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays. The only exception is the one sentence in the README's Station packs section saying which starter pack is bundled and that it can be switched off, deleted or replaced.
+**Pack names stay in the pack:** outside a pack's own folder (which lives in the pack library, [DangerMouseUK/radiobot-packs](https://github.com/DangerMouseUK/radiobot-packs), not in this repository), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them. Use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays. The only exception is the one sentence in the README's Station packs section saying, without naming any pack, that the bot ships with no packs, that they come from the official pack library, and that any of them can be installed, updated or removed.
 
 ## Development setup
 
@@ -29,7 +29,7 @@ pnpm typecheck      # tsc --noEmit (strict)
 pnpm lint           # biome check .
 pnpm test           # vitest run (unit + integration)
 pnpm build          # compile to dist/
-pnpm smoke          # check the build: database, worker threads, an encode, the healthcheck
+pnpm smoke          # check the build: database, the template pack, worker threads, an encode, the healthcheck
 ```
 
 Other scripts:
@@ -41,18 +41,19 @@ Other scripts:
 | `pnpm test:coverage` | Run every test and report how much of `src/` and `scripts/` they run, file by file (V8 coverage; settings in `vitest.config.ts`). CI runs this, and fails if coverage drops below the minimums set there |
 | `pnpm format` | Apply Biome formatting (run it after editing anything Biome checks: `src/`, `scripts/`, `tests/`, `catalog/` and the root JSON and TS files) |
 | `pnpm dev` | Run from source with `node --watch src/index.ts`. Needs the variables from a `.env` with a **test** bot token exported into your shell; the bot does not read `.env` itself. |
-| `pnpm validate-catalogue` | Validates every station pack (plus `EXTRA_PACKS_DIR`). Add `--pack <dir>` to check one pack folder, or `--probe <stationId…>` / `--probe --pack-id <id>` for live probes, `--compare` for audio comparisons and `--json <file>` for an evidence report. Runs from `dist/`, so run `pnpm build` first. CI runs `node scripts/validate-catalogue.ts` straight from source. |
+| `pnpm validate-catalogue` | Validates every station pack in `catalog/packs/` and `EXTRA_PACKS_DIR`, plus `catalog/packs/_template/`. Add `--pack <dir>` to check one pack folder, `--strict` for the extra rules for library packs, or `--probe <stationId…>` / `--probe --pack-id <id>` for live probes, `--compare` for audio comparisons and `--json <file>` for an evidence report. Runs from `dist/`, so run `pnpm build` first. CI runs `node scripts/validate-catalogue.ts` straight from source. |
+| `node scripts/pack-author.ts …` | The pack and library authoring tools, run straight from source: `new` (start a pack from the template), `export` and `generate` (round-trip a pack through `intake.csv`), `build-library` (write a library's `index.json` and bundles) and `diff-check` (check a change to a published pack). The pack library's CI runs them; see [catalog/README.md](catalog/README.md#tools-for-writing-packs). |
 | `pnpm register-commands` | Register `/radio` now, even if nothing has changed, without starting the bot: in the servers whose IDs you pass, or else in `DISCORD_DEV_GUILD_ID` or every server the bot is in. Needs a build. |
 | `pnpm healthcheck` / `pnpm backup` | Check the heartbeat file / write a manual database backup. Need a build. |
-| `pnpm smoke` | After `pnpm build`: runs the compiled code with no network and no Discord. It opens a temporary database (migrations run), checkpoints it on the worker thread, parses a station list on the parse worker, encodes two seconds of a synthetic tone to Ogg Opus with the live encoder's arguments and checks a heartbeat with the healthcheck. Uses `FFMPEG_PATH` / `FFPROBE_PATH`, or `ffmpeg` / `ffprobe` on the `PATH`. CI also runs it inside the Docker image. |
+| `pnpm smoke` | After `pnpm build`: runs the compiled code with no network and no Discord. It opens a temporary database (migrations run), seeds the template pack and loads it again on the pack worker thread, checkpoints the database on the worker thread, parses a station list on the parse worker, encodes two seconds of a synthetic tone to Ogg Opus with the live encoder's arguments and checks a heartbeat with the healthcheck. Uses `FFMPEG_PATH` / `FFPROBE_PATH`, or `ffmpeg` / `ffprobe` on the `PATH`. CI also runs it inside the Docker image. |
 | `pnpm test:lifecycle` | Linux or macOS (where it needs `python3`): runs `install.sh` and `scripts/radio-bot.sh` (install, status, update, backup, restore, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it on Linux, plus `shellcheck`, and on macOS with the system's bash 3.2. |
 | `docker build --target test -t radio-bot:test .` then `docker run --rm --network none radio-bot:test` | The integration tests on the Docker image's own Node and FFmpeg (the `test` stage shares the image's base; the published image is built without it). CI runs this. |
 
-Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`). `tests/integration/main-thread-budget.test.ts` plays a stream through the real pipeline while the heaviest commands and a large catalogue sync run, and fails if the event loop stalls for 50 ms or more; if it fails, make the slow step cheaper rather than raising the bound.
+Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`). `tests/integration/main-thread-budget.test.ts` plays a stream through the real pipeline while the heaviest commands, a large catalogue sync and a live install of a 2000-station pack run, and fails if the event loop stalls for 50 ms or more; if it fails, make the slow step cheaper rather than raising the bound.
 
 CI also runs the typecheck and tests on the oldest supported Node (24.17.0), checks the relative links and anchors in the docs without going online, and scans the Docker image for high and critical vulnerabilities that have a fix (with Trivy, also weekly). Dependabot proposes dependency, action and base-image updates weekly.
 
-Shared test helpers are in `tests/helpers.ts`: `memoryDb()` gives an in-memory, migrated database and `makeSource()` a source fixture. Test files are named `*.test.ts`, import from `'../../src/….ts'` and use `describe`/`it` with plain `expect`.
+Shared test helpers are in `tests/helpers.ts`: `memoryDb()` gives an in-memory, migrated database and `makeSource()` a source fixture. Tests that need a station pack use the made-up one in `tests/fixtures/packs/demo/`. Test files are named `*.test.ts`, import from `'../../src/….ts'` and use `describe`/`it` with plain `expect`.
 
 ## Code style
 
@@ -96,7 +97,7 @@ Voice packets go out every 20 ms from Node's main thread. That's the same thread
 
 ### Catalogue changes
 
-Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. The format is documented in [catalog/README.md](catalog/README.md). The code must stay pack-agnostic: never special-case a pack ID in `src/`. A pack carries no logos or artwork, and must not present itself as official unless the broadcaster has agreed. Radio Bot always shows its own "not affiliated with or endorsed by any broadcaster" notice with station lists, so a pack's own `disclaimer` is optional. For these files:
+Station packs (`pack.json`, `stations.json`, `sources.json`, `SOURCE_PROVENANCE.md`, `evidence/`) affect what every installation plays. **They are authored in the pack library**, [DangerMouseUK/radiobot-packs](https://github.com/DangerMouseUK/radiobot-packs), following its playbook, and proposed there; this repository keeps only the example in `catalog/packs/_template/`, so don't add other pack folders here. The format is documented in [catalog/README.md](catalog/README.md). The code must stay pack-agnostic: never special-case a pack ID in `src/`. A pack carries no logos or artwork, and must not present itself as official unless the broadcaster has agreed. Radio Bot always shows its own "not affiliated with or endorsed by any broadcaster" notice with station lists, so a pack's own `disclaimer` is optional. For these files:
 
 - **Every source mapping needs provenance and evidence:**
   - **Provenance:** how the URL is tied to the station, and when. For example: "Official web player entry `<officialId>` redirected to this mount on YYYY-MM-DD". Put this in `provenanceDetail`, and add a row or section to `SOURCE_PROVENANCE.md`.
@@ -107,7 +108,7 @@ Station packs in `catalog/packs/<pack-id>/` (`pack.json`, `stations.json`, `sour
 - **Don't delete broken sources silently.** Set `enabled: false` with a `disabledReason`, and record why in the pack's `SOURCE_PROVENANCE.md`. At start-up the bot already disables any source that has been removed from `sources.json`, but an explicit record is clearer.
 - **Station IDs (`<pack-id>:<slug>`) are permanent,** and so are pack IDs. They are what favourites and preferences point to. A rename changes `displayName` and adds the old name as an alias. Within a pack, no two stations may share a name or alias, and source IDs must be unique across all packs; start-up checks both. `custom` is reserved for each server's own stations and can't be a pack ID.
 - **Declare brand labels.** Publisher or network names that appear in several stations' stream metadata belong in `brandLabels`, so they are never treated as identity evidence.
-- **Run `pnpm validate-catalogue`** (after `pnpm build`, or `node scripts/validate-catalogue.ts` from source) before pushing.
+- **Run `node scripts/validate-catalogue.ts --pack <dir> --strict`** (or `pnpm validate-catalogue` after `pnpm build`) before pushing.
 - **Takedown requests from rights holders take priority** and are handled as described in [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md#takedown-procedure).
 
 ### Audio and source changes need a reviewer
@@ -117,7 +118,7 @@ A pull request that touches any of the following needs **at least one approving 
 - `src/audio/`
 - `src/streams/`: probing, identity, ranking, inputs, URL policy, safe fetch
 - `src/voice/`
-- the station packs in `catalog/packs/`
+- the template pack in `catalog/packs/_template/` (station packs themselves are reviewed in the pack library)
 
 In the description, explain the effect on:
 
@@ -152,7 +153,7 @@ In particular:
 - **Ask for nothing new without discussion.** No new gateway intents and no new bot permissions unless they have been discussed in an issue. The documented minimal set is a feature.
 - **Check permissions on the server side.** Every new command, component or form (modal) must call `authorize()` with the right capability (`read`, `control` or `admin`). Components and forms must use `ComponentIds`. Add a new action to `COMPONENT_ACTIONS` in `src/discord/components/custom-id.ts` (at most 7 characters); its argument can be at most 65 characters, which is the longest station ID, so every ID fits Discord's 100-character limit.
 - **Statistics stay private.** `/radio stats` and other diagnostics are ephemeral and admin-only; never post them publicly.
-- **`/radio` is full.** It uses all 25 top-level options Discord allows. A new command has to go into a subcommand group (as `queue` and `source` do), or replace an existing subcommand.
+- **`/radio` is full.** It uses all 25 top-level options Discord allows. A new command has to go into a subcommand group (as `queue`, `source` and `packs` do), or replace an existing subcommand.
 - **Admin means owner or Administrator.** Don't reintroduce admin roles or Manage Server checks without an issue first.
 
 ### Installer and release changes

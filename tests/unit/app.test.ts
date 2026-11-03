@@ -1,5 +1,5 @@
 import type { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ActivityType, ChannelType, Events, PermissionFlagsBits } from 'discord.js';
@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AppConfig, loadConfig } from '../../src/config/env.ts';
 import type { HealthSnapshot } from '../../src/observability/health.ts';
 import type { Logger } from '../../src/observability/logger.ts';
+import { rootPath } from '../../src/shared/paths.ts';
 import type { SessionStatus } from '../../src/voice/session.ts';
+import { FIXTURE_PACKS_DIR } from '../helpers.ts';
 
 /**
  * createApp wires real repositories, packs, sessions and timers around a fake Discord client:
@@ -20,6 +22,7 @@ const fake = vi.hoisted(() => ({
   register: [] as unknown[][],
   schedules: [] as Array<{ options: Record<string, unknown>; stop: () => void; stopped: boolean }>,
   diagnostics: [] as Array<{ port: number; snapshot: () => Record<string, unknown>; closed: boolean }>,
+  libraryFetches: [] as string[],
 }));
 
 vi.mock('discord.js', async (importOriginal) => {
@@ -90,6 +93,18 @@ vi.mock('../../src/catalogue/sync-schedule.ts', () => ({
   },
 }));
 
+// No test may reach the real pack library: start-up asks it for packs the database uses but lacks.
+vi.mock('../../src/catalogue/pack-library.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/catalogue/pack-library.ts')>();
+  return {
+    ...actual,
+    fetchLibraryIndex: async (_http: unknown, url: string) => {
+      fake.libraryFetches.push(url);
+      return { schemaVersion: 1, generatedAt: '2026-11-03T00:00:00Z', packs: [], collections: [] };
+    },
+  };
+});
+
 vi.mock('../../src/observability/health.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/observability/health.ts')>();
   return {
@@ -139,6 +154,7 @@ beforeEach(() => {
   fake.register.length = 0;
   fake.schedules.length = 0;
   fake.diagnostics.length = 0;
+  fake.libraryFetches.length = 0;
   fake.ffmpeg = async () => LIBOPUS;
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
 });
@@ -309,6 +325,55 @@ describe('createApp: Discord client', () => {
     expect(client.presences).toHaveLength(1);
     client.emit(Events.ShardReady, 0);
     expect(client.presences).toHaveLength(2);
+  });
+});
+
+describe('createApp: station packs', () => {
+  it('asks the pack library for packs the database uses but lacks, before logging in', async () => {
+    const { app, ctx, client } = build();
+    addStation(ctx); // a station of "mypack", which isn't loaded
+    await app.start();
+    expect(fake.libraryFetches).toEqual([
+      'https://github.com/DangerMouseUK/radiobot-packs/releases/latest/download/index.json',
+    ]);
+    expect(client.logins).toHaveLength(1);
+  });
+
+  it('does not ask the library when every pack the database uses is loaded', async () => {
+    const { app } = build();
+    await app.start();
+    expect(fake.libraryFetches).toEqual([]);
+  });
+
+  it('loads installed packs, skips a broken one, and stops a removed pack’s stations at once', async () => {
+    const installed = join(dir, 'installed-packs');
+    cpSync(rootPath('catalog', 'packs', '_template'), join(installed, 'template'), { recursive: true });
+    mkdirSync(join(installed, 'broken'));
+    writeFileSync(join(installed, 'broken', 'pack.json'), '{');
+    const { app, ctx } = build({ extraPacksDir: FIXTURE_PACKS_DIR });
+    expect(ctx.packs.get('template')?.origin).toBe('installed');
+    expect(ctx.packs.skipped).toHaveLength(1);
+    await app.start();
+    const schedulesBefore = fake.schedules.length;
+    const stop = vi.fn();
+    vi.spyOn(ctx.sessions, 'all').mockReturnValue([
+      { status: () => ({ stationId: 'template:example-hits' }), stop },
+      { status: () => ({ stationId: null }), stop },
+    ] as never);
+    expect(await ctx.packManager.remove('template')).toBe(true);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(ctx.packs.get('template')).toBeNull();
+    // Syncs are planned again for the packs that are left.
+    expect(fake.schedules.length).toBe(schedulesBefore + 1);
+    expect(fake.schedules.at(-2)?.stopped).toBe(true);
+  });
+
+  it('reloads the installed packs on request', async () => {
+    const { app, ctx } = build();
+    await app.start();
+    const reload = vi.spyOn(ctx.packManager, 'reload');
+    await app.reloadPacks();
+    expect(reload).toHaveBeenCalledOnce();
   });
 });
 

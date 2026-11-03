@@ -381,6 +381,7 @@ cmd_install() {
   compose up -d --remove-orphans
   install_shortcut
   if wait_until_healthy; then
+    offer_packs
     step "Last step: invite the bot to your Discord server"
     say "Open this link, choose your server, click Continue, then click Authorize:"
     say ''
@@ -540,6 +541,57 @@ cmd_backup() {
   ok "Backups copied to $DIR/backups/ — keep a copy somewhere other than this computer too."
 }
 
+# Station packs. The work happens in the bot's container (dist/scripts/packs.js): it downloads through
+# the bot's own safe HTTP client and writes into the data volume. A running bot is then told to load
+# the change (SIGHUP), so nothing playing is interrupted; a stopped one loads it when it starts.
+cmd_packs() {
+  ensure_docker
+  [ $# -gt 0 ] || set -- list
+  local sub=$1 state status=0
+  state=$(container_state)
+  if [ "$state" = running ]; then
+    exec_low node dist/scripts/packs.js "$@" || status=$?
+  else
+    compose run --rm --no-deps -T "$SERVICE" node dist/scripts/packs.js "$@" || status=$?
+  fi
+  case "$sub" in
+    add | update | remove)
+      if [ "$state" = running ]; then
+        if compose kill -s HUP "$SERVICE" >/dev/null 2>&1; then
+          ok "Radio Bot is loading the change now. Nothing that is playing is interrupted."
+        else
+          warn "Couldn't tell Radio Bot to load the change. It loads it at its next restart: radio-bot restart"
+        fi
+      else
+        say "Radio Bot isn't running. The change takes effect when it starts: radio-bot start"
+      fi
+      ;;
+  esac
+  return "$status"
+}
+
+# Offered once, at the end of a first install: a new bot has no stations until a pack is added.
+offer_packs() {
+  local installed
+  installed=$(exec_low node dist/scripts/packs.js count 2>/dev/null | tr -cd '0-9')
+  [ "${installed:-0}" = 0 ] || return 0
+  step "Add some stations"
+  say "Radio Bot's stations come in station packs, one per radio company. You can add or remove them any time."
+  confirm "See the station packs you can add now?" y || {
+    say "Later, run: radio-bot packs browse"
+    return 0
+  }
+  exec_low node dist/scripts/packs.js browse || {
+    warn "Couldn't reach the pack library just now. Try later with: radio-bot packs browse"
+    return 0
+  }
+  local wanted=''
+  ask wanted "Packs to add, separated by spaces (press Enter to skip):" ''
+  # Word splitting is wanted here: one argument per pack name.
+  # shellcheck disable=SC2086
+  [ -z "$wanted" ] || cmd_packs add $wanted || true
+}
+
 # Every SQLite database starts with these 16 bytes: "SQLite format 3" and a NUL.
 is_sqlite_file() {
   [ "$(od -An -tx1 -N16 "$1" 2>/dev/null | tr -d '[:space:]')" = 53514c69746520666f726d6174203300 ]
@@ -686,6 +738,9 @@ ${BOLD}radio-bot${RESET} — manage your Radio Bot install ($DIR)
                     Start, stop or restart the bot (restart applies .env)
   ${BOLD}config${RESET}            Edit the settings (.env), then restart to apply them
   ${BOLD}invite${RESET}            Print the link that adds the bot to a Discord server
+  ${BOLD}packs${RESET}             Station packs: ${BOLD}packs browse${RESET} to see what there is,
+                    ${BOLD}packs add${RESET} NAME, ${BOLD}packs update${RESET}, ${BOLD}packs remove${RESET} NAME,
+                    or just ${BOLD}packs${RESET} to list what's installed
   ${BOLD}backup${RESET}            Back up the bot's data into the backups folder
                     (when stopped, it only copies the backups made earlier)
   ${BOLD}restore${RESET} FILE      Put a backup back, replacing the bot's current data
@@ -715,6 +770,7 @@ main() {
     logs) ensure_docker && compose logs -f --tail=200 "$SERVICE" ;;
     config | configure) cmd_config ;;
     invite) invite_url ;;
+    packs | pack) cmd_packs "$@" ;;
     backup) cmd_backup ;;
     restore) cmd_restore "$@" ;;
     version | --version | -v) current_version ;;

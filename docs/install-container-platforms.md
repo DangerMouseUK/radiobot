@@ -9,9 +9,9 @@ Radio Bot ships a standard `Dockerfile`, and every release publishes a ready-mad
 | Requirement | Why |
 |---|---|
 | **A long-running process** (often called a "worker" or "background service") | The bot keeps a permanent connection to Discord and streams audio continuously. It can't run as a function that starts per request. |
-| **Outbound TCP and UDP** | Discord voice audio is sent over **UDP**. Outbound HTTPS is needed for Discord's API and the radio streams. |
+| **Outbound TCP and UDP** | Discord voice audio is sent over **UDP**. Outbound HTTPS is needed for Discord's API, the radio streams and the station pack library on `github.com`. |
 | **No inbound port** | The bot serves nothing. Choose a worker or background type that doesn't require an HTTP port or a health-check URL. |
-| **A persistent volume mounted at `/app/data`** | The bot's SQLite database there holds server settings, favourites and custom stations. Without a persistent volume, all of that resets on every redeploy or restart. The image runs as the `node` user (UID 1000), so the volume must be writable by that user. |
+| **A persistent volume mounted at `/app/data`** | The bot's SQLite database there holds server settings, favourites and custom stations, and its `installed-packs` folder holds the station packs you installed. Without a persistent volume, all of that resets on every redeploy or restart. The image runs as the `node` user (UID 1000), so the volume must be writable by that user. |
 | **Secret environment variables** | At least `DISCORD_TOKEN` and `DISCORD_APPLICATION_ID`. See `.env.example` and the [README's configuration table](../README.md#configuration) for the rest. |
 | **Enough CPU and memory** | One FFmpeg encoder runs per Discord server that is playing. One stream used about 8% of one CPU core and about 200 MB of memory in total; plan for 1 GB of memory. Check on your plan before relying on it. |
 | **A 64-bit x86 or ARM machine** | Images are published for `linux/amd64` and `linux/arm64`. |
@@ -28,7 +28,7 @@ Any platform that runs a long-lived container **and** attaches a persistent volu
 
 Deploy the repository as a **Worker** component built from the `Dockerfile`; a worker doesn't need an HTTP port. Two limits to know:
 
-- **No persistent volumes.** App Platform's filesystem is temporary, so the SQLite database is lost whenever the app redeploys or restarts. Per-server settings made with `/radio config`, favourites and custom stations would all reset. That is fine for trying it out, but not for a server people rely on. For lasting settings, run the container on a Droplet with Docker ([install-docker.md](install-docker.md)) or directly on Linux ([install-linux.md](install-linux.md)).
+- **No persistent volumes.** App Platform's filesystem is temporary, so the SQLite database is lost whenever the app redeploys or restarts. Per-server settings made with `/radio config`, favourites, custom stations and installed station packs would all reset. That is fine for trying it out, but not for a server people rely on. For lasting settings, run the container on a Droplet with Docker ([install-docker.md](install-docker.md)) or directly on Linux ([install-linux.md](install-linux.md)).
 - **Confirm outbound UDP** for Discord voice on your plan before committing.
 
 ### Vercel and other serverless or function platforms
@@ -44,5 +44,13 @@ Deploy the repository as a **Worker** component built from the `Dockerfile`; a w
 5. Do **not** expose a port or configure an HTTP health check. The image has its own `HEALTHCHECK` (`nice -n 19 node dist/scripts/healthcheck.js`, run at the lowest CPU priority so it can't delay the audio) for platforms that use Docker health checks.
 6. Deploy. In the platform's log viewer you should see `connected to Discord` within a minute. If the settings are invalid, the bot exits with code 78 and the log names the variable that is wrong.
 7. Invite the bot with the link in [install.md, step 3](install.md#3-invite-the-bot-to-your-server), using your own Application ID, then run `/radio config` in your Discord server.
+8. Add stations. The bot ships with none: they come in station packs from the official pack library. As the owner of the bot's Discord application (or a user listed in `OPERATOR_USER_IDS`), run `/radio packs library` in a server where you are an admin, pick a pack from the menu and press **Install**. It runs in the background and needs no restart.
 
 Logs are JSON lines on standard output; read them in the platform's log viewer.
+
+## Station packs on a platform
+
+Platforms rarely give you a shell in the running container, so install, update and remove packs from Discord: `/radio packs library` to install, `/radio packs installed` to update or remove. Discord installs only from the official library. If your platform does let you run a command in the container, `node dist/scripts/packs.js` works there too (see [install-docker.md → Station packs](install-docker.md#station-packs)); the bot then needs `SIGHUP` or a restart to load the change.
+
+- Installed packs live in `/app/data/installed-packs/`, in the persistent volume. On a platform without persistent volumes they are lost on every redeploy, like the settings.
+- At start-up, before anything plays, the bot reinstalls from the official library any pack its database uses but doesn't have, for example after updating from a version that included a pack. Once a day it checks the library for updates (which an admin installs) and for withdrawn packs (which it removes). Both need outbound HTTPS to `github.com`; if that fails, the bot logs a warning and tries again later.

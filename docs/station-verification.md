@@ -23,7 +23,7 @@ The rest of this page gives the precise rules. The code is in `src/streams/ident
   - a health score, failure counts and any cooldown (a rest after repeated failures);
   - whether it is enabled, and why not.
 
-Pack stations come from **station packs**. Each pack is a folder under `catalog/packs/` (or `EXTRA_PACKS_DIR`) with `pack.json`, `stations.json` and, optionally, `sources.json`; the authoring guide is [catalog/README.md](../catalog/README.md). Station IDs are `<pack-id>:<slug>`, and a station's provider is its pack ID. Custom stations (provider `custom`) belong to one Discord server and have one source each.
+Pack stations come from **station packs**. Each pack is a folder with `pack.json`, `stations.json` and, optionally, `sources.json`, installed from the official pack library (or one of the operator's own, in `EXTRA_PACKS_DIR`); the format is described in [catalog/README.md](../catalog/README.md). Station IDs are `<pack-id>:<slug>`, and a station's provider is its pack ID. Custom stations (provider `custom`) belong to one Discord server and have one source each.
 
 ## Candidate states
 
@@ -110,7 +110,7 @@ The announced name is checked when a source is checked, and again **every time p
   - the best match stands out from the other offsets by a *prominence* of **5 or more** (`PROMINENCE_THRESHOLD`).
 - A *uniqueness* figure is reported but not used, because repetitive dance music gives several similar peaks even for the same programme.
 - Anything weaker is inconclusive.
-- **Calibration.** On live radio on 31 October 2026, the same station across MP3, AAC and HLS scored **0.38–0.90**, and different stations scored **0.08–0.14**. A comparison of the same station can still come out inconclusive, for example during a quiet passage. One of the starter pack's checked stations scored 0.08 in one run, after matching at 0.61 and 0.49 in earlier runs. That is why a failed comparison never demotes a source.
+- **Calibration.** On live radio on 31 October 2026, the same station across MP3, AAC and HLS scored **0.38–0.90**, and different stations scored **0.08–0.14**. A comparison of the same station can still come out inconclusive, for example during a quiet passage. One checked station of the first library pack scored 0.08 in one run, after matching at 0.61 and 0.49 in earlier runs. That is why a failed comparison never demotes a source.
 - Only the score, the offset and a short description are kept.
 
 `SourceService.deepVerify()` compares each enabled source that isn't verified yet with the station's currently selected verified source. If there is no verified source, there is nothing to compare with, and the command says so.
@@ -189,22 +189,18 @@ Admins can also use the **Use this source first** button (the same as `prefer` w
 
 When you pin or prefer a source that can't be used right now, the reply warns you and gives the reason. An override never makes an ineligible source playable: the identity and health gate always applies. An admin may pin or prefer an HLS source; that overrides the tier order, but not the gate. Catalogue sync and pack updates never touch these preferences, except that moving a source to a different station clears the preferences that pointed to it.
 
-## The bundled starter pack
+## Where pack sources come from
 
-### Files
+Radio Bot ships with no station packs. Packs are made and reviewed in the official pack library, [DangerMouseUK/radiobot-packs](https://github.com/DangerMouseUK/radiobot-packs), following its playbook, and installed from there with `/radio packs library` or `radio-bot packs add`. Each pack folder in the library has:
 
-The starter pack is a folder in `catalog/packs/`, like any other pack:
+- **`pack.json`**: the pack ID, its name, version and owner, its countries and languages, categories, brand labels and, optionally, `sync` with an adapter and the broadcaster's official station list;
+- **`stations.json`**: the stations as the official list names them, with `externalId` where the list has stable IDs, aliases, categories, tags and order;
+- **`sources.json`**: the candidate sources, each with a `provenance` of `official-player` or `curated` and a `provenanceDetail` saying where and when the address was found. Hints are never evidence: every source is checked when the bot runs;
+- **`SOURCE_PROVENANCE.md`**, which records where the station list and every source address came from, and what was and wasn't checked, and **`evidence/`**, which holds the check reports (`validate-catalogue --probe --json`). The date of the newest report is shown as "Streams last checked" on the pack's card in `/radio packs library`.
 
-- **`pack.json`** holds:
-  - the pack ID, its name and, optionally, an unofficial disclaimer;
-  - six categories and the pack's brand labels;
-  - `sync` with the `webradio-apidata` adapter, pointing at the broadcaster's official station list page;
-  - the snapshot date, 2026-10-31.
-- **`stations.json`** has 63 stations, from the official list as it was on 31 October 2026. For each: `slug`, `displayName` as listed, `externalId` (the site's stable 10-character stream ID), `aliases`, `category`, `tags`, `order`, `officialPage` where there is one, `catalogueStatus` and `catalogueLastSeen`.
-- **`sources.json`** has 126 candidate sources. For each: `id`, `station` (the slug), `url`, `label`, `priority`, `transportHint`, `codecHint`, `provenance` (`official-player` or `curated`), `provenanceDetail`, `enabled` and `disabledReason`. Every URL in this pack is HTTPS. Hints are never evidence: every source is checked when the bot runs.
-- **`SOURCE_PROVENANCE.md`** records where every source address came from, and **`evidence/`** holds the check reports. Each bundled pack's folder has both, with the station-by-station details.
+Library packs must pass the [strict checks](../catalog/README.md#strict-checks-for-library-packs): a version, an owner, countries and languages, every source in `SOURCE_PROVENANCE.md`, at least one evidence report, no images, and no URL that looks signed or expiring. Signed or tokenised play URLs found on a broadcaster's site are never stored: a pack holds only the plain, public stream addresses they lead to.
 
-At start-up every pack is validated and cross-checked. Start-up fails if any of these is found:
+Every pack is validated and cross-checked when it is loaded, whether at start-up or when it is installed while the bot runs. A pack is refused if any of these is found:
 
 - two packs with the same ID, two stations in a pack with the same slug, or two sources with the same ID (source IDs must be unique across all packs);
 - a name or alias used by two stations of one pack (ignoring case, accents and punctuation);
@@ -212,76 +208,29 @@ At start-up every pack is validated and cross-checked. Start-up fails if any of 
 - a source that refers to a station the pack doesn't have;
 - one URL mapped to two stations of a pack.
 
-### How the sources were discovered
+A refused pack in `EXTRA_PACKS_DIR` stops start-up. A refused installed pack is skipped and listed under _Not loaded_ in `/radio packs installed`; a refused download (`PACK_INVALID`) is never written.
 
-On **31 October 2026** each station's entry in the broadcaster's official web player data was used. The site's page embeds this data as JSON, with one entry per station plus the main FM stream. Each entry carries short-lived **signed play URLs** (addresses with a temporary access token), one per format (`hd`, `sd`, `hls`).
+### The first library pack
 
-- Each signed URL was requested once, without following redirects. It answered with a **302 redirect** to a plain, unsigned stream address on the broadcaster's stream host. Those redirect targets are the pack's sources.
-- **Signed URLs and tokens were never stored.** That includes the signed play URLs, a tracking parameter, and the load-balancer token that the stream host adds on its own next redirect.
-- Typically each station led to a direct MP3 stream (from `hd`/`sd`) and an HLS playlist of the form `<mount>/hls.m3u8` (from `hls`). In 36 of the 61 HLS entries the playlist is on the same mount as the station's direct source; in the other 25 it is on a different mount. In neither case is it assumed to carry the same encoding. Two stations offer only the direct stream, because their HLS entry redirects to the same plain mount. Two stations serve AAC on the direct stream.
-- One short request per distinct direct or unusual target recorded the `Content-Type`. The HLS targets in the standard `<mount>/hls.m3u8` form were not checked one by one; spot checks on other mounts returned an HLS playlist.
+The pack that shipped with Radio Bot up to version 1.1.0 is now the first pack in the library, and an existing installation gets it back from there automatically when it updates. Its folder in the library holds its own provenance record and evidence. In short, as checked on 31 October 2026:
 
-**Four sources are disabled,** because the official site's own mapping was broken when they were found. They are kept for transparency, and so that a later check can re-enable them:
+- **63 stations**, from the broadcaster's official list, with **126 candidate sources** (122 enabled). Its sources came from the official web player: each station's short-lived signed play URL redirected once to a plain, unsigned stream address, and those plain addresses are the sources. No signed URL or token was stored.
+- **3 of the 63 stations confirmed by live checks:** direct MP3 at 128 kbps on all three, HLS AAC-LC at 128 kbps on all three, and a curated direct AAC-LC stream at 128 kbps on the flagship, all 44.1 kHz stereo. One HLS address redirected and then never answered. The other 60 stations use the same host and URL pattern, but have **not been checked yet**.
+- **Audio comparisons** supported identity for two of the three stations (scores of 0.58 to 0.90). The third matched in two earlier runs and was inconclusive (0.08) in the latest.
 
-| Problem | Sources |
-|---|---|
-| Malformed HLS target (`.hls.m3u8`), HTTP 404 | 2 |
-| `.m3u8` URL serving plain `audio/mpeg`: a copy of the station's MP3 stream, not HLS | 1 |
-| Direct stream answered HTTP 401 when found (with a browser User-Agent), and again on 31 October 2026 with the bot's FFmpeg User-Agent. Access is restricted, so it stays disabled. The station's HLS source stays enabled. | 1 |
-
-The flagship station has four sources:
-
-- its webradio entry's MP3 stream and HLS playlist;
-- the HLS playlist of the site's main FM stream, which carries the same programme;
-- an extra **direct AAC** stream, recorded as **`curated`**. It comes from an earlier investigation on 30 October 2026 (about 128 kbps AAC, stereo, 44.1 kHz at the time). The site itself doesn't link to that plain stream, only to its `/hls.m3u8`. It is in the catalogue as a candidate to compare, not as a claimed higher-quality feed.
-
-### Coverage
-
-The PRD asks for separate counts. For the starter pack:
-
-| Count | Value | How it is determined |
-|---|---|---|
-| Catalogued | **63** | Station names in the official list of 31 October 2026. |
-| With a source | **63** | Stations with at least one enabled source: 126 sources, of which 122 are enabled. |
-| Usable | **3 confirmed**; 60 not checked yet | Stations with a source that a check has successfully decoded. This is determined while the bot runs; see the release check below. |
-| Verified playable | **3 confirmed** | Stations with an *eligible* source: checked, decoded, identity verified, healthy. For the starter pack, identity comes from official-player provenance. An audio comparison also supports two of the three. |
-
-**Release check.** The evidence from 31 October 2026 is in the pack folder's `evidence/`. It covers the 8 sources of three stations: the flagship and two others.
-
-| Station | Source | Result |
-|---|---|---|
-| Flagship | direct MP3 | MP3, 128 kbps measured, 44.1 kHz stereo |
-| Flagship | direct AAC (curated) | AAC-LC, ≈128 kbps measured, 44.1 kHz stereo |
-| Flagship | HLS (main FM stream's playlist) | AAC-LC, ≈128 kbps measured, 44.1 kHz stereo |
-| Flagship | HLS (webradio entry's playlist) | Failed: redirects, then never answers (`HTTP_TIMEOUT`) |
-| Second station | direct MP3 / HLS | MP3 128 kbps / AAC-LC 128 kbps, both 44.1 kHz stereo |
-| Third station | direct MP3 / HLS | MP3 128 kbps / AAC-LC 128 kbps, both 44.1 kHz stereo |
-
-Audio comparisons in the same run:
-
-- Flagship: MP3 against HLS scored 0.58, and MP3 against AAC scored 0.61. Both support identity.
-- Third station: MP3 against HLS scored 0.90, which supports identity.
-- Second station: MP3 against HLS was inconclusive in this run (0.08), after matching at 0.61 and 0.49 in earlier runs.
-
-No higher-bitrate feed was found: the direct and HLS sources all carry about 128 kbps. Because of the transport tier, the bot plays the direct MP3 (or the flagship's direct AAC) and keeps HLS as the fallback.
-
-**Why earlier checks failed.** Earlier the same day, every check was answered with **HTTP 401**. The stream host refuses clients it doesn't recognise, but serves standard media players. Tested without a `Referer`:
-
-- Radio Bot's old User-Agent got 401;
-- FFmpeg's `Lavf/61.7.100` got `200 audio/mpeg`;
-- VLC got 200.
+**Why its earlier checks failed.** Before the bot identified itself as FFmpeg, every check of that pack's stream host was answered with **HTTP 401**. The host refuses clients it doesn't recognise, but serves standard media players. Tested without a `Referer`, Radio Bot's old User-Agent got 401, while FFmpeg's `Lavf/61.7.100` and VLC got 200.
 
 The bot now identifies itself to stream hosts as FFmpeg's network library, which is the software that decodes the audio. It sends the exact `Lavf/<version>` of the installed FFmpeg, and `STREAM_USER_AGENT` can override it. It does **not** pretend to be a web browser, sends no `Referer`, and never uses signed or tokenised URLs. A host that still refuses is reported as `ACCESS_DENIED`, and the bot respects that.
 
-The other **60 stations** use the same host and URL pattern, but have **not been checked yet**.
+### Coverage
 
-For pack sources, *identity verified* currently rests on official-player (or curated) **provenance** plus a successful check. An audio comparison also supports two of the three checked stations, as above. No listening test has been recorded. Read "verified" accordingly, and use `compare:true` or an operator's `/radio source verify` for stronger evidence.
+For pack sources, *identity verified* currently rests on official-player (or curated) **provenance** plus a successful check, strengthened where an audio comparison or an operator's review has been recorded. Read "verified" accordingly, and use `compare:true` or an operator's `/radio source verify` for stronger evidence.
 
-The bot's live coverage is in `/radio stats`, with one line per pack: "N stations · N with a working stream · N verified and playable", followed by the state of the pack's list sync. The footer of `/radio list` also gives the number "with a known stream".
+The PRD asks for separate counts: **catalogued** (the station is listed), **usable** (a check has decoded one of its sources) and **verified playable** (it has an *eligible* source: checked, decoded, identity verified, healthy). The bot's live coverage is in `/radio stats`, with one line per pack: "N stations · N with a working stream · N verified and playable", followed by the state of the pack's list sync. The footer of `/radio list` also gives the number "with a known stream".
 
 ## Validating packs yourself
 
-`scripts/validate-catalogue.ts` validates every pack (in `catalog/packs/` and `EXTRA_PACKS_DIR`) and can check sources live. Run it straight from source with Node 24 (`node scripts/validate-catalogue.ts`, as CI does), or build first (`pnpm build`) and use `pnpm validate-catalogue`, which runs the built copy in `dist/`. Live checks need FFmpeg and FFprobe on the `PATH`, or `FFMPEG_PATH` and `FFPROBE_PATH` set.
+`scripts/validate-catalogue.ts` validates every pack in `catalog/packs/` and `EXTRA_PACKS_DIR` (plus the template pack), or one pack folder with `--pack`, such as a library pack you are writing, and can check sources live. `--strict` adds the rules for library packs. Run it straight from source with Node 24 (`node scripts/validate-catalogue.ts`, as CI does), or build first (`pnpm build`) and use `pnpm validate-catalogue`, which runs the built copy in `dist/`. Live checks need FFmpeg and FFprobe on the `PATH`, or `FFMPEG_PATH` and `FFPROBE_PATH` set.
 
 ```sh
 # schema and consistency checks of every pack (no network)
@@ -300,8 +249,10 @@ node scripts/validate-catalogue.ts --probe --pack-id mypack
 In the Docker container:
 
 ```sh
-docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe mypack:my-station
+docker compose exec radio-bot node dist/scripts/validate-catalogue.js --pack /app/data/installed-packs/mypack --probe mypack:my-station
 ```
+
+The script doesn't read the installed-packs folder by itself, so name an installed pack's folder with `--pack` (`/var/lib/radio-bot/installed-packs/<pack-id>` with the systemd unit).
 
 - `--probe` needs station IDs or `--pack-id`; with neither, it stops with a message.
 - `--compare` compares the first successfully checked source of each station with each of its other successful sources.
@@ -311,7 +262,7 @@ docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe my
 
 ## Catalogue sync
 
-`CatalogueSync` (`src/catalogue/sync.ts`) keeps each **enabled pack that declares `sync`** in its `pack.json` in line with that pack's official station list. Each pack has its own schedule: once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, 6 to 720) plus a random delay of up to 15 minutes. A pack that has never synced is first synced about 10 minutes after the bot starts. A scheduled sync follows the rules for background work: it runs one at a time with the background source checks and waits while any stream is in its first 30 s. `CATALOG_SYNC_ENABLED=false` turns the schedule off. Admins can also run `/radio sync [pack]`, which starts at once (after any sync already running). The list is read by the adapter the pack names, from `src/catalogue/sync-adapters.ts`:
+`CatalogueSync` (`src/catalogue/sync.ts`) keeps each **enabled pack that declares `sync`** in its `pack.json` in line with that pack's official station list. Each pack has its own schedule: once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, 6 to 720) plus a random delay of up to 15 minutes. A pack that has never synced is first synced about 10 minutes after the bot starts. A scheduled sync follows the rules for background work: it runs one at a time with the background source checks and waits while any stream is in its first 30 s. `CATALOG_SYNC_ENABLED=false` turns the schedule off. Admins can also run `/radio packs sync [pack]` (formerly `/radio sync`), which starts at once (after any sync already running). The list is read by the adapter the pack names, from `src/catalogue/sync-adapters.ts`:
 
 - `webradio-apidata` reads a list of web radios embedded in a station website's page (a `webradios[]` array in the page's `var apidata` JSON);
 - `json-name-list` reads a plain JSON list of `{ id, name }`.
@@ -330,6 +281,6 @@ A sync:
 - applies all its changes together or none of them. Only a sync with more than 50 changes at once is written in parts of 50; the report then lists what was written, and if a part fails, the next sync finishes the job;
 - on **failure**, keeps the existing entries and records a failed report. `/radio list` for that pack shows "list may be out of date" when no sync has succeeded within three intervals.
 
-Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio sync` shows one report per pack: what was added (new stations have no stream yet), renamed, dropped from or back on the official list, or "No stations were added, renamed, dropped or brought back."; then the stations whose sources all failed their last check. Long lists show 15 names and how many more.
+Each run is stored in `catalogue_sync_reports` with the pack ID as the provider. `/radio packs sync` shows one report per pack: what was added (new stations have no stream yet), renamed, dropped from or back on the official list, or "No stations were added, renamed, dropped or brought back."; then the stations whose sources all failed their last check. Long lists show 15 names and how many more.
 
 A rename made by a sync survives restarts. While the pack's `stations.json` still has the old name, and that old name is an alias of the station, the bot keeps the synced name. Updating the pack file makes it permanent. The old name stays as an alias either way.

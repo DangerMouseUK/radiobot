@@ -108,22 +108,22 @@ describe('guild state', () => {
     const { guilds } = memoryDb();
     guilds.setIntent('1', {
       desiredState: 'playing',
-      desiredStationId: 'fg:fg-chic',
+      desiredStationId: 'demo:demo-chic',
       desiredVoiceChannelId: 'v1',
     });
     guilds.setIntent('2', { desiredState: 'stopped' });
-    expect(guilds.getIntent('1')?.desiredStationId).toBe('fg:fg-chic');
+    expect(guilds.getIntent('1')?.desiredStationId).toBe('demo:demo-chic');
     expect(guilds.getIntent('2')?.desiredStationId).toBeNull();
     guilds.setIntent('1', { desiredState: 'stopped' });
-    expect(guilds.getIntent('1')?.desiredStationId).toBe('fg:fg-chic');
+    expect(guilds.getIntent('1')?.desiredStationId).toBe('demo:demo-chic');
     expect(guilds.getIntent('1')?.desiredState).toBe('stopped');
   });
 
   it('toggles favourites and purges a guild', () => {
     const { guilds, stations } = memoryDb();
     stations.upsertProviderStation({
-      id: 'fg:x',
-      provider: 'fg',
+      id: 'demo:x',
+      provider: 'demo',
       slug: 'x',
       externalId: null,
       displayName: 'X',
@@ -136,9 +136,9 @@ describe('guild state', () => {
       catalogueStatus: 'active',
       description: null,
     });
-    expect(guilds.toggleFavourite('g', 'fg:x')).toBe(true);
-    expect(guilds.listFavourites('g')).toEqual(['fg:x']);
-    expect(guilds.toggleFavourite('g', 'fg:x')).toBe(false);
+    expect(guilds.toggleFavourite('g', 'demo:x')).toBe(true);
+    expect(guilds.listFavourites('g')).toEqual(['demo:x']);
+    expect(guilds.toggleFavourite('g', 'demo:x')).toBe(false);
     guilds.updateSettings('g', { idleMode: '24x7' });
     guilds.purgeGuild('g');
     expect(guilds.getSettings('g').idleMode).toBe('leave_when_empty');
@@ -158,12 +158,12 @@ describe('boot policy (§9.3)', () => {
   const settings = {
     resumeOnRestart: true,
     autostart: true,
-    defaultStationId: 'fg:fg-chic',
+    defaultStationId: 'demo:demo-chic',
     preferredVoiceChannelId: 'v9',
   };
   const intent = (desiredState: 'playing' | 'stopped' | 'left' | 'kicked' | 'idle') => ({
     guildId: 'g',
-    desiredStationId: 'fg:fg-dj-radio',
+    desiredStationId: 'demo:demo-radio',
     desiredVoiceChannelId: 'v1',
     desiredState,
     lastRequestedAt: null,
@@ -175,7 +175,7 @@ describe('boot policy (§9.3)', () => {
 
   it('resumes the desired station only when resume is enabled', () => {
     expect(bootDecision(intent('playing'), settings)).toEqual({
-      stationId: 'fg:fg-dj-radio',
+      stationId: 'demo:demo-radio',
       channelId: 'v1',
       why: 'resume',
     });
@@ -199,8 +199,8 @@ describe('probe history retention', () => {
   it('keeps only the newest N per source', () => {
     const { stations } = memoryDb();
     stations.upsertProviderStation({
-      id: 'fg:x',
-      provider: 'fg',
+      id: 'demo:x',
+      provider: 'demo',
       slug: 'x',
       externalId: null,
       displayName: 'X',
@@ -215,7 +215,7 @@ describe('probe history retention', () => {
     });
     stations.upsertSeedSource({
       id: 's',
-      stationId: 'fg:x',
+      stationId: 'demo:x',
       url: 'https://a.example.com/',
       label: null,
       priority: 1,
@@ -266,7 +266,7 @@ describe('probe history retention', () => {
 describe('seeded sources', () => {
   const station = (id: string) => ({
     id,
-    provider: 'fg',
+    provider: 'demo',
     slug: id.slice(3),
     externalId: null,
     displayName: id,
@@ -294,19 +294,19 @@ describe('seeded sources', () => {
 
   it('moves a source a pack update maps to another station, dropping the old station’s evidence', () => {
     const { stations, guilds } = memoryDb();
-    stations.upsertProviderStation(station('fg:a'));
-    stations.upsertProviderStation(station('fg:b'));
-    stations.upsertSeedSource(seed('fg:a'));
+    stations.upsertProviderStation(station('demo:a'));
+    stations.upsertProviderStation(station('demo:b'));
+    stations.upsertSeedSource(seed('demo:a'));
     stations.setIdentityOverride('s', 'verified');
-    guilds.setPreference('g', 'fg:a', 'pin', 's', '1');
-    expect(stations.upsertSeedSource(seed('fg:a'))).toBe('unchanged');
-    expect(stations.upsertSeedSource(seed('fg:b'))).toBe('updated');
+    guilds.setPreference('g', 'demo:a', 'pin', 's', '1');
+    expect(stations.upsertSeedSource(seed('demo:a'))).toBe('unchanged');
+    expect(stations.upsertSeedSource(seed('demo:b'))).toBe('updated');
     expect(stations.getSource('s')).toMatchObject({
-      stationId: 'fg:b',
+      stationId: 'demo:b',
       identityOverride: null,
       identityStatus: 'unverified',
     });
-    expect(stations.listSources('fg:a')).toEqual([]);
+    expect(stations.listSources('demo:a')).toEqual([]);
     expect(guilds.listPreferences('g')).toEqual([]);
   });
 });

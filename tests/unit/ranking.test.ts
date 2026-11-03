@@ -153,7 +153,7 @@ describe('selection', () => {
     const b = makeSource({ id: 'b', priority: 20 });
     const pin = {
       guildId: 'g',
-      stationId: 'fg:fg-dj-radio',
+      stationId: 'demo:demo-radio',
       mode: 'pin' as const,
       sourceId: 'b',
       updatedAt: '',

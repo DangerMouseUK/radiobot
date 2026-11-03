@@ -24,7 +24,7 @@ import {
 
 // ------------------------------------------------------------------ tests
 
-const STATION = 'FG DJ RADIO';
+const STATION = 'Demo Radio';
 const AMBIGUOUS = 'dance';
 
 /** One invocation of every slash command and group subcommand, with valid options. */
@@ -46,7 +46,7 @@ const EVERY_COMMAND: CommandSpec[] = [
   { sub: 'edit', strings: { station: STATION, name: 'Renamed' } },
   { sub: 'remove', strings: { station: STATION } },
   { sub: 'rescan', strings: { station: STATION } },
-  { sub: 'sync' },
+  { group: 'packs', sub: 'sync' },
   { sub: 'config' },
   { sub: 'export' },
   { sub: 'import', attachment: { size: 100, url: 'https://cdn.discordapp.com/attachments/1/2/radio.json' } },
@@ -130,7 +130,7 @@ describe('buttons and menus are authorised again on every click', () => {
   it('denies a member the admin-only re-probe, stats refresh, settings and import buttons', async () => {
     const t = setup();
     for (const [action, arg] of [
-      ['rescan', 'fg:fg-dj-radio'],
+      ['rescan', 'demo:demo-radio'],
       ['stats', ''],
       ['cfg', 'page-playback'],
       ['imp', 'token'],
@@ -154,7 +154,7 @@ describe('buttons and menus are authorised again on every click', () => {
 
   it('denies a member a play button when they are not in the voice channel', async () => {
     const t = setup();
-    const i = await t.click(t.people.member, t.ids.make(GUILD, 'play', 'fg:fg-dj-radio'));
+    const i = await t.click(t.people.member, t.ids.make(GUILD, 'play', 'demo:demo-radio'));
     expect(i.text).toMatch(/Join a voice channel first/);
     expect(t.sessions.plays).toEqual([]);
   });
@@ -211,10 +211,10 @@ describe('ambiguous station names', () => {
     expect(t.sessions.plays).toEqual([]);
     const [pickId] = i.componentIds;
     expect(decode(t.ids, pickId!)).toEqual({ action: 'pick', arg: V2 });
-    const pick = await t.click(t.people.admin, pickId!, 'string', ['fg:fg-dance']);
+    const pick = await t.click(t.people.admin, pickId!, 'string', ['demo:demo-dance']);
     expect(pick.violations).toEqual([]);
     expect(pick.calls[0]?.method).toBe('deferUpdate');
-    expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: 'fg:fg-dance', channelId: V2 }]);
+    expect(t.sessions.plays).toEqual([{ guildId: GUILD, stationId: 'demo:demo-dance', channelId: V2 }]);
   });
 
   it.each([
@@ -246,7 +246,7 @@ describe('/radio join', () => {
   it('says it is already there instead of touching the session', async () => {
     const t = setup();
     const s = t.sessions.ensure(GUILD);
-    Object.assign(s, { connected: true, channelId: V1, stationId: 'fg:fg-dj-radio' });
+    Object.assign(s, { connected: true, channelId: V1, stationId: 'demo:demo-radio' });
     t.putInVoice(t.people.admin, V1);
     const i = await t.command(t.people.admin, { sub: 'join' });
     expect(i.violations).toEqual([]);
@@ -488,9 +488,9 @@ describe('describeInteraction', () => {
     ).toBe('command radio');
     expect(
       describeInteraction(
-        fake({ isMessageComponent: () => true, customId: 'rb1:cfg-idle:x:0:sig' }) as never,
+        fake({ isMessageComponent: () => true, customId: 'rb1:set-idle:x:0:sig' }) as never,
       ),
-    ).toBe('menu cfg-idle');
+    ).toBe('menu set-idle');
     expect(
       describeInteraction(
         fake({

@@ -21,7 +21,8 @@ Installed with the installer? Start with `radio-bot status` and `radio-bot logs`
 | `/radio inspect <station>` | As above, plus each source's address (with any secret parts hidden), every bitrate figure, when it was last checked and last failed, the last failure code, its health, start-up time and where the address came from. Admins also get a **Check sources again** button. |
 | `/radio stats` | Admins only. A private live panel with Refresh and Close buttons, in four parts: Stream input, Output to Discord, Discord connection and Bot health. See [What `/radio stats` shows](#what-radio-stats-shows) below. |
 | Logs | `radio-bot logs`, or `docker compose logs -f radio-bot`, or `journalctl -u radio-bot -f` on a systemd install. Set `LOG_LEVEL=debug` for more detail (state changes and the voice dependency report), or `trace` for everything. Set it back to `info` afterwards. |
-| Check a source from the command line | `docker compose exec radio-bot node dist/scripts/validate-catalogue.js --probe <pack>:<station>` (or `--probe --pack-id <pack>`) checks pack stations and prints the raw results. |
+| Check a source from the command line | `docker compose exec radio-bot node dist/scripts/validate-catalogue.js --pack /app/data/installed-packs/<pack> --probe <pack>:<station>` (or `--probe --pack-id <pack>`) checks an installed pack's stations and prints the raw results. |
+| `/radio packs installed` / `radio-bot packs` | Admins: every station pack, its version and where it came from, available updates, packs that couldn't be loaded and why, and notices such as a pack withdrawn from the library. |
 
 ### What `/radio stats` shows
 
@@ -89,7 +90,7 @@ A station can have several *sources* (stream addresses). The bot plays one only 
 | blocked by rights/takedown policy | The operator has blocked this source after a rights request. | Intentional. See [rights-and-disclaimer.md](rights-and-disclaimer.md#takedown-procedure). |
 | skipped because it just failed | It failed a moment ago, so the bot is trying the others first. | Nothing: it can be tried again on the next attempt. |
 
-"…is catalogued, but no stream source is known for it yet" means the station has no enabled source at all. This happens, for example, with a station newly added by `/radio sync`. Nothing else is played in its place. Someone has to add a reviewed source mapping to the pack's `sources.json` (see [catalog/README.md](../catalog/README.md) and [CONTRIBUTING.md](../CONTRIBUTING.md#catalogue-changes)).
+"…is catalogued, but no stream source is known for it yet" means the station has no enabled source at all. This happens, for example, with a station newly added by `/radio packs sync`. Nothing else is played in its place. Someone has to add a reviewed source mapping to the pack's `sources.json`: for a library pack, through a change to the pack library, then an update of the pack (see [catalog/README.md](../catalog/README.md)).
 
 ## Probe and stream errors
 
@@ -162,16 +163,40 @@ A custom station is only saved if the bot's check of its stream succeeds. Otherw
 | `Migration … was modified after being applied (checksum mismatch)` | A migration file was edited. Restore the original. Schema changes need a new migration. |
 | `Database has migrations newer than this build` | You started an older version against a database that a newer version has already migrated. Run the newer version again, or restore the `radio-bot-pre-v<N>-…` backup the newer version took just before it migrated. With the installer, follow [install.md → Going back to an earlier version](install.md#going-back-to-an-earlier-version). By hand, the backups are in the `backups` folder next to the database (`/app/data/backups/` in Docker, `/var/lib/radio-bot/backups/` with systemd). |
 | `diagnostics endpoint unavailable; carrying on without it` (a warning, not a failure) | `DIAGNOSTICS_PORT` is already in use. The bot carries on without the diagnostics endpoint; choose another port, or leave the variable empty. |
-| `…/pack.json is invalid`, `duplicate station slug …`, `"…" is used by both …`, `source … references unknown station …`, `Two packs use the id …` | A station pack is invalid, either a bundled one after a local edit or one in `EXTRA_PACKS_DIR`. The message names the pack, file and field. Run `pnpm validate-catalogue --pack <dir>` (after `pnpm build`). See [catalog/README.md](../catalog/README.md). |
+| `…/pack.json is invalid`, `duplicate station slug …`, `"…" is used by both …`, `source … references unknown station …`, `Two packs use the id …`, `this pack needs Radio Bot … or later` | One of your own packs in `EXTRA_PACKS_DIR` (or a pack folder added to `catalog/packs/` by hand) is invalid. The message names the pack, file and field. Run `node scripts/validate-catalogue.ts --pack <dir>`. See [catalog/README.md](../catalog/README.md). Installed packs never stop start-up: see [Station packs](#station-packs). |
 | The container keeps restarting with `Fatal: …` about the token, or the healthcheck reports `not connected to Discord` | Wrong or reset token (reset it in the Developer Portal and update `.env`, or run `radio-bot config`), or no outbound access to Discord. |
 | The healthcheck reports `ffmpeg unavailable or missing libopus` | Outside Docker: install FFmpeg with `libopus`, or point `FFMPEG_PATH`/`FFPROBE_PATH` at a build that has it (`ffmpeg -hide_banner -encoders \| grep libopus`). The Docker image always has it. |
+
+## Station packs
+
+- **"No stations yet. An admin can add station packs with `/radio packs library`…"**: no station packs are installed. Radio Bot ships with none. Add some with `radio-bot packs browse` and `radio-bot packs add <pack>` on the bot's machine, or, as the bot's operator, with `/radio packs library` in Discord. See [install.md → Adding and removing stations](install.md#adding-and-removing-stations).
+- **The stations of a pack disappeared after updating from 1.1.0 or earlier:** those versions included a pack, and newer ones get it from the pack library instead. At start-up the bot reinstalls every pack its database has stations from but no longer has, before anything plays. If it couldn't reach the library, the log says `could not reach the pack library to restore missing station packs; will try again later`, and the daily check tries again. To do it now, run `radio-bot packs add <pack>` (the pack ID is the first part of the station IDs, before the `:`). A pack you removed on purpose is never put back by itself.
+- **"Couldn't reach the pack library: …"** (Discord), or a network error from `radio-bot packs`: the bot's host couldn't reach the library on `github.com`. Check its outbound HTTPS. `/radio packs installed` still lists the installed packs, without update information.
+- **"…only the bot owner can install, update or remove them."**: installing, updating or removing a pack affects every server, so it needs an admin who is also the bot's operator: listed in `OPERATOR_USER_IDS`, or the owner of the bot's Discord application (or a member of its team). See [permissions.md](permissions.md#access-levels).
+- **"This bot has no data folder, so it can't install station packs."**: `DATABASE_PATH` is `:memory:`, so there is nowhere to keep installed packs. Use a database file.
+- **"Too many station pack changes in a short time"** (`RATE_LIMITED`): the whole installation accepts 10 pack changes an hour from Discord.
+- **"The pack library has no pack called …"**: the pack ID is wrong, or the pack has been withdrawn from the library. `radio-bot packs browse` lists what there is.
+- **A pack is listed under _Not loaded_** in `/radio packs installed` (also as `Not loaded: …` in `/radio stats` and `radio-bot packs list`), and the log says `installed station pack skipped`: an installed pack's files failed their checks, needed a newer Radio Bot, or clash with another pack (the same pack ID or source ID as one of your `EXTRA_PACKS_DIR` packs, for example). The reason is shown next to it. The bot carries on without that pack. Update the pack with `radio-bot packs update <pack>`, update Radio Bot, or remove the pack, whichever the reason calls for.
+- **A notice says a pack "was withdrawn from the pack library … and has been removed."**: the library took the pack out, for example at the request of the radio company, and the bot removed it at its daily check, stopping anything that was playing from it. Favourites and queues are kept but its stations are hidden. Packs you installed from another library with `--from` are never removed this way.
+- **`radio-bot packs` says "Couldn't tell Radio Bot to load the change."**: the pack was changed, but sending the running bot `SIGHUP` failed. Run `radio-bot restart` to load it.
+- **An update is available but nothing changed:** packs never update by themselves. Press **Update** on the pack's card in `/radio packs installed`, or run `radio-bot packs update`.
+
+`PACK_INVALID` is the reason code for a pack or pack list the bot refused. Nothing is written, and an installed copy is left as it was:
+
+| Message | Meaning |
+|---|---|
+| `The download of "…" doesn't match the library's fingerprint, so it was not used.` | The bundle's SHA-256 differs from the one in the library's index: the download was cut short or changed on the way, or the library is being republished. Try again later. |
+| `The download of "…" is not a pack.` / `… holds a different pack (…)` | The library sent something other than the bundle of the pack asked for. Try again later, and report it to the library if it persists. |
+| `The pack library sent something that is not a pack list.` / `The pack library's list is not valid (at …).` | The library's `index.json` couldn't be read. With `--from`, check the address. |
+| `…/pack.json is invalid …`, `this pack needs Radio Bot … or later`, or another pack check | The pack failed the same checks as a pack folder, or needs a newer Radio Bot than this one. Update Radio Bot. |
+| `A pack called "…" is already loaded from EXTRA_PACKS_DIR …` / `Source id "…" is used by packs …` | The pack clashes with a pack you already have. Rename or remove your own pack, or don't install this one. |
 
 ## Catalogue sync
 
 - **"…: the sync failed. …"**: the pack's official list couldn't be fetched, or looked implausible (fewer than 10 names, or fewer than half the pack's stations for small packs). Nothing changed, and existing entries are kept. `/radio list pack:<pack>` shows "list may be out of date" if no sync has succeeded within three intervals.
 - **"None of the enabled station packs has an official list to check against."**: none of the enabled packs declares `sync` in its `pack.json`.
 - **"That pack is either not enabled or has no official list to check against."**: the pack you named is disabled, or doesn't declare `sync`.
-- **"Added: … (no stream yet: they can't play until a reviewed source is added to the pack)"**: new stations appeared on the official list. The sync deliberately never collects stream URLs, so someone has to add the station's sources to the pack's `sources.json` through a reviewed change.
+- **"Added: … (no stream yet: they can't play until a reviewed source is added to the pack)"**: new stations appeared on the official list. The sync deliberately never collects stream URLs, so someone has to add the station's sources to the pack's `sources.json` through a reviewed change (for a library pack, in the library), after which the pack is updated.
 - **"No longer on the official list: … (kept here, so favourites still work)"**: the station was kept (marked `missing_from_official`), and favourites are intact.
 - Long lists show the first 15 names and how many more there are.
 
@@ -202,6 +227,8 @@ A `/radio stop`, a `/radio leave` or a moderator disconnecting the bot always pr
 | `Radio Bot still isn't ready after 90 seconds.` | The bot is running but hasn't reported itself healthy (connected to Discord, database working, FFmpeg ready). Check `radio-bot logs` and the host's connection to Discord. |
 | `Files in … were edited, so updating could overwrite them.` | Move your changes into `compose.override.yaml`, run the `git … checkout -- .` command the message shows (it discards the edits), and update again. |
 | `Couldn't reach GitHub to check for updates.` | The host can't reach GitHub. Check its connection and try again. |
+| `Couldn't reach the pack library just now. Try later with: radio-bot packs browse` (during `install`) | The installer couldn't show the pack library, so no packs were added. Check the connection, then run `radio-bot packs browse` and `radio-bot packs add <pack>`. |
+| `Radio Bot isn't running. The change takes effect when it starts: radio-bot start` (from `packs`) | Expected: the pack was changed while the bot was stopped, and is loaded when it starts. |
 | `Couldn't back up the database, so nothing was changed.` (during `update`) | The update stopped before changing anything. The lines above say why; fix that, or check `radio-bot logs`, then try again. |
 | `The last update to … didn't finish` (from `update` or `status`) | An earlier update switched versions but stopped before the bot ran the new one, for example because the download failed. `radio-bot update` finishes it. |
 | `Radio Bot isn't running, so no new backup can be made.` (from `backup`) | Expected when the bot can't start. The backups it made earlier are still copied to the `backups` folder. If it then says `Couldn't copy the backups out of the bot's data`, the bot hasn't made any backups yet. `There is no Radio Bot container to copy backups from` means the bot has never been started on this install: run `radio-bot start`. |

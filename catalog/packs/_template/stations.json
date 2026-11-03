@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "stations": [
+    {
+      "slug": "example-hits",
+      "displayName": "Example Hits",
+      "externalId": "hits-001",
+      "aliases": ["Example Radio Hits", "Example Hit Radio"],
+      "category": "music",
+      "tags": ["pop", "hits", "chart"],
+      "order": 1,
+      "officialPage": "https://www.example.org/hits",
+      "catalogueStatus": "active",
+      "catalogueLastSeen": "2026-11-03",
+      "description": "The network's main music station.",
+      "country": null,
+      "region": null
+    },
+    {
+      "slug": "example-news",
+      "displayName": "Example News",
+      "externalId": "news-002",
+      "aliases": ["Example Radio News"],
+      "category": "news",
+      "tags": ["news", "talk"],
+      "order": 2,
+      "officialPage": "https://www.example.org/news",
+      "catalogueStatus": "active",
+      "catalogueLastSeen": "2026-11-03",
+      "description": null,
+      "country": null,
+      "region": null
+    },
+    {
+      "slug": "example-county-sound",
+      "displayName": "Example County Sound",
+      "externalId": null,
+      "aliases": [],
+      "category": "music",
+      "tags": ["local", "pop"],
+      "order": 3,
+      "officialPage": null,
+      "catalogueStatus": "active",
+      "catalogueLastSeen": "2026-11-03",
+      "description": "A local station that only serves part of the network's area.",
+      "country": "GB",
+      "region": "Example County"
+    }
+  ]
+}

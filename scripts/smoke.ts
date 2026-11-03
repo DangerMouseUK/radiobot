@@ -5,7 +5,9 @@
  *
  *   node dist/scripts/smoke.js          # FFMPEG_PATH / FFPROBE_PATH, else ffmpeg / ffprobe on PATH
  *
- * Opens a temporary database (migrations run) and seeds the bundled packs, checkpoints it on the
+ * Opens a temporary database (migrations run) and seeds the template pack (the bot ships no
+ * station packs; catalog/packs/_template is a complete example), loads it again on the pack worker
+ * thread as an installed pack would be, checkpoints the database on the
  * worker thread, parses a small synthetic station list on the parse worker, encodes two seconds of
  * a synthetic tone to Ogg Opus with the live encoder's arguments, and checks a heartbeat with the
  * healthcheck script. Prints one line per step; exits 1 at the first step that fails.
@@ -17,13 +19,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildEncodeArgs, planEncoder } from '../src/audio/encoder.ts';
 import { checkFfmpeg, ProcessRegistry, runWithInput } from '../src/audio/ffmpeg.ts';
-import { PackRegistry, seedPacks } from '../src/catalogue/packs.ts';
+import { loadPackInWorker } from '../src/catalogue/pack-manager.ts';
+import { loadPack, PackRegistry, seedPacks } from '../src/catalogue/packs.ts';
 import { parseOfficialListInWorker } from '../src/catalogue/sync.ts';
 import { type HealthSnapshot, HeartbeatWriter, heartbeatPath } from '../src/observability/health.ts';
 import { createLogger } from '../src/observability/logger.ts';
 import { WalCheckpointer } from '../src/persistence/checkpoint.ts';
 import { Db, loadMigrations } from '../src/persistence/db.ts';
 import { StationRepository } from '../src/persistence/repositories/stations.ts';
+import { rootPath } from '../src/shared/paths.ts';
 import { siblingModule } from '../src/shared/workers.ts';
 
 const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
@@ -67,15 +71,22 @@ function healthcheck(): Promise<{ code: number; out: string }> {
 const RUN = { owner: 'smoke', kind: 'smoke', timeoutMs: 30_000 };
 
 try {
-  await step('database: migrations and bundled packs', () => {
+  const template = rootPath('catalog', 'packs', '_template');
+  await step('database: migrations and the template pack', () => {
     db = new Db(dbPath);
     db.migrate();
     const latest = loadMigrations().at(-1)!.version;
     check(db.schemaVersion() === latest, `schema version ${db.schemaVersion()}, expected ${latest}`);
-    const packs = PackRegistry.load(null);
+    const packs = new PackRegistry([...PackRegistry.load(null).packs, loadPack(template)]);
     const seed = db.transaction(() => seedPacks(new StationRepository(db!), packs));
-    check(packs.packs.length > 0, 'no station packs were found');
+    check(seed.stationsInserted > 0, 'the template pack has no stations');
     return `schema v${latest}, ${seed.packs} pack(s), ${seed.stationsInserted} stations`;
+  });
+
+  await step('station pack check on the pack worker thread', async () => {
+    const pack = await loadPackInWorker(template);
+    check(pack.stations.length > 0 && pack.contentHash.length === 64, 'the worker returned no pack');
+    return `${pack.meta.id}: ${pack.stations.length} stations`;
   });
 
   await step('WAL checkpoint on the worker thread', async () => {

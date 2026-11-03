@@ -102,11 +102,11 @@ describe('signed component IDs (§6 button rules)', () => {
   const ids = new ComponentIds('secret-123', () => now);
 
   it('round-trips station ids and fits Discord limits', () => {
-    const id = ids.make('guild-1', 'play', 'fg:fg-amsterdam-dance-event');
+    const id = ids.make('guild-1', 'play', 'demo:demo-summer-dance-festival');
     expect(id.length).toBeLessThanOrEqual(100);
     expect(ids.parse('guild-1', id)).toEqual({
       action: 'play',
-      arg: 'fg:fg-amsterdam-dance-event',
+      arg: 'demo:demo-summer-dance-festival',
       expired: false,
     });
   });

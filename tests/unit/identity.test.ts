@@ -12,9 +12,9 @@ import {
 
 const station = (id: string, name: string, aliases: string[] = []): Station => ({
   id,
-  provider: 'fg',
+  provider: 'demo',
   guildId: null,
-  slug: id.slice(3),
+  slug: id.slice(id.indexOf(':') + 1),
   externalId: null,
   displayName: name,
   aliases,
@@ -33,21 +33,21 @@ const station = (id: string, name: string, aliases: string[] = []): Station => (
   retiredAt: null,
 });
 
-const djRadio = station('fg:fg-dj-radio', 'FG DJ RADIO', ['Radio FG', 'FG']);
-const dance = station('fg:fg-dance', 'FG DANCE');
-const chic = station('fg:fg-chic', 'FG CHIC');
+const djRadio = station('demo:demo-radio', 'Demo Radio', ['Radio Demo', 'Demo']);
+const dance = station('demo:demo-dance', 'Demo Dance');
+const chic = station('demo:demo-chic', 'Demo Chic');
 const all = [djRadio, dance, chic];
 
 describe('metadata signal', () => {
   it('treats brand labels as inconclusive', () => {
-    expect(metadataSignal(dance, all, 'Radio FG').verdict).toBe('inconclusive');
-    expect(metadataSignal(chic, all, 'FG').verdict).toBe('inconclusive');
+    expect(metadataSignal(dance, all, 'Radio Demo').verdict).toBe('inconclusive');
+    expect(metadataSignal(chic, all, 'Demo').verdict).toBe('inconclusive');
   });
   it('supports when the stream names this station', () => {
-    expect(metadataSignal(dance, all, 'FG DANCE - live').verdict).toBe('supports');
+    expect(metadataSignal(dance, all, 'Demo Dance - live').verdict).toBe('supports');
   });
   it('contradicts only when it names a different catalogue station', () => {
-    expect(metadataSignal(djRadio, all, 'FG DANCE').verdict).toBe('contradicts');
+    expect(metadataSignal(djRadio, all, 'Demo Dance').verdict).toBe('contradicts');
     expect(metadataSignal(djRadio, all, 'Some Icecast Server').verdict).toBe('inconclusive');
   });
 });
@@ -66,11 +66,11 @@ describe('identity decision (FR-005)', () => {
     expect(d.confidence).toBe('medium');
   });
 
-  it('never silently verifies an auto-discovered feed (the "HD stream is really FG DANCE" case)', () => {
+  it('never silently verifies an auto-discovered feed (the "HD stream is really Demo Dance" case)', () => {
     expect(decideIdentity(discovered, { verdict: 'inconclusive', detail: '' }, null).status).toBe(
       'unverified',
     );
-    expect(decideIdentity(discovered, metadataSignal(djRadio, all, 'FG DANCE'), null).status).toBe(
+    expect(decideIdentity(discovered, metadataSignal(djRadio, all, 'Demo Dance'), null).status).toBe(
       'mismatch',
     );
   });

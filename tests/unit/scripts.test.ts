@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { writeHeartbeat } from '../../src/observability/health.ts';
 import { Db } from '../../src/persistence/db.ts';
 import { projectRoot } from '../../src/shared/paths.ts';
+import { FIXTURE_PACKS_DIR } from '../helpers.ts';
 
 /** Runs an operator script from source (Node strips the types) with a clean environment. */
 function run(script: string, args: string[] = [], env: Record<string, string> = {}) {
@@ -29,12 +30,12 @@ const tempDir = () => {
 };
 
 describe('scripts/validate-catalogue', () => {
-  it('validates the built-in packs offline', () => {
-    const r = run('validate-catalogue.ts');
+  it('validates the built-in packs and EXTRA_PACKS_DIR offline', () => {
+    const r = run('validate-catalogue.ts', [], { EXTRA_PACKS_DIR: FIXTURE_PACKS_DIR });
     expect(r.err).toBe('');
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/Pack "fg" \(Radio FG\) OK: 63 stations, \d+ sources/);
-    expect(r.out).toMatch(/63 stations with at least one enabled source/);
+    expect(r.out).toMatch(/Pack "demo" \(Radio Demo\) OK: 26 stations, \d+ sources/);
+    expect(r.out).toMatch(/26 stations with at least one enabled source/);
     expect(r.out).not.toMatch(/No enabled source/);
   });
 
@@ -125,6 +126,21 @@ describe('scripts/register-commands', () => {
 });
 
 describe('scripts/backup', () => {
+  it('runs the packs command from the command line, offline', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'radiobot-packs-cli-'));
+    try {
+      const help = run('packs.ts', ['help']);
+      expect(help.code).toBe(0);
+      expect(help.out).toMatch(/Manage Radio Bot's station packs/);
+      const count = run('packs.ts', ['count'], { DATABASE_PATH: join(dir, 'radio-bot.sqlite') });
+      expect(count.code).toBe(0);
+      expect(count.out.trim()).toBe('0');
+      expect(run('packs.ts', ['frobnicate']).code).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes a manual backup next to the database', () => {
     const dir = tempDir();
     const dbPath = join(dir, 'radio-bot.sqlite');

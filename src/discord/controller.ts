@@ -22,6 +22,7 @@ import {
   RESTJSONErrorCodes,
   StringSelectMenuBuilder,
 } from 'discord.js';
+import type { LibraryIndex } from '../catalogue/pack-library.ts';
 import { resolveStation, searchStations } from '../catalogue/search.ts';
 import { AVAILABILITY_LABEL, type IdentityStatus, type Station } from '../catalogue/types.ts';
 import {
@@ -70,6 +71,12 @@ import {
   stateColor,
   stationLine,
 } from './ui/format.ts';
+import {
+  packCardView,
+  packRemoveConfirmView,
+  packsInstalledView,
+  packsLibraryView,
+} from './ui/packs-view.ts';
 import {
   ambiguityView,
   type BrowseState,
@@ -374,6 +381,7 @@ export class RadioController {
     try {
       if (group === 'source') return await this.#sourceGroup(i, sub);
       if (group === 'queue') return await this.#queueGroup(i, sub);
+      if (group === 'packs') return await this.#packsGroup(i, sub);
       switch (sub) {
         case 'browse':
           return await this.#cmdBrowse(i);
@@ -409,8 +417,6 @@ export class RadioController {
           return await this.#cmdRemove(i);
         case 'rescan':
           return await this.#cmdRescan(i);
-        case 'sync':
-          return await this.#cmdSync(i);
         case 'config':
           return await this.#cmdConfig(i);
         case 'export':
@@ -1067,7 +1073,14 @@ export class RadioController {
         },
         {
           name: 'Station packs',
-          value: truncate(packLines.join('\n') || 'No station packs are loaded.', 1024),
+          value: truncate(
+            [
+              ...packLines,
+              // An installed pack that failed its checks is skipped, never half-loaded: say so here.
+              ...ctx.packs.skipped.map((s) => `Not loaded: \`${s.dir}\` (see \`/radio packs installed\`)`),
+            ].join('\n') || 'No station packs are loaded. Add some with `/radio packs library`.',
+            1024,
+          ),
         },
         {
           name: 'Recent problems (repeats grouped)',
@@ -1462,6 +1475,113 @@ export class RadioController {
     await this.#rescan(i, st, i.options.getBoolean('compare') ?? false);
   }
 
+  // ------------------------------------------------------------------ station packs
+
+  /** `/radio packs installed | library | sync`. Viewing is for admins; changing packs is for operators too. */
+  async #packsGroup(i: Cmd, sub: string): Promise<void> {
+    if (sub === 'sync') return this.#cmdSync(i);
+    const a = this.#auth(i, 'admin');
+    if (!a.ok) return this.#deny(i, a.reason);
+    await i.deferReply({ flags: EPHEMERAL });
+    const pm = this.#ctx.packManager;
+    if (sub === 'installed') {
+      // For "update available": a network wait, never main-thread work. Offline still lists.
+      await pm.index().catch(() => null);
+      await i.editReply(packsInstalledView(this.#ctx, i.guildId));
+      return;
+    }
+    let index: LibraryIndex;
+    try {
+      index = await pm.index();
+    } catch (err) {
+      await i.editReply({
+        embeds: [
+          errorEmbed(
+            `Couldn’t reach the pack library: ${isRadioError(err) ? err.userMessage : 'try again later.'}`,
+          ),
+        ],
+      });
+      return;
+    }
+    await i.editReply(
+      packsLibraryView(this.#ctx, i.guildId, index, {
+        words: i.options.getString('search'),
+        country: i.options.getString('country'),
+      }),
+    );
+  }
+
+  /** Changing packs affects every server this bot is in, so it also needs an operator. */
+  #packChangeDenied(i: Comp): string | null {
+    const a = this.#auth(i, 'admin');
+    if (!a.ok) return a.reason;
+    if (!isOperator(this.#ctx, i.user.id))
+      return 'Station packs are shared by every server this bot is in, so only the bot owner can install, update or remove them.';
+    if (!this.#ctx.packManager.canInstall)
+      return 'This bot has no data folder, so it can’t install station packs.';
+    return null;
+  }
+
+  async #packComponent(i: Comp, action: 'pksel' | 'pkinst' | 'pkrm' | 'pkrmok', arg: string): Promise<void> {
+    const pm = this.#ctx.packManager;
+    const entryFor = async (id: string) => {
+      const index = pm.cachedIndex() ?? (await pm.index().catch(() => null));
+      return index?.packs.find((p) => p.id === id) ?? null;
+    };
+    if (action === 'pksel') {
+      const a = this.#auth(i, 'admin');
+      if (!a.ok) return this.#deny(i, a.reason);
+      const id = i.isStringSelectMenu() ? i.values[0] : null;
+      if (!id) return this.#deny(i, 'Choose a pack from the list.');
+      await i.deferUpdate();
+      await i.editReply(packCardView(this.#ctx, i.guildId, id, await entryFor(id)));
+      return;
+    }
+    const denied = this.#packChangeDenied(i);
+    if (denied) return this.#deny(i, denied);
+    if (action === 'pkrm') {
+      await i.update(packRemoveConfirmView(this.#ctx, i.guildId, arg));
+      return;
+    }
+    this.#rate(this.#ctx.limits.packGlobal, 'global', 'station pack changes');
+    if (action === 'pkrmok') {
+      await i.deferUpdate();
+      let note: string;
+      try {
+        note = (await pm.remove(arg))
+          ? 'Removed. Its stations are hidden everywhere; favourites come back if it is installed again.'
+          : 'That pack wasn’t installed.';
+      } catch (err) {
+        note = isRadioError(err) ? err.userMessage : 'Removing the pack failed; the log has the details.';
+      }
+      await i.editReply(packCardView(this.#ctx, i.guildId, arg, await entryFor(arg), note));
+      return;
+    }
+    // Install or update: a background job that waits for any stream that is starting, so the
+    // message says so now and is updated when it finishes.
+    const entry = await entryFor(arg);
+    await i.update(
+      packCardView(
+        this.#ctx,
+        i.guildId,
+        arg,
+        entry,
+        'Working on it in the background, without interrupting any music. This message updates when it’s done.',
+      ),
+    );
+    let note: string;
+    try {
+      const r = await pm.install(arg);
+      note = r.previousVersion
+        ? `Updated from version ${r.previousVersion} to ${r.version}: ${r.stations} stations.`
+        : `Installed: ${r.stations} stations, ready to play now.`;
+    } catch (err) {
+      this.#ctx.logger.warn({ err: safeErr(err), pack: arg }, 'station pack install failed');
+      note = isRadioError(err) ? err.userMessage : 'Installing the pack failed; the log has the details.';
+    }
+    await i.editReply(packCardView(this.#ctx, i.guildId, arg, entry, note)).catch(() => {});
+  }
+
   async #cmdSync(i: Cmd): Promise<void> {
     const a = this.#auth(i, 'admin');
     if (!a.ok) return this.#deny(i, a.reason);
@@ -1764,7 +1884,7 @@ export class RadioController {
                 'Custom stations: `/radio add` · `/radio edit` · `/radio remove`',
                 'Sources: `/radio source pin|prefer|auto|verify` · `/radio rescan`',
                 '-# `/radio source`: `prefer` tries a source first · `pin` also lets only admins switch it · `auto` lets the bot choose · `verify` records if a source is the right station',
-                'Packs: `/radio sync` checks them against their official lists',
+                'Station packs: `/radio packs library` finds and installs them · `/radio packs installed` updates or removes them · `/radio packs sync` checks them against their official lists',
                 'Settings file: `/radio export` · `/radio import`',
                 '`/radio stats`: live stream and connection figures, shown only to you',
               ),
@@ -2015,6 +2135,11 @@ export class RadioController {
           await i.editReply(await this.#statsView(i.guildId));
           return;
         }
+        case 'pksel':
+        case 'pkinst':
+        case 'pkrm':
+        case 'pkrmok':
+          return await this.#packComponent(i, action, arg);
         case 'close': {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);

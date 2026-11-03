@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BUILTIN_PACKS_DIR, discoverPackDirs } from '../../src/catalogue/packs.ts';
 import { writeHeartbeat } from '../../src/observability/health.ts';
 import { Db } from '../../src/persistence/db.ts';
 import type { ProbeOutcome } from '../../src/streams/probe.ts';
@@ -213,16 +214,20 @@ describe('validate-catalogue (in process)', () => {
     const r = await runScript('validate-catalogue.ts');
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/^Pack "mypack" \(My Pack\) OK: 3 stations/m);
-    // The bundled pack is validated too.
-    expect(r.out.match(/^Pack "/gm)!.length).toBeGreaterThan(1);
+    // Any built-in packs are validated too, and the template pack.
+    expect(r.out.match(/^Pack "/gm)!.length).toBe(discoverPackDirs(BUILTIN_PACKS_DIR()).length + 2);
+    expect(r.out).toMatch(/^Pack "template" /m);
   });
 
-  it('validates only the bundled packs without EXTRA_PACKS_DIR, even when --pack has no value', async () => {
+  it('validates the bundled packs and the template without EXTRA_PACKS_DIR, even when --pack has no value', async () => {
     vi.stubEnv('EXTRA_PACKS_DIR', '');
     const r = await runScript('validate-catalogue.ts', ['--pack']);
     expect(r.code).toBe(0);
     expect(r.err).toBe('');
-    expect(r.out).toMatch(/^Pack "[a-z0-9-]+" \(.+\) OK: \d+ stations/);
+    // One line per built-in pack (there may be none) plus the template, each reported as OK.
+    const lines = r.out.split('\n').filter((l) => l.startsWith('Pack "'));
+    expect(lines).toHaveLength(discoverPackDirs(BUILTIN_PACKS_DIR()).length + 1);
+    for (const l of lines) expect(l).toMatch(/^Pack "[a-z0-9-]+" \(.+\) OK: \d+ stations/);
     expect(r.out).not.toContain('mypack');
   });
 

@@ -29,6 +29,8 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
+  // `radio-bot packs` sends SIGHUP after changing the installed packs: load them without a restart.
+  process.on('SIGHUP', () => void app.reloadPacks());
   process.on('unhandledRejection', (err) => logger.error({ err: safeErr(err) }, 'unhandled rejection'));
   process.on('uncaughtException', (err) => {
     logger.fatal({ err: safeErr(err) }, 'uncaught exception');

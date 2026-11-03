@@ -10,6 +10,7 @@ const fake = vi.hoisted(() => ({
   start: async (): Promise<void> => {},
   stop: async (_reason: string): Promise<void> => {},
   stops: [] as string[],
+  reloads: 0,
 }));
 
 vi.mock('../../src/app.ts', () => ({
@@ -21,6 +22,9 @@ vi.mock('../../src/app.ts', () => ({
       stop: (reason: string) => {
         fake.stops.push(reason);
         return fake.stop(reason);
+      },
+      reloadPacks: async () => {
+        fake.reloads++;
       },
     };
   },
@@ -36,6 +40,7 @@ beforeEach(() => {
   handlers = new Map();
   fake.configs.length = 0;
   fake.stops.length = 0;
+  fake.reloads = 0;
   fake.start = async () => {};
   fake.stop = async () => {};
   vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
@@ -47,7 +52,7 @@ beforeEach(() => {
   }) as never);
   const on = process.on.bind(process);
   vi.spyOn(process, 'on').mockImplementation(((event: string, fn: (...args: unknown[]) => void) => {
-    if (['SIGTERM', 'SIGINT', 'unhandledRejection', 'uncaughtException'].includes(event)) {
+    if (['SIGTERM', 'SIGINT', 'SIGHUP', 'unhandledRejection', 'uncaughtException'].includes(event)) {
       handlers.set(event, fn);
       return process;
     }
@@ -100,6 +105,7 @@ describe('entry point', () => {
     expect(started).toBe(true);
     expect((fake.configs[0] as AppConfig).applicationId).toBe('123456789012345678');
     expect([...handlers.keys()].sort()).toEqual([
+      'SIGHUP',
       'SIGINT',
       'SIGTERM',
       'uncaughtException',
@@ -118,6 +124,14 @@ describe('entry point', () => {
     expect(exits).toEqual([]);
     finish();
     await vi.waitFor(() => expect(exits).toEqual([0]));
+  });
+
+  it('reloads the installed station packs on SIGHUP, without stopping', async () => {
+    await runMain();
+    handlers.get('SIGHUP')!();
+    expect(fake.reloads).toBe(1);
+    expect(fake.stops).toEqual([]);
+    expect(exits).toEqual([]);
   });
 
   it('stops on SIGINT too', async () => {

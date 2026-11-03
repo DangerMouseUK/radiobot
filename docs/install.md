@@ -133,13 +133,16 @@ If you don't have a Linux machine to hand, Radio Bot can run inside WSL, the Lin
 3. When it asks for the **Application ID**, paste the number you copied in step 1 and press **Enter**.
 4. When it asks for the **bot token**, paste the token and press **Enter**. Nothing appears on screen while you paste it; that's normal, and keeps it private. If either value doesn't look right, the installer says so and asks again.
 5. The installer now downloads Radio Bot (about 1 GB). It may look as if nothing is happening for a few minutes; let it work. If there's no ready-made download for your version, it says `building it on this machine instead`. Building takes a few minutes the first time, and longer on a Raspberry Pi.
-6. It starts the bot, adds the `radio-bot` command you'll use later, and waits up to 90 seconds for the bot to connect to Discord.
+6. It starts the bot, adds the `radio-bot` command you'll use later, and waits up to 90 seconds for the bot to connect to Discord. You should see `✔ Radio Bot is online.`
+7. **Add some stations.** Radio Bot comes with no stations. They come in **station packs**: lists of one radio company's stations, kept in Radio Bot's official pack library online. On a first install, the installer shows `==> Add some stations` and asks `See the station packs you can add now? [Y/n]`.
+   - Press **Enter** (the answer is yes). It lists the packs you can add. Each line starts with the pack's name in lower case, such as `mypack`, followed by its full name, how many stations it has, its country and the company it belongs to.
+   - When it asks `Packs to add, separated by spaces (press Enter to skip):`, type the names of the packs you want, for example `mypack otherpack`, and press **Enter**. You should see `Installed …` for each one.
+   - If you'd rather choose later, just press **Enter**. You can add packs at any time; see [Adding and removing stations](#adding-and-removing-stations).
+   - If you see `Couldn't reach the pack library just now`, the computer couldn't reach GitHub, where the library is kept. Carry on, and add packs later.
 
 When it has finished, you should see:
 
 ```text
-✔ Radio Bot is online.
-
 ==> Last step: invite the bot to your Discord server
 ```
 
@@ -152,7 +155,7 @@ followed by an invite link. Keep the terminal open for the next step.
 - **"permission denied" when talking to Docker, on Linux:** the installer gets round this by using `sudo`, so it may ask for your password. To stop that, add yourself to the `docker` group with `sudo usermod -aG docker $USER`, then log out and back in.
 - **It asks for your computer password:** that's `sudo`. It may need it to set up Docker on Linux, or to add the `radio-bot` command to the `/usr/local/bin` folder (common on a Mac). Type the password you sign in with and press **Enter**.
 
-It is safe to run the installer again at any time. If Radio Bot is already installed, it checks that installation, keeps your settings and starts the bot.
+It is safe to run the installer again at any time. If Radio Bot is already installed, it checks that installation, keeps your settings and starts the bot. It only offers station packs again if none are installed.
 
 ## 3. Invite the bot to your server
 
@@ -189,6 +192,8 @@ In your Discord server:
 2. In any text channel, type `/radio play`. Start typing the name of a station, pick it from the list that appears, and press **Enter**. Or type `/radio browse` to pick from the full list.
 3. The bot joins your voice channel and starts playing. It posts a card showing what's playing, with buttons to control it. The first time a station plays, the bot checks its streams first, which can take a few seconds.
 
+**If the list of stations is empty** and the bot says `No stations yet`, no station packs are installed. Add some as described in [Adding and removing stations](#adding-and-removing-stations).
+
 **If `/radio` doesn't appear** when you type it, or the bot doesn't play, see [If something goes wrong](#if-something-goes-wrong).
 
 Useful next steps:
@@ -209,6 +214,8 @@ Type these commands in a terminal on the computer where you installed Radio Bot.
 | `radio-bot status` | Shows the version, whether the bot is running and healthy, and whether an update is available. It also tells you if an update didn't finish |
 | `radio-bot logs` | Shows the bot's last 200 log lines, then keeps showing new ones as they happen. Press **Ctrl+C** to stop watching; the bot keeps running |
 | `radio-bot stop` · `radio-bot start` · `radio-bot restart` | Stops, starts or restarts the bot. A restart also applies any changes to the settings file |
+| `radio-bot packs` | Lists the station packs you have installed, and says when one has an update. See [Adding and removing stations](#adding-and-removing-stations) |
+| `radio-bot packs browse` · `radio-bot packs add <pack>` · `radio-bot packs update` · `radio-bot packs remove <pack>` | Shows the packs you can add, adds one, updates the ones you have, or removes one |
 | `radio-bot config` | Opens the settings file in a text editor. See [Changing settings](#changing-settings) |
 | `radio-bot invite` | Prints the link that adds the bot to a server |
 | `radio-bot backup` | Saves a copy of the bot's database (its settings, favourites and custom stations), and copies it, with the backups the bot made earlier, into the `backups` folder in `~/radio-bot`. See [Backups](#backups) |
@@ -247,6 +254,41 @@ You should see `Radio Bot is online.` again. If you changed the settings file so
 
 **Your own changes to the Docker setup** belong in a file called `compose.override.yaml` in the `~/radio-bot` folder, never in `compose.yaml` itself. An update refuses to run over files you've edited, so it never quietly undoes your changes.
 
+### Adding and removing stations
+
+Stations come in **station packs**. Each pack lists one radio company's stations. The packs are kept in Radio Bot's official pack library, where every pack is checked before it is added. Adding, updating or removing a pack doesn't interrupt anything that is playing, and you don't need to restart the bot.
+
+**To add a pack:**
+
+1. See what there is:
+
+   ```bash
+   radio-bot packs browse
+   ```
+
+   Each line starts with the pack's short name, such as `mypack`, then its full name, how many stations it has, its country and the company it belongs to. To narrow the list, add a word, a country or a language, for example `radio-bot packs browse jazz`, `radio-bot packs browse --country GB` or `radio-bot packs browse --language fr`. Packs you already have say `(installed)`.
+2. Add one or more packs by their short names:
+
+   ```bash
+   radio-bot packs add mypack
+   ```
+
+   You should see `Installed …` with the number of stations, then `Radio Bot is loading the change now. Nothing that is playing is interrupted.` The new stations appear in `/radio play` and `/radio browse` shortly afterwards.
+
+   Some packs are grouped into **collections**, listed at the end of `radio-bot packs browse`. To add a whole collection, type `radio-bot packs add --collection` followed by its name.
+
+**To see what you have:** run `radio-bot packs`. It lists your packs with their versions and the number of stations, and says `update available` next to any pack that has a newer version.
+
+**To update your packs:** run `radio-bot packs update`. Packs never update by themselves, so that nothing changes without you knowing.
+
+**To remove a pack:** run `radio-bot packs remove mypack`. Its stations disappear from every Discord server the bot is in, and anything playing one of them stops. Your favourites and queues are kept, so they come back if you add the pack again. A pack you removed stays removed.
+
+If the bot isn't running when you change packs, it says `The change takes effect when it starts`.
+
+**From Discord:** the owner of the bot's Discord application (you, if you made it in [step 1](#1-create-your-discord-bot)) can do the same in any server where they are an admin. `/radio packs library` shows the packs you can add, with a menu to pick one and an **Install** button. `/radio packs installed` shows the packs you have, with **Update** and **Remove** buttons. Other admins can look, but can't change anything, because packs are shared by every server the bot is in. To let someone else change packs too, add their Discord user ID to `OPERATOR_USER_IDS` in the settings file (see [Changing settings](#changing-settings)).
+
+**Once a day** the bot checks the library. If a pack you have has been taken out of the library (for example because the radio company asked), the bot removes it and says so in `/radio packs installed`.
+
 ### Updating
 
 Run `radio-bot update` now and then. `radio-bot status` tells you when there's something new, and [CHANGELOG.md](../CHANGELOG.md) says what changed.
@@ -263,6 +305,8 @@ Run `radio-bot update` now and then. `radio-bot status` tells you when there's s
 You should see `Updated v… → v…` at the end.
 
 If an update stops halfway, for example because your internet connection dropped, run `radio-bot update` again and it finishes the job. Until then, `radio-bot status` says `the last update to … didn't finish`.
+
+**Updating from version 1.1.0 or earlier:** those versions came with a station pack built in. Newer versions come with none, so the first time the new version starts, it downloads that pack again from the pack library, before it plays anything. Your favourites, queues and settings keep working. Run `radio-bot packs` afterwards to check that it's there. If the computer couldn't reach GitHub at that moment, the bot tries again later by itself, or you can add the pack yourself with `radio-bot packs add`.
 
 ### Going back to an earlier version
 
@@ -341,6 +385,9 @@ Start with `radio-bot status`, then `radio-bot logs`. The log is technical, but 
 | `/radio` doesn't appear in Discord | Check that `radio-bot status` says `healthy`. Then open the link from `radio-bot invite` again and add the bot to the same server (you don't need to remove it first). Then restart Discord |
 | The bot joins but you hear nothing | Check that the bot isn't server-muted, and that its role can **Speak** in that channel. Try another station with `/radio play` |
 | **"No verified, working source is available"** | That station's streams aren't working right now. Try another station, or ask an admin to run `/radio rescan` on it later |
+| **"No stations yet"** in Discord, or `/radio play` suggests nothing | No station packs are installed. Run `radio-bot packs browse`, then `radio-bot packs add` with the pack's name (see [Adding and removing stations](#adding-and-removing-stations)) |
+| **"Couldn't reach the pack library"** | The computer couldn't reach GitHub, where the pack library is kept. Check its internet connection and try again later |
+| **"…only the bot owner can install, update or remove them"** in Discord | Packs are shared by every server the bot is in, so only the bot's owner can change them. Use `radio-bot packs` on the computer instead, or add your Discord user ID to `OPERATOR_USER_IDS` with `radio-bot config` |
 | **"Files … were edited"** when updating | A file in `~/radio-bot` was changed. Move your changes into `compose.override.yaml`, run the `git … checkout` command the message shows (it undoes the edits), and update again |
 | **"Couldn't reach GitHub to check for updates"** | Check the computer's internet connection, then try again |
 | `radio-bot status` says **"the last update … didn't finish"** | Run `radio-bot update` again to finish it |

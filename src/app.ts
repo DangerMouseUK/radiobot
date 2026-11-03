@@ -12,6 +12,8 @@ import {
 } from 'discord.js';
 import { checkFfmpeg, ProcessRegistry } from './audio/ffmpeg.ts';
 import { CustomStationService } from './catalogue/custom-provider.ts';
+import { PackManager } from './catalogue/pack-manager.ts';
+import { installedPacksDir, PackStore } from './catalogue/pack-store.ts';
 import { PackRegistry, seedPacks } from './catalogue/packs.ts';
 import { CatalogueSync } from './catalogue/sync.ts';
 import { scheduleCatalogueSyncs } from './catalogue/sync-schedule.ts';
@@ -41,6 +43,8 @@ export interface RadioApp {
   ctx: AppContext;
   start(): Promise<void>;
   stop(reason: string): Promise<void>;
+  /** Reads the installed-packs folder again (SIGHUP, after `radio-bot packs` changed it). */
+  reloadPacks(): Promise<void>;
 }
 
 export function createApp(
@@ -60,16 +64,20 @@ export function createApp(
     resumeOnRestart: config.autoResumeDefault,
   });
   const meta = new MetaRepository(db);
-  const packs = PackRegistry.load(config.extraPacksDir, {
-    enabled: config.enabledPacks,
-    disabled: config.disabledPacks,
-  });
+  const installedDir = installedPacksDir(config.databasePath);
+  const packs = PackRegistry.load(
+    config.extraPacksDir,
+    { enabled: config.enabledPacks, disabled: config.disabledPacks },
+    installedDir,
+  );
+  for (const s of packs.skipped) logger.warn(s, 'installed station pack skipped');
   const seed = db.transaction(() => seedPacks(stations, packs));
   logger.info(
     {
       ...seed,
       enabled: packs.enabledPacks().map((p) => p.meta.id),
       loaded: packs.packs.map((p) => p.meta.id),
+      skipped: packs.skipped.length,
     },
     'station packs loaded',
   );
@@ -126,6 +134,28 @@ export function createApp(
     metrics,
   });
   const catalogueSync = new CatalogueSync(stations, meta, http, packs, logger);
+  let syncSchedule: { stop(): void } | null = null;
+  let scheduleSync = (): void => {};
+  const packManager = new PackManager({
+    registry: packs,
+    store: installedDir ? new PackStore(installedDir) : null,
+    stations,
+    transaction: (fn) => db.transaction(fn),
+    http,
+    logger,
+    background: (fn) => sources.runInBackground(fn),
+    // A pack added or removed changes which official lists there are to sync with.
+    onChange: () => {
+      if (syncSchedule) scheduleSync();
+    },
+    // A removed or withdrawn pack's stations stop playing at once (a takedown means now).
+    onGone: (packId) => {
+      for (const s of sessions.all()) {
+        const id = s.status().stationId;
+        if (id && stations.getStation(id)?.provider === packId) s.stop();
+      }
+    },
+  });
   const custom = new CustomStationService(stations, sources, policy, config.maxCustomStationsPerGuild);
   // Persistent secret so control-panel buttons keep verifying after restarts.
   const ids = new ComponentIds(
@@ -148,6 +178,7 @@ export function createApp(
     sessions,
     packs,
     catalogueSync,
+    packManager,
     custom,
     ids,
     notifier,
@@ -224,8 +255,9 @@ export function createApp(
   // Aborted at shutdown, so a scheduled sync that is still running stops writing.
   const shutdownSignal = new AbortController();
 
-  let syncSchedule: { stop(): void } | null = null;
-  const scheduleSync = () => {
+  scheduleSync = () => {
+    syncSchedule?.stop();
+    syncSchedule = null;
     if (!config.catalogSyncEnabled) return;
     syncSchedule = scheduleCatalogueSyncs({
       packIds: catalogueSync.syncablePacks().map((p) => p.meta.id),
@@ -257,6 +289,14 @@ export function createApp(
       );
     }
     logger.debug({ report: generateDependencyReport() }, 'voice dependency report');
+    // Before anything plays: packs this installation uses but no longer has (a pack that used to
+    // ship with the bot, say) come back from the pack library, so favourites and resumes work.
+    // Bounded, so a slow link never holds start-up past the health check's grace period; anything
+    // left is tried again at the daily check.
+    const restoreSignal = AbortSignal.any([shutdownSignal.signal, AbortSignal.timeout(60_000)]);
+    await packManager.restoreMissing(restoreSignal).catch((err: unknown) => {
+      logger.warn({ err: safeErr(err) }, 'restoring missing station packs failed');
+    });
 
     client.on(Events.InteractionCreate, (i) => void controller.handle(i));
     client.on(Events.Error, (err) => logger.error({ err: safeErr(err) }, 'discord client error'));
@@ -342,6 +382,13 @@ export function createApp(
         }
       }, 5 * 60_000),
     );
+    // Once a day: newer pack versions, packs withdrawn from the library, packs still to restore.
+    const checkPacks = () =>
+      void packManager.check(shutdownSignal.signal).catch((err: unknown) => {
+        logger.warn({ err: safeErr(err) }, 'station pack check failed');
+      });
+    timers.push(setTimeout(checkPacks, 15 * 60_000 + Math.random() * 15 * 60_000));
+    timers.push(setInterval(checkPacks, 24 * 3_600_000 + Math.random() * 3_600_000));
     for (const t of timers) t.unref?.();
     scheduleSync();
     if (config.diagnosticsPort) {
@@ -400,5 +447,12 @@ export function createApp(
     db.close();
   }
 
-  return { ctx, start, stop };
+  async function reloadPacks(): Promise<void> {
+    if (stopping) return;
+    await packManager.reload(shutdownSignal.signal).catch((err: unknown) => {
+      logger.warn({ err: safeErr(err) }, 'reloading installed station packs failed');
+    });
+  }
+
+  return { ctx, start, stop, reloadPacks };
 }

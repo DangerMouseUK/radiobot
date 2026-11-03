@@ -11,7 +11,7 @@ const status = (o: Partial<SessionStatus> = {}) =>
   ({
     guildId: 'g1',
     state: 'PLAYING',
-    stationId: 'fg:fg-dj-radio',
+    stationId: 'demo:demo-radio',
     channelId: 'voice-1',
     nowPlaying: null,
     ...o,
@@ -19,12 +19,12 @@ const status = (o: Partial<SessionStatus> = {}) =>
 
 describe('voice channel status text', () => {
   it('names the station and the song or show', () => {
-    expect(voiceStatusText(status({ nowPlaying: meta('Artist - Title') }), station('FG DJ RADIO'))).toBe(
-      '📻 FG DJ RADIO · Artist - Title',
+    expect(voiceStatusText(status({ nowPlaying: meta('Artist - Title') }), station('Demo Radio'))).toBe(
+      '📻 Demo Radio · Artist - Title',
     );
-    expect(voiceStatusText(status(), station('FG DJ RADIO'))).toBe('📻 FG DJ RADIO');
-    expect(voiceStatusText(status({ nowPlaying: meta('fg dj radio') }), station('FG DJ RADIO'))).toBe(
-      '📻 FG DJ RADIO',
+    expect(voiceStatusText(status(), station('Demo Radio'))).toBe('📻 Demo Radio');
+    expect(voiceStatusText(status({ nowPlaying: meta('demo radio') }), station('Demo Radio'))).toBe(
+      '📻 Demo Radio',
     );
   });
 
@@ -33,9 +33,9 @@ describe('voice channel status text', () => {
   });
 
   it('is empty when nothing plays, and fits Discord’s 500-character limit', () => {
-    expect(voiceStatusText(status({ state: 'CONNECTED' }), station('FG DJ RADIO'))).toBe('');
+    expect(voiceStatusText(status({ state: 'CONNECTED' }), station('Demo Radio'))).toBe('');
     expect(voiceStatusText(status(), null)).toBe('');
-    const long = voiceStatusText(status({ nowPlaying: meta('x'.repeat(900)) }), station('FG DJ RADIO'));
+    const long = voiceStatusText(status({ nowPlaying: meta('x'.repeat(900)) }), station('Demo Radio'));
     expect(long).toHaveLength(500);
   });
 });
@@ -49,7 +49,7 @@ describe('voice channel status updater', () => {
     const sent: Array<[string, string]> = [];
     const u = new VoiceStatusUpdater({
       sessions: () => sessions,
-      station: () => station('FG DJ RADIO'),
+      station: () => station('Demo Radio'),
       enabled: () => enabled,
       allowed: () => allowed,
       send: async (channelId, text) => {
@@ -87,8 +87,8 @@ describe('voice channel status updater', () => {
     await t.u.update();
     await t.u.update();
     expect(t.sent).toEqual([
-      ['voice-1', '📻 FG DJ RADIO · A'],
-      ['voice-1', '📻 FG DJ RADIO · B'],
+      ['voice-1', '📻 Demo Radio · A'],
+      ['voice-1', '📻 Demo Radio · B'],
       ['voice-1', ''],
     ]);
   });
@@ -111,7 +111,7 @@ describe('voice channel status updater', () => {
     t.enable(false);
     await t.u.update();
     expect(t.sent).toEqual([
-      ['voice-1', '📻 FG DJ RADIO'],
+      ['voice-1', '📻 Demo Radio'],
       ['voice-1', ''],
     ]);
   });
@@ -125,9 +125,9 @@ describe('voice channel status updater', () => {
     t.set([]);
     await t.u.update();
     expect(t.sent).toEqual([
-      ['voice-1', '📻 FG DJ RADIO'],
+      ['voice-1', '📻 Demo Radio'],
       ['voice-1', ''],
-      ['voice-2', '📻 FG DJ RADIO'],
+      ['voice-2', '📻 Demo Radio'],
       ['voice-2', ''],
     ]);
   });
@@ -140,7 +140,7 @@ describe('voice channel status updater', () => {
     await t.u.clear('g1', 'voice-1');
     await t.u.clear('g1', 'voice-1');
     expect(t.sent).toEqual([
-      ['voice-1', '📻 FG DJ RADIO'],
+      ['voice-1', '📻 Demo Radio'],
       ['voice-1', ''],
     ]);
   });
@@ -152,7 +152,7 @@ describe('voice channel status updater', () => {
     t.allow(false);
     t.set([]);
     await t.u.update();
-    expect(t.sent).toEqual([['voice-1', '📻 FG DJ RADIO']]);
+    expect(t.sent).toEqual([['voice-1', '📻 Demo Radio']]);
   });
 
   it('does not retry a failed request in a loop', async () => {
@@ -165,7 +165,7 @@ describe('voice channel status updater', () => {
     expect(t.sent).toEqual([]);
     t.set([status({ nowPlaying: meta('A') })]);
     await t.u.update();
-    expect(t.sent).toEqual([['voice-1', '📻 FG DJ RADIO · A']]);
+    expect(t.sent).toEqual([['voice-1', '📻 Demo Radio · A']]);
   });
 
   it('never sets a status for a server that left while an earlier request was waiting', async () => {

@@ -177,12 +177,36 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
             .setDescription('Also check unverified sources against a verified one (about 40 s of audio)'),
         ),
     )
-    .addSubcommand((s) =>
-      s
-        .setName('sync')
-        .setDescription('Check station packs against their official station lists (admins)')
-        .addStringOption((o) =>
-          o.setName('pack').setDescription('Only check this pack').setAutocomplete(true).setMaxLength(40),
+    .addSubcommandGroup((g) =>
+      g
+        .setName('packs')
+        .setDescription('Station packs: see, install, update and check them (admins)')
+        .addSubcommand((s) =>
+          s
+            .setName('installed')
+            .setDescription('Show the station packs this bot has, with updates and Remove'),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('library')
+            .setDescription('Find station packs in the official pack library and install them')
+            .addStringOption((o) =>
+              o.setName('search').setDescription('Company, brand, city or pack name').setMaxLength(60),
+            )
+            .addStringOption((o) =>
+              o
+                .setName('country')
+                .setDescription('Country name or two-letter code, e.g. GB')
+                .setMaxLength(60),
+            ),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('sync')
+            .setDescription('Check station packs against their official station lists')
+            .addStringOption((o) =>
+              o.setName('pack').setDescription('Only check this pack').setAutocomplete(true).setMaxLength(40),
+            ),
         ),
     )
     .addSubcommand((s) =>

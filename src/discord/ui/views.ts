@@ -31,6 +31,10 @@ export interface View {
   components: Row[];
 }
 
+/** Shown when the bot has no stations at all: a fresh install starts with no station packs. */
+const NO_STATIONS_YET =
+  'No stations yet. An admin can add station packs with `/radio packs library`, or a custom station with `/radio add`.';
+
 /** Stations per page in browse and list. List lines carry IDs, so 20 keeps a page under 4000 characters. */
 const PAGE_SIZE = 20;
 
@@ -155,7 +159,9 @@ export function browseView(
             ? 'No favourites yet. Press Favourite under a playing station to add one.'
             : state.search
               ? 'No stations match. Press **Change search** to try a shorter or different word, or empty the search to see every station.'
-              : 'No stations match. Try another filter, or run `/radio browse` on its own to see every station.',
+              : visibleStations(ctx, guildId).length === 0
+                ? NO_STATIONS_YET
+                : 'No stations match. Try another filter, or run `/radio browse` on its own to see every station.',
         4000,
       ),
     )
@@ -361,7 +367,7 @@ export function listView(
             ? 'No favourites yet. Press Favourite under a playing station to add one.'
             : scope === 'custom'
               ? 'This server has no custom stations yet. Admins can add one with `/radio add`.'
-              : 'No stations.'),
+              : NO_STATIONS_YET),
         4000,
       ),
     );

@@ -158,16 +158,16 @@ describe('errors', () => {
 
 describe('text helpers', () => {
   it('normalises names for matching (case, diacritics, ampersands, apostrophes, punctuation)', () => {
-    expect(normalizeName('  FG Chic & Chill ')).toBe('fg chic and chill');
-    expect(normalizeName("MAXXIMUM 90's")).toBe('maxximum 90s');
-    expect(normalizeName('FG HÏ IBIZA')).toBe('fg hi ibiza');
+    expect(normalizeName('  Demo Chic & Chill ')).toBe('demo chic and chill');
+    expect(normalizeName("Maximum 90's")).toBe('maximum 90s');
+    expect(normalizeName('Demo HÏ Island')).toBe('demo hi island');
     expect(normalizeName('R&B / Soul!')).toBe('r and b soul');
     expect(normalizeName('---')).toBe('');
   });
 
   it('caps slugs at 64 characters', () => {
     expect(slugify('a'.repeat(100))).toHaveLength(MAX_SLUG_LENGTH - 4);
-    expect(slugify('FG RnB LEGENDS')).toBe('fg-rnb-legends');
+    expect(slugify('Demo RnB Legends')).toBe('demo-rnb-legends');
   });
 
   it('computes edit distance and a normalised similarity', () => {
@@ -175,7 +175,7 @@ describe('text helpers', () => {
     expect(levenshtein('', 'abc')).toBe(3);
     expect(levenshtein('abc', '')).toBe(3);
     expect(levenshtein('same', 'same')).toBe(0);
-    expect(similarity('FG Techno', 'fg techno')).toBe(1);
+    expect(similarity('Demo Techno', 'demo techno')).toBe(1);
     expect(similarity('', '')).toBe(1);
     expect(similarity('abcd', 'abcx')).toBeCloseTo(0.75);
   });
