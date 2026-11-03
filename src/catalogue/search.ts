@@ -1,4 +1,4 @@
-import { levenshtein, normalizeName } from '../shared/text.ts';
+import { compareText, levenshtein, normalizeName } from '../shared/text.ts';
 import type { Station } from './types.ts';
 
 export interface SearchHit {
@@ -47,6 +47,14 @@ function prepare(station: Station): Prepared {
   return p;
 }
 
+/**
+ * Works out the stations' normalised names ahead of the first search: a few milliseconds for a
+ * couple of thousand stations, which start-up pays rather than a listener while a stream plays.
+ */
+export function prepareStations(stations: readonly Station[]): void {
+  for (const s of stations) prepare(s);
+}
+
 /** Edit-distance similarity of two already-normalised strings; null when it can't reach `min`. */
 function similarityAtLeast(a: string, b: string, min: number): number | null {
   const max = Math.max(a.length, b.length);
@@ -71,7 +79,7 @@ function rankTie(a: SearchHit, b: SearchHit): number {
   return (
     Number(a.station.provider === 'custom') - Number(b.station.provider === 'custom') ||
     a.station.sortOrder - b.station.sortOrder ||
-    a.station.displayName.localeCompare(b.station.displayName)
+    compareText(a.station.displayName, b.station.displayName)
   );
 }
 

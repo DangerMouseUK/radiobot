@@ -1,3 +1,15 @@
+let collator: Intl.Collator | undefined;
+
+/**
+ * `a.localeCompare(b)`, with one shared collator. ICU sets a collator up the first time one is used
+ * (about 20 ms here), so start-up does that (`warmLocaleData()`) rather than the first search while
+ * a stream plays. Made on first use, so worker threads that never compare text don't pay for it.
+ */
+export function compareText(a: string, b: string): number {
+  collator ??= new Intl.Collator();
+  return collator.compare(a, b);
+}
+
 /** Lower-cases, strips diacritics and collapses punctuation for matching. */
 export function normalizeName(input: string): string {
   return input

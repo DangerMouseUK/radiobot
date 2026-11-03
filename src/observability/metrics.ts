@@ -1,4 +1,5 @@
 import type { ReasonCode } from '../shared/errors.ts';
+import { compareText } from '../shared/text.ts';
 
 /** Who is at fault, so "uptime" is never attributed to the wrong component (PRD §16). */
 export type FaultDomain = 'upstream' | 'discord' | 'bot' | 'operator' | 'user';
@@ -75,6 +76,6 @@ export class Metrics {
   }
 
   snapshot(): Record<string, number> {
-    return Object.fromEntries([...this.counters.entries()].sort(([a], [b]) => a.localeCompare(b)));
+    return Object.fromEntries([...this.counters.entries()].sort(([a], [b]) => compareText(a, b)));
   }
 }

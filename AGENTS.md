@@ -40,7 +40,7 @@ docker build --target test -t radio-bot:test . && docker run --rm --network none
 CI (`.github/workflows/ci.yml`) runs all of these, and also:
 
 - the typecheck and tests on the oldest Node that `engines` allows (24.17.0);
-- `tests/integration/main-thread-budget.test.ts`, part of `pnpm test`: a stream plays through the real pipeline while `/radio stats`, browse, ranking, a 2000-station sync and a live install of a 2000-station pack run, and the event-loop delay must stay under 50 ms;
+- `tests/integration/main-thread-budget.test.ts`, part of `pnpm test` (Vitest runs it on its own, after every other file): a stream plays through the real pipeline while `/radio stats`, browse, ranking, a 2000-station sync and a live install of a 2000-station pack run, and the event-loop delay and the longest stretch of synchronous work must stay under 50 ms;
 - the lifecycle test on macOS with its bash 3.2 (`/bin/bash -n` on every script first);
 - an offline check of the relative links and anchors in README.md, CONTRIBUTING.md, AGENTS.md, SECURITY.md, `docs/` and `catalog/README.md` (lychee);
 - the Docker image build, then in the image: FFmpeg has `libopus`, a missing token exits with code 78, `dist/scripts/smoke.js` passes with no network, and the integration tests pass in the `test` stage (same base, no network).
@@ -194,7 +194,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 - Use `memoryDb()` from `tests/helpers.ts` for an in-memory, migrated database, and `makeSource()` for source fixtures. Match the existing style: import from `'../../src/…ts'`, with `describe`/`it` and plain `expect`.
 - New behaviour needs a test. A bug fix needs a test that failed before the fix. Avoid timing-sensitive assertions; inject clocks (for example `RateMeter`'s `now`) instead of sleeping.
 - CI runs `pnpm test:coverage`, which fails if coverage falls below the thresholds in `vitest.config.ts`. Add tests rather than lowering them.
-- `tests/integration/main-thread-budget.test.ts` guards rule 1 of "The stream comes first". If it fails, find the slow step (the test prints the longest run of each) and make it cheaper; don't raise the bound. A new heavy path that a listener or a timer can trigger belongs in that test.
+- `tests/integration/main-thread-budget.test.ts` guards rule 1 of "The stream comes first". If it fails, find the slow step (the test prints each step's longest stretch without an event-loop turn) and make it cheaper; don't raise the bound. A new heavy path that a listener or a timer can trigger belongs in that test. It runs in a Vitest project of its own (`vitest.config.ts`) that starts after every other file has finished, so other test processes aren't measured as delay; keep it that way.
 
 ## Documentation must match the code
 

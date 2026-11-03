@@ -2,25 +2,28 @@ import { existsSync } from 'node:fs';
 import type { Logger } from '../observability/logger.ts';
 import { safeErr } from '../observability/logger.ts';
 import type { StationRepository } from '../persistence/repositories/stations.ts';
+import { yieldToEventLoop } from '../shared/async.ts';
 import { RadioError } from '../shared/errors.ts';
 import { botVersion, compareVersions } from '../shared/version.ts';
 import { ownBuffer, runWorker, siblingModule } from '../shared/workers.ts';
 import type { SafeHttpClient } from '../streams/safe-fetch.ts';
 import {
-  type CheckedBundle,
   fetchBundleBytes,
   fetchLibraryIndex,
+  type InstallableBundle,
   type LibraryIndex,
   type LibraryPack,
   OFFICIAL_LIBRARY_URL,
   tooNewFor,
 } from './pack-library.ts';
 import type { PackStore } from './pack-store.ts';
-import type { PackWorkerRequest } from './pack-worker.ts';
+import type { ChunkedPack, PackWorkerRequest } from './pack-worker.ts';
 import {
   discoverPackDirs,
   PACK_ID,
   type PackRegistry,
+  type PackSource,
+  type PackStation,
   packConflict,
   type StationPack,
   seedPackInSlices,
@@ -41,11 +44,24 @@ async function packWorker<T>(req: PackWorkerRequest, signal?: AbortSignal): Prom
 
 /** Checks a downloaded bundle on a worker thread. */
 export const checkBundleInWorker = (bytes: Uint8Array, entry: LibraryPack, signal?: AbortSignal) =>
-  packWorker<CheckedBundle>({ kind: 'bundle', bytes, id: entry.id, sha256: entry.sha256 }, signal);
+  packWorker<InstallableBundle>({ kind: 'bundle', bytes, id: entry.id, sha256: entry.sha256 }, signal);
 
-/** Loads an installed pack folder on a worker thread. */
-export const loadPackInWorker = (dir: string, signal?: AbortSignal) =>
-  packWorker<StationPack>({ kind: 'dir', dir }, signal);
+/**
+ * Loads an installed pack folder on a worker thread. Its stations and sources come back as JSON
+ * chunks, each parsed here in a turn of its own (see `ChunkedPack`).
+ */
+export async function loadPackInWorker(dir: string, signal?: AbortSignal): Promise<StationPack> {
+  const { pack, stations, sources } = await packWorker<ChunkedPack>({ kind: 'dir', dir }, signal);
+  for (const chunk of stations) {
+    pack.stations.push(...(JSON.parse(chunk) as PackStation[]));
+    await yieldToEventLoop();
+  }
+  for (const chunk of sources) {
+    pack.sources.push(...(JSON.parse(chunk) as PackSource[]));
+    await yieldToEventLoop();
+  }
+  return pack;
+}
 
 export interface PackChange {
   id: string;
@@ -164,12 +180,7 @@ export class PackManager {
     // Checked again before writing: another pack may use one of its source ids.
     const conflict = packConflict(
       this.#d.registry.packs,
-      {
-        ...checked.pack,
-        dir: store.packDir(entry.id),
-        origin: 'installed',
-        contentHash: '',
-      },
+      { ...checked.pack, dir: store.packDir(entry.id) },
       { replacing: true },
     );
     if (conflict) throw new RadioError('PACK_INVALID', conflict);

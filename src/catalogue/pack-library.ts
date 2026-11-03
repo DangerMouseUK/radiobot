@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { RadioError } from '../shared/errors.ts';
+import { compareText } from '../shared/text.ts';
 import { compareVersions } from '../shared/version.ts';
 import type { SafeHttpClient } from '../streams/safe-fetch.ts';
 import {
@@ -159,6 +160,25 @@ export interface CheckedBundle {
 }
 
 /**
+ * What installing a checked bundle needs: the files to write, and the pack's details and source
+ * IDs for the clash check. The worker that checks a bundle sends back just this, because copying
+ * every station and source of a big pack to the main thread holds it up for over 10 ms.
+ */
+export interface InstallableBundle {
+  pack: { meta: CheckedBundle['pack']['meta']; sources: ReadonlyArray<{ id: string }> };
+  files: CheckedBundle['files'];
+  sha256: string;
+}
+
+export function installable(checked: CheckedBundle): InstallableBundle {
+  return {
+    pack: { meta: checked.pack.meta, sources: checked.pack.sources.map((s) => ({ id: s.id })) },
+    files: checked.files,
+    sha256: checked.sha256,
+  };
+}
+
+/**
  * Checks a downloaded bundle: its fingerprint against the index (when one is given), its shape,
  * that it is the pack that was asked for, and the pack itself with the same rules as a folder.
  * CPU-bound for a large pack: the bot runs it on a worker thread (pack-worker.ts).
@@ -222,23 +242,37 @@ export function searchLibrary(
         .toLowerCase();
       return words.every((w) => hay.includes(w));
     })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => compareText(a.name, b.name));
+}
+
+/** One of each, made on first use: ICU loads its display-name data then (about 9 ms here). */
+const displayNames: Partial<Record<'region' | 'language', Intl.DisplayNames>> = {};
+
+function displayName(type: 'region' | 'language', code: string): string {
+  try {
+    displayNames[type] ??= new Intl.DisplayNames(['en-GB'], { type });
+    return displayNames[type].of(code) ?? code;
+  } catch {
+    return code;
+  }
 }
 
 /** A country's English name from its code ("GB" → "United Kingdom"), or the code itself. */
 export function countryName(code: string): string {
-  try {
-    return new Intl.DisplayNames(['en-GB'], { type: 'region' }).of(code) ?? code;
-  } catch {
-    return code;
-  }
+  return displayName('region', code);
 }
 
 /** A language's English name from its code ("fr" → "French"), or the code itself. */
 export function languageName(code: string): string {
-  try {
-    return new Intl.DisplayNames(['en-GB'], { type: 'language' }).of(code) ?? code;
-  } catch {
-    return code;
-  }
+  return displayName('language', code);
+}
+
+/**
+ * Sets up ICU's collation and display names (about 30 ms between them the first time), so that
+ * happens at start-up, before anything plays, rather than in the first search or pack card.
+ */
+export function warmLocaleData(): void {
+  compareText('a', 'b');
+  countryName('GB');
+  languageName('en');
 }
