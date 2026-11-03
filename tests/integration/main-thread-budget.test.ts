@@ -4,10 +4,12 @@
  * can ask for must not hold up the event loop long enough to be heard. Runs /radio stats, browse,
  * source ranking across the whole catalogue, a sync of a large synthetic station list and a live
  * install of a second pack of the largest size from a local pack library, with
- * a large synthetic pack loaded next to the bundled one, and measures the event-loop delay.
+ * a large synthetic pack loaded next to the bundled one, and measures the event-loop delay and the
+ * longest stretch of synchronous work (between two turns of the event loop) in each step.
  *
  * The bound is generous on purpose (CI runners are shared and noisy): the target is under 10 ms per
- * stretch of work, and this only fails on a stall that would cut the audio.
+ * stretch of work, and this only fails on a stall that would cut the audio. Vitest runs this file
+ * on its own, after every other (vitest.config.ts), so other test processes don't count as delay.
  */
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,6 +18,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { setTimeout as sleep } from 'node:timers/promises';
 import {
   AudioPlayerStatus,
   createAudioPlayer,
@@ -27,10 +30,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { planEncoder } from '../../src/audio/encoder.ts';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
 import { AudioPipeline } from '../../src/audio/pipeline.ts';
+import { warmLocaleData } from '../../src/catalogue/pack-library.ts';
 import { PackManager } from '../../src/catalogue/pack-manager.ts';
 import { PackStore } from '../../src/catalogue/pack-store.ts';
+import { prepareStations } from '../../src/catalogue/search.ts';
 import { CatalogueSync } from '../../src/catalogue/sync.ts';
 import { visibleStations } from '../../src/discord/context.ts';
+import { yieldToEventLoop } from '../../src/shared/async.ts';
 import { openSourceInput } from '../../src/streams/input.ts';
 import { selectSource } from '../../src/streams/ranking.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
@@ -41,6 +47,8 @@ import { binaries, generateFixtures, startTestRadio, type TestRadio } from './fi
 
 /** Longest event-loop stall allowed while the stream plays. A gap of about 55 ms is audible. */
 const MAX_DELAY_MS = 50;
+/** The delay histogram's timer interval. */
+const RESOLUTION_MS = 5;
 /** The schema's limit for one pack: the largest catalogue a single pack can bring. */
 const STATIONS = 2000;
 
@@ -149,6 +157,9 @@ afterAll(async () => {
 describe('main-thread budget while a stream plays', () => {
   it('keeps every stall under the audible gap through stats, browse, ranking and a large sync', async () => {
     const t = setup({ extraPacksDir: root });
+    // What createApp does at start-up, before anything plays.
+    warmLocaleData();
+    prepareStations(t.stations.listBuiltinStations());
     const all = visibleStations(t.ctx, GUILD);
     expect(all.length).toBeGreaterThan(STATIONS);
     // Half the sources look checked and healthy, so ranking and coverage take their longer paths.
@@ -242,14 +253,34 @@ describe('main-thread budget while a stream plays', () => {
     player.play(resource);
     await new Promise<void>((resolve) => player.once(AudioPlayerStatus.Playing, () => resolve()));
 
-    const delay = monitorEventLoopDelay({ resolution: 5 });
+    // The longest stretch of synchronous work in each step: the time between two turns of the event
+    // loop, seen from a callback that runs once a turn. It also keeps the loop from sleeping, so a
+    // coarse system timer (15.6 ms on Windows) isn't counted as delay.
+    let step = 'start';
+    const stretches: Record<string, number> = {};
+    let lastTurn = performance.now();
+    let tracing = true;
+    const turn = () => {
+      const now = performance.now();
+      stretches[step] = Math.max(stretches[step] ?? 0, now - lastTurn);
+      lastTurn = now;
+      if (tracing) setImmediate(turn);
+    };
+    setImmediate(turn);
+    const delay = monitorEventLoopDelay({ resolution: RESOLUTION_MS });
     delay.enable();
+    // The histogram records the time between two of its ticks, so it needs a tick before the first
+    // step and one after the last: a stall right after enable() or right before disable() is missed.
+    await sleep(4 * RESOLUTION_MS);
     const playedBefore = resource.playbackDuration;
     const startedAt = performance.now();
     let played = 0;
     let elapsed = 0;
     const timings: Record<string, number> = {};
     const time = async (name: string, fn: () => Promise<unknown> | unknown) => {
+      // Each command reaches the bot as an event of its own, so the loop turns between them.
+      await yieldToEventLoop();
+      step = name;
       const started = performance.now();
       await fn();
       timings[name] = Math.max(timings[name] ?? 0, performance.now() - started);
@@ -284,8 +315,10 @@ describe('main-thread budget while a stream plays', () => {
         expect(t.ctx.packs.isEnabled('bigpack2')).toBe(true);
       });
       await time('browse after install', () => t.command(t.people.member, { sub: 'browse' }));
+      await sleep(4 * RESOLUTION_MS);
     } finally {
       delay.disable();
+      tracing = false;
       played = resource.playbackDuration - playedBefore;
       elapsed = performance.now() - startedAt;
       player.stop(true);
@@ -294,16 +327,18 @@ describe('main-thread budget while a stream plays', () => {
 
     const maxMs = delay.max / 1e6;
     const p99Ms = delay.percentile(99) / 1e6;
+    const list = (ms: Record<string, number>) =>
+      Object.entries(ms)
+        .map(([k, v]) => `${k} ${v.toFixed(1)} ms`)
+        .join(', ');
     // Shown with the test output, so a slow step can be found without a profiler.
     console.info(
-      `event-loop delay: max ${maxMs.toFixed(1)} ms, p99 ${p99Ms.toFixed(1)} ms; ${played} ms played in ${elapsed.toFixed(0)} ms; longest runs: ${Object.entries(
-        timings,
-      )
-        .map(([k, v]) => `${k} ${v.toFixed(0)} ms`)
-        .join(', ')}`,
+      `event-loop delay: max ${maxMs.toFixed(1)} ms, p99 ${p99Ms.toFixed(1)} ms; ${played} ms played in ${elapsed.toFixed(0)} ms\n` +
+        `longest stretch without a turn: ${list(stretches)}\nlongest time taken (turns included): ${list(timings)}`,
     );
     // The audio kept flowing the whole time: the player sent (nearly) a packet per 20 ms throughout.
     expect(played).toBeGreaterThan(0.8 * elapsed);
     expect(maxMs).toBeLessThan(MAX_DELAY_MS);
+    expect(Math.max(...Object.values(stretches))).toBeLessThan(MAX_DELAY_MS);
   }, 120_000);
 });

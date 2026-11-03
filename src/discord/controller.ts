@@ -40,6 +40,7 @@ import type {
   QueueEntry,
   SettingsPatch,
 } from '../persistence/repositories/guilds.ts';
+import { yieldToEventLoop } from '../shared/async.ts';
 import { errorCode, isRadioError, RadioError } from '../shared/errors.ts';
 import { plural, truncate } from '../shared/text.ts';
 import { codecLabel } from '../streams/probe.ts';
@@ -1044,8 +1045,14 @@ export class RadioController {
 
     const mem = process.memoryUsage();
     const visible = visibleStations(ctx, guildId);
-    const packLines = ctx.packs.packs.map((p) => {
-      if (!ctx.packs.isEnabled(p.meta.id)) return `**${p.meta.name}** (\`${p.meta.id}\`): disabled`;
+    const packLines: string[] = [];
+    for (const p of ctx.packs.packs) {
+      if (!ctx.packs.isEnabled(p.meta.id)) {
+        packLines.push(`**${p.meta.name}** (\`${p.meta.id}\`): disabled`);
+        continue;
+      }
+      // Counting a big pack's sources takes milliseconds: each pack gets a slice of its own.
+      await yieldToEventLoop();
       const cov = ctx.sources.coverage(visible.filter((x) => x.provider === p.meta.id));
       const sync = p.meta.sync ? ctx.stations.lastSyncReport(p.meta.id) : null;
       const syncText = !p.meta.sync
@@ -1054,8 +1061,10 @@ export class RadioController {
           ? // A Discord timestamp shows in the reader's own time zone, with the exact time on hover.
             `list synced <t:${Math.floor(Date.parse(sync.finishedAt) / 1000)}:R> ${sync.success ? '(ok)' : '(failed)'}`
           : 'list never synced';
-      return `**${p.meta.name}** (\`${p.meta.id}\`): ${cov.catalogued} stations · ${cov.usable} with a working stream · ${cov.verifiedPlayable} verified and playable · ${syncText}`;
-    });
+      packLines.push(
+        `**${p.meta.name}** (\`${p.meta.id}\`): ${cov.catalogued} stations · ${cov.usable} with a working stream · ${cov.verifiedPlayable} verified and playable · ${syncText}`,
+      );
+    }
     const incidents = ctx.metrics.recentIncidents(guildId, 6);
     const healthEmbed = new EmbedBuilder()
       .setTitle('Bot health')

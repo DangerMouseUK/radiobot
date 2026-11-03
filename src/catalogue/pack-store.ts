@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
-import type { CheckedBundle } from './pack-library.ts';
+import type { InstallableBundle } from './pack-library.ts';
 import { PACK_ID } from './packs.ts';
 
 /**
@@ -82,7 +82,7 @@ export class PackStore {
   }
 
   /** Writes a checked bundle as a pack folder, replacing any older copy, and records it. */
-  async install(bundle: CheckedBundle, source: string, now: Date = new Date()): Promise<string> {
+  async install(bundle: InstallableBundle, source: string, now: Date = new Date()): Promise<string> {
     const id = bundle.pack.meta.id;
     const target = this.packDir(id);
     const tag = randomBytes(4).toString('hex');

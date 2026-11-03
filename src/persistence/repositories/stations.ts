@@ -44,25 +44,108 @@ export function mapStation(r: Row): Station {
   };
 }
 
-interface StationsCache {
-  version: string;
-  /** In catalogue order: pack stations first, then custom stations. */
-  all: Station[];
-  byId: Map<string, Station>;
+interface StationLists {
   builtin: Station[];
   builtinActive: Station[];
   /** Each server's own custom stations, so listing them never scans every server's. */
   custom: Map<string, Station[]>;
 }
 
+interface StationsCache {
+  version: string;
+  /** In catalogue order: pack stations first, then custom stations. */
+  all: Station[];
+  byId: Map<string, Station>;
+  /** Worked out from `all` when first asked for, so a run of writes doesn't redo it for each row. */
+  lists: StationLists | null;
+}
+
 interface SourcesCache {
   version: string;
   byId: Map<string, StationSource>;
-  /** In station ID order, as the table is read; each list by priority and ID. */
+  /** Each list by priority and ID; in station ID order while `sorted`. */
   byStation: Map<string, StationSource[]>;
+  /** False once a station's first source was added in place (at the end of the map). */
+  sorted: boolean;
 }
 
-function deriveStations(all: Station[]): Pick<StationsCache, 'builtin' | 'builtinActive' | 'custom'> {
+/**
+ * SQLite's `NOCASE` collation: only ASCII letters fold, and strings compare by code point (the
+ * order of their UTF-8 bytes), which differs from UTF-16 order only for surrogate pairs.
+ */
+export function compareNoCase(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    let x = a.charCodeAt(i);
+    let y = b.charCodeAt(i);
+    if (x === y) continue;
+    if (x >= 65 && x <= 90) x += 32;
+    if (y >= 65 && y <= 90) y += 32;
+    if (x === y) continue;
+    const xs = x >= 0xd800 && x <= 0xdfff;
+    const ys = y >= 0xd800 && y <= 0xdfff;
+    // A surrogate stands for a code point above U+FFFF, so it sorts after any other unit.
+    return xs === ys ? x - y : xs ? 1 : -1;
+  }
+  return a.length - b.length;
+}
+
+/**
+ * The order of the full station read (`STATION_ORDER`): pack stations by pack, order, name and
+ * ID; custom stations last.
+ */
+function byCatalogueOrder(a: Station, b: Station): number {
+  const ca = a.provider === 'custom' ? 1 : 0;
+  const cb = b.provider === 'custom' ? 1 : 0;
+  if (ca !== cb) return ca - cb;
+  if (a.provider !== b.provider) return a.provider < b.provider ? -1 : 1;
+  return (
+    a.sortOrder - b.sortOrder ||
+    compareNoCase(a.displayName, b.displayName) ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  );
+}
+
+const STATION_ORDER = `ORDER BY CASE provider WHEN 'custom' THEN 1 ELSE 0 END, provider, sort_order,
+  display_name COLLATE NOCASE, id`;
+
+/** Where `item` goes in `list` (sorted by `cmp`): after everything that sorts before or with it. */
+function insertionPoint<T>(list: readonly T[], item: T, cmp: (a: T, b: T) => number): number {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (cmp(list[mid]!, item) <= 0) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function stationLists(cache: StationsCache): StationLists {
+  cache.lists ??= deriveStations(cache.all);
+  return cache.lists;
+}
+
+/**
+ * Puts one re-read station row into the cached list where a full read would put it, or takes it
+ * out if the row is gone. A new pack station or a rename touches just that row, so installing a
+ * pack or syncing one never reads every station again.
+ */
+function placeStation(cache: StationsCache, id: string, row: Row | undefined): void {
+  const prev = cache.byId.get(id);
+  if (prev) {
+    cache.all.splice(cache.all.indexOf(prev), 1);
+    cache.byId.delete(id);
+  }
+  if (row) {
+    const next = freezeStation(mapStation(row));
+    cache.all.splice(insertionPoint(cache.all, next, byCatalogueOrder), 0, next);
+    cache.byId.set(id, next);
+  }
+  cache.lists = null;
+}
+
+function deriveStations(all: Station[]): StationLists {
   const builtin: Station[] = [];
   const builtinActive: Station[] = [];
   const custom = new Map<string, Station[]>();
@@ -84,31 +167,54 @@ function deriveStations(all: Station[]): Pick<StationsCache, 'builtin' | 'builti
  * every pack station, and no other server's list changes, so nothing else is read again.
  */
 function replaceGuildCustom(cache: StationsCache, guildId: string, fresh: Station[]): void {
-  for (const st of cache.custom.get(guildId) ?? []) cache.byId.delete(st.id);
+  const lists = stationLists(cache);
+  for (const st of lists.custom.get(guildId) ?? []) cache.byId.delete(st.id);
   for (const st of fresh) cache.byId.set(st.id, st);
   cache.all = [...cache.all.filter((st) => st.guildId !== guildId), ...fresh];
-  if (fresh.length > 0) cache.custom.set(guildId, fresh);
-  else cache.custom.delete(guildId);
+  if (fresh.length > 0) lists.custom.set(guildId, fresh);
+  else lists.custom.delete(guildId);
 }
 
 const byPriority = (a: StationSource, b: StationSource) =>
   a.priority - b.priority || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /**
- * Puts one re-read source row into the cached lists, when it only changed in place (the
- * frequent case: check and playback results). Returns false for an insert, a delete, or a move
- * to another station or priority; the caller then lets the cache be read again, which is cheaper
- * than re-sorting it once per row while a pack is seeded.
+ * Puts one re-read source row into the cached lists: changed in place (the frequent case: check
+ * and playback results), new, moved to another station or priority, or (no row) deleted. Only
+ * that station's short list is touched, so seeding a pack never reads every source again.
  */
-function refreshSource(cache: SourcesCache, id: string, row: Row | undefined): boolean {
+function patchSource(cache: SourcesCache, id: string, row: Row | undefined): void {
   const prev = cache.byId.get(id);
-  if (!prev || !row) return false;
-  const next = freezeSource(mapSource(row));
-  if (prev.stationId !== next.stationId || prev.priority !== next.priority) return false;
-  cache.byId.set(id, next);
-  const list = cache.byStation.get(next.stationId)!;
-  list[list.indexOf(prev)] = next;
-  return true;
+  const next = row ? freezeSource(mapSource(row)) : undefined;
+  if (prev && next && prev.stationId === next.stationId && prev.priority === next.priority) {
+    cache.byId.set(id, next);
+    const list = cache.byStation.get(next.stationId)!;
+    list[list.indexOf(prev)] = next;
+    return;
+  }
+  if (prev) {
+    cache.byId.delete(id);
+    const list = cache.byStation.get(prev.stationId)!;
+    list.splice(list.indexOf(prev), 1);
+    if (list.length === 0) cache.byStation.delete(prev.stationId);
+  }
+  if (next) {
+    cache.byId.set(id, next);
+    const list = cache.byStation.get(next.stationId);
+    if (list) list.splice(insertionPoint(list, next, byPriority), 0, next);
+    else {
+      cache.byStation.set(next.stationId, [next]);
+      cache.sorted = false;
+    }
+  }
+}
+
+/** Drops every cached source of stations that were deleted (their sources went with them). */
+function dropStationSources(cache: SourcesCache, stationIds: readonly string[]): void {
+  for (const id of stationIds) {
+    for (const src of cache.byStation.get(id) ?? []) cache.byId.delete(src.id);
+    cache.byStation.delete(id);
+  }
 }
 
 function freezeStation(st: Station): Station {
@@ -296,11 +402,12 @@ export class StationRepository {
 
   /**
    * Every station and every source, read and parsed once and reused, on the thread that sends
-   * voice packets. Stations and sources are cached apart, and a change to one source or to one
-   * station's status re-reads just that row: background checks and playback results write sources
-   * all the time, and a full re-read of a big catalogue would hold up voice packets. A change to a
-   * server's custom stations re-reads only that server's. Any other change to which stations exist
-   * (or their order) re-reads the station list; a rollback re-reads both.
+   * voice packets. Stations and sources are cached apart, and every write re-reads just the rows
+   * it changed and puts them in place: background checks and playback results write sources all
+   * the time, and seeding a pack or a sync adds and renames stations by the thousand. A full
+   * re-read of a big catalogue (tens of milliseconds for each table) would hold up voice packets.
+   * A change to a server's custom stations re-reads only that server's. A write made while a table
+   * wasn't cached, or a rollback, leaves the next read to read it all again.
    * The rows are frozen because they are shared.
    */
   #stations: StationsCache | null = null;
@@ -330,12 +437,9 @@ export class StationRepository {
     const current = this.#currentStations();
     if (current) return current;
     const all = this.#db
-      .all(
-        `SELECT * FROM stations
-         ORDER BY CASE provider WHEN 'custom' THEN 1 ELSE 0 END, provider, sort_order, display_name COLLATE NOCASE`,
-      )
+      .all(`SELECT * FROM stations ${STATION_ORDER}`)
       .map((r) => freezeStation(mapStation(r)));
-    this.#stations = { version: this.#stationsVersion(), all, byId: new Map(), ...deriveStations(all) };
+    this.#stations = { version: this.#stationsVersion(), all, byId: new Map(), lists: null };
     for (const st of all) this.#stations.byId.set(st.id, st);
     return this.#stations;
   }
@@ -357,50 +461,55 @@ export class StationRepository {
       version: this.#sourcesVersion(),
       byId: new Map(all.map((x) => [x.id, x])),
       byStation,
+      sorted: true,
     };
     return this.#sources;
   }
 
-  /** A write that changes which stations exist or their order: the station list is read again. */
-  #writeStations(
-    sql: string,
-    params: Params,
-    alsoSources = false,
-  ): { changes: number; lastInsertRowid: number } {
+  /**
+   * A write that may add a pack station or change its place in the list (a rename, a new order):
+   * only that row is read again, and put where a full read would put it.
+   */
+  #writeStationPlaced(id: string, sql: string, params: Params): void {
+    const cache = this.#currentStations();
+    let done = false;
     try {
-      return this.#db.run(sql, params);
+      this.#db.run(sql, params);
+      done = true;
     } finally {
-      this.#stationWrites++;
-      // Deleting a station deletes its sources too (ON DELETE CASCADE).
-      if (alsoSources) this.#sourceWrites++;
+      if (done && cache) placeStation(cache, id, this.#db.get('SELECT * FROM stations WHERE id = ?', [id]));
+      else this.#stationWrites++;
     }
   }
 
   /**
    * A change to one server's custom stations: only that server's are read again. Their order
-   * matches the full read's, which puts custom stations last.
+   * matches the full read's, which puts custom stations last. A delete (`deletes`: the stations
+   * it may remove) takes their sources out of the cached sources too (ON DELETE CASCADE).
    */
   #writeGuildCustomStations(
     guildId: string,
     sql: string,
     params: Params,
-    alsoSources = false,
+    deletes: readonly string[] | null = null,
   ): { changes: number; lastInsertRowid: number } {
     const cache = this.#currentStations();
+    const sources = deletes ? this.#currentSources() : null;
     let result: { changes: number; lastInsertRowid: number } | null = null;
     try {
       result = this.#db.run(sql, params);
       return result;
     } finally {
-      // Deleting a station deletes its sources too (ON DELETE CASCADE).
-      if (alsoSources) this.#sourceWrites++;
+      if (deletes) {
+        if (result !== null && sources) {
+          if (result.changes > 0) dropStationSources(sources, deletes);
+        } else this.#sourceWrites++;
+      }
       if (result !== null && cache) {
         const fresh = this.#db
-          .all(
-            `SELECT * FROM stations WHERE provider = 'custom' AND guild_id = ?
-             ORDER BY sort_order, display_name COLLATE NOCASE`,
-            [guildId],
-          )
+          .all(`SELECT * FROM stations WHERE provider = 'custom' AND guild_id = ? ${STATION_ORDER}`, [
+            guildId,
+          ])
           .map((r) => freezeStation(mapStation(r)));
         replaceGuildCustom(cache, guildId, fresh);
       } else this.#stationWrites++;
@@ -422,7 +531,7 @@ export class StationRepository {
           const next = freezeStation(mapStation(r));
           cache.byId.set(id, next);
           cache.all[cache.all.indexOf(prev)] = next;
-          Object.assign(cache, deriveStations(cache.all));
+          cache.lists = null;
         } else this.#stationWrites++;
       } else this.#stationWrites++;
     }
@@ -452,14 +561,14 @@ export class StationRepository {
             cache.byId.set(next.id, next);
             cache.all[at.get(next.id)!] = next;
           }
-          Object.assign(cache, deriveStations(cache.all));
+          cache.lists = null;
         }
       }
       if (!patched) this.#stationWrites++;
     }
   }
 
-  /** A change to one source: only that row is read again, and moved if its station or priority changed. */
+  /** A change to one source (or a new one, or a delete): only that row is read again, and put in place. */
   #writeSourceRow(id: string, sql: string, params: Params): { changes: number; lastInsertRowid: number } {
     const cache = this.#currentSources();
     let result: { changes: number; lastInsertRowid: number } | null = null;
@@ -467,11 +576,9 @@ export class StationRepository {
       result = this.#db.run(sql, params);
       return result;
     } finally {
-      const patched =
-        result !== null &&
-        cache !== null &&
-        refreshSource(cache, id, this.#db.get('SELECT * FROM station_sources WHERE id = ?', [id]));
-      if (!patched) this.#sourceWrites++;
+      if (result !== null && cache)
+        patchSource(cache, id, this.#db.get('SELECT * FROM station_sources WHERE id = ?', [id]));
+      else this.#sourceWrites++;
     }
   }
 
@@ -491,7 +598,7 @@ export class StationRepository {
 
   /** Pack stations plus the given guild's custom stations, in catalogue order. */
   listStations(guildId: string | null, opts: { includeRetired?: boolean } = {}): Station[] {
-    const c = this.#cachedStations();
+    const c = stationLists(this.#cachedStations());
     const custom = (guildId ? c.custom.get(guildId) : undefined) ?? [];
     return opts.includeRetired
       ? [...c.builtin, ...custom]
@@ -500,7 +607,7 @@ export class StationRepository {
 
   /** Every station from every pack (not custom stations). */
   listBuiltinStations(): Station[] {
-    return [...this.#cachedStations().builtin];
+    return [...stationLists(this.#cachedStations()).builtin];
   }
 
   listProviderStations(provider: Provider): Station[] {
@@ -509,7 +616,7 @@ export class StationRepository {
 
   /** Every pack that has stations in the database (loaded or not), custom stations excluded. */
   providerIds(): string[] {
-    return [...new Set(this.#cachedStations().builtin.map((st) => st.provider))];
+    return [...new Set(stationLists(this.#cachedStations()).builtin.map((st) => st.provider))];
   }
 
   /** A station is visible to a guild if it is a provider station or one of its own custom stations. */
@@ -524,7 +631,8 @@ export class StationRepository {
     const existing = this.getStation(seed.id);
     const now = nowIso();
     if (!existing) {
-      this.#writeStations(
+      this.#writeStationPlaced(
+        seed.id,
         `INSERT INTO stations (id, provider, guild_id, canonical_slug, external_id, display_name, aliases_json,
            description, genre_tags_json, category, sort_order, official_page_url, official_catalog_last_seen_at,
            catalogue_status, created_at, updated_at, retired_at)
@@ -576,7 +684,8 @@ export class StationRepository {
       existing.officialLastSeenAt !== lastSeen ||
       (seed.catalogueStatus === 'retired' && existing.catalogueStatus !== 'retired');
     if (!changed) return 'unchanged';
-    this.#writeStations(
+    this.#writeStationPlaced(
+      seed.id,
       `UPDATE stations SET external_id = COALESCE(?, external_id), display_name = ?, aliases_json = ?,
          genre_tags_json = ?, category = ?, sort_order = ?,
          official_page_url = ?, description = ?, official_catalog_last_seen_at = ?,
@@ -635,7 +744,8 @@ export class StationRepository {
     const s = this.getStation(id);
     if (!s) return;
     const aliases = keepOldAsAlias ? [...new Set([...s.aliases, s.displayName])] : s.aliases;
-    this.#writeStations(
+    this.#writeStationPlaced(
+      id,
       'UPDATE stations SET display_name = ?, aliases_json = ?, updated_at = ? WHERE id = ?',
       [displayName, JSON.stringify(aliases), nowIso(), id],
     );
@@ -697,7 +807,7 @@ export class StationRepository {
       guildId,
       "DELETE FROM stations WHERE id = ? AND provider = 'custom' AND guild_id = ?",
       [id, guildId],
-      true,
+      [id],
     );
     return r.changes > 0;
   }
@@ -711,11 +821,14 @@ export class StationRepository {
   }
 
   deleteGuildCustomStations(guildId: string): number {
+    const ids = this.#db
+      .all<{ id: string }>("SELECT id FROM stations WHERE provider = 'custom' AND guild_id = ?", [guildId])
+      .map((r) => r.id);
     return this.#writeGuildCustomStations(
       guildId,
       "DELETE FROM stations WHERE provider = 'custom' AND guild_id = ?",
       [guildId],
-      true,
+      ids,
     ).changes;
   }
 
@@ -727,7 +840,12 @@ export class StationRepository {
 
   /** Every source, ordered by station, priority and ID. */
   listAllSources(): StationSource[] {
-    return [...this.#cachedSources().byStation.values()].flat();
+    const cache = this.#cachedSources();
+    if (!cache.sorted) {
+      cache.byStation = new Map([...cache.byStation].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+      cache.sorted = true;
+    }
+    return [...cache.byStation.values()].flat();
   }
 
   getSource(id: string): StationSource | null {

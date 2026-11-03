@@ -8,6 +8,7 @@ import { projectRoot, rootPath } from '../../src/shared/paths.ts';
 import { RateLimiter } from '../../src/shared/rate-limit.ts';
 import { redactText, redactUrl, urlHost } from '../../src/shared/redact.ts';
 import {
+  compareText,
   levenshtein,
   MAX_SLUG_LENGTH,
   normalizeName,
@@ -164,6 +165,11 @@ describe('text helpers', () => {
     expect(normalizeName('Demo HÏ Island')).toBe('demo hi island');
     expect(normalizeName('R&B / Soul!')).toBe('r and b soul');
     expect(normalizeName('---')).toBe('');
+  });
+
+  it('compares text exactly as localeCompare does, with one shared collator', () => {
+    const words = ['b', 'A', 'a', 'Émile', 'emile', 'zulu', '10', '9', 'demo-pack', 'demopack', ''];
+    for (const a of words) for (const b of words) expect(compareText(a, b)).toBe(a.localeCompare(b));
   });
 
   it('counts with the right noun: 1 pack, 2 packs, 0 packs', () => {
