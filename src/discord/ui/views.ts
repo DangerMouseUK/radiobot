@@ -102,7 +102,15 @@ export function browseStations(ctx: AppContext, guildId: string, state: BrowseSt
   return list;
 }
 
-/** Station lines grouped under their pack (or "Custom") headings. */
+/**
+ * The heading over a group of stations. A pack's is labelled, so it never reads as a station when a
+ * pack and its main station share a name; custom stations aren't a pack.
+ */
+function groupHeading(ctx: AppContext, provider: string): string {
+  return provider === 'custom' ? 'Custom stations (this server)' : `Pack: ${groupName(ctx, provider)}`;
+}
+
+/** Station lines grouped under their pack (or custom stations) headings. */
 function groupedLines(
   ctx: AppContext,
   stations: Station[],
@@ -115,7 +123,7 @@ function groupedLines(
   stations.forEach((s, i) => {
     if (s.provider !== group) {
       if (lines.length > 0) lines.push('');
-      lines.push(`**${groupName(ctx, s.provider)}**`);
+      lines.push(`**${groupHeading(ctx, s.provider)}**`);
       group = s.provider;
     }
     const prefix = withIds ? `${offset + i + 1}. ` : '';

@@ -1708,7 +1708,9 @@ describe('/radio list, sources and inspect', () => {
     expect(lastEmbed(first).title).toBe('All stations');
     const pages = Number(/^Page 1\/(\d+)/.exec(lastEmbed(first).footer?.text ?? '')![1]);
     const last = await t.command(t.people.member, { sub: 'list', ints: { page: pages } });
-    expect(lastEmbed(last).description).toMatch(/\*\*Custom \(this server\)\*\*\n\d+\. \*\*My Station\*\*/);
+    expect(lastEmbed(last).description).toMatch(
+      /\*\*Custom stations \(this server\)\*\*\n\d+\. \*\*My Station\*\*/,
+    );
     // Its menu plays the station.
     const menu = last.componentIds.find((id) => decode(t.ids, id)?.action === 'pick')!;
     t.putInVoice(t.people.admin, V1);

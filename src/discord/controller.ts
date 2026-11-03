@@ -1298,7 +1298,7 @@ export class RadioController {
           [
             `Stream checked: ${checkedLine(o)}`,
             `Station ID: \`${station.id}\` (custom, this server only).`,
-            'Press **Play now**, or type its name in `/radio play`. It is also listed under **Custom (this server)** in `/radio browse` and `/radio list`, after the station packs.',
+            'Press **Play now**, or type its name in `/radio play`. It is also listed under **Custom stations (this server)** in `/radio browse` and `/radio list`, after the station packs.',
             o.transport === 'http-continuous' && i.options.getString('url', true).startsWith('http://')
               ? '⚠️ This stream uses plain HTTP, so it is not encrypted on its way to the bot.'
               : '',
