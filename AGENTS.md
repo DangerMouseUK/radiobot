@@ -114,7 +114,8 @@ vitest.config.ts        test settings, including the coverage report for `pnpm t
                         .github/dependabot.yml
 docs/                   install.md (beginner guide, start here), install-docker/-linux/-container-platforms,
                         architecture, audio-quality, station-verification, permissions, rights-and-disclaimer,
-                        PRD, troubleshooting
+                        PRD, troubleshooting; assets/: the icon and banner (SVG sources, PNGs for the
+                        README and Discord's developer portal)
 deploy/systemd/         hardened unit file for bare-metal installs
 ```
 
