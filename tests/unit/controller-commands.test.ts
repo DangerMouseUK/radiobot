@@ -995,9 +995,17 @@ describe('custom stations', () => {
       /Stream checked: MP3 · ≈128 kbps \(measured\) · 44\.1 kHz · stereo · Direct HTTP stream/,
     );
     expect(i.text).toMatch(/Station ID: `custom:my-station` \(custom, this server only\)\./);
-    expect(i.text).toMatch(/Play it with `\/radio play`\./);
+    expect(i.text).toMatch(/Press \*\*Play now\*\*, or type its name in `\/radio play`\./);
     expect(i.text).toMatch(/⚠️ This stream uses plain HTTP, so it is not encrypted/);
     expect(t.customAdds).toEqual(['My Station']);
+    // Play now plays the new station, through the same checks as any Play button.
+    expect(i.componentIds.map((id) => decode(t.ids, id))).toEqual([
+      { action: 'play', arg: 'custom:my-station' },
+    ]);
+    t.putInVoice(t.people.admin, V1);
+    const play = await t.click(t.people.admin, i.componentIds[0]!);
+    expect(play.violations).toEqual([]);
+    expect(t.sessions.plays.map((p) => p.stationId)).toEqual(['custom:my-station']);
   });
 
   it('add says what it could not measure, and does not warn about HTTPS', async () => {
@@ -1071,8 +1079,20 @@ describe('custom stations', () => {
     const i = await t.command(t.people.admin, { sub: 'edit', strings: { station: st.id } });
     expect(i.acks).toBe(1);
     expect(i.ephemeral).toBe(true);
-    expect(i.text).toMatch(/Nothing to change\. Give a new name, url, website or description\./);
+    expect(i.text).toMatch(
+      /Nothing to change\. Give a new name, url, website, description, category or language\./,
+    );
     expect(t.customEdits).toEqual([]);
+  });
+
+  it('edit can change the category and language, as add can set them', async () => {
+    const { t, st } = customServer();
+    const i = await t.command(t.people.admin, {
+      sub: 'edit',
+      strings: { station: st.id, category: 'Flamenco', language: 'Spanish' },
+    });
+    expect(i.text).toMatch(/Changed: category, language\./);
+    expect(t.customEdits).toEqual([{ id: st.id, patch: { category: 'Flamenco', language: 'Spanish' } }]);
   });
 
   it('edit with a new URL and website counts as a stream check, and is rate-limited', async () => {
@@ -1669,6 +1689,26 @@ describe('/radio list, sources and inspect', () => {
     const e = lastEmbed(i);
     expect(e.title).toBe('Custom stations (this server)');
     expect(e.description).toMatch(/\*\*My Station\*\*/);
+  });
+
+  it('list on its own shows a newly added custom station, after the packs, and can play it', async () => {
+    const t = setup();
+    await t.command(t.people.admin, {
+      sub: 'add',
+      strings: { name: 'My Station', url: 'https://radio.example.org/live' },
+    });
+    // Before, /radio list left custom stations out unless the Custom scope was chosen.
+    const first = await t.command(t.people.member, { sub: 'list' });
+    expect(lastEmbed(first).title).toBe('All stations');
+    const pages = Number(/^Page 1\/(\d+)/.exec(lastEmbed(first).footer?.text ?? '')![1]);
+    const last = await t.command(t.people.member, { sub: 'list', ints: { page: pages } });
+    expect(lastEmbed(last).description).toMatch(/\*\*Custom \(this server\)\*\*\n\d+\. \*\*My Station\*\*/);
+    // Its menu plays the station.
+    const menu = last.componentIds.find((id) => decode(t.ids, id)?.action === 'pick')!;
+    t.putInVoice(t.people.admin, V1);
+    const pick = await t.click(t.people.admin, menu, 'string', ['custom:my-station']);
+    expect(pick.violations).toEqual([]);
+    expect(t.sessions.plays.map((p) => p.stationId)).toEqual(['custom:my-station']);
   });
 
   it('list shows the favourites, on the page asked for', async () => {

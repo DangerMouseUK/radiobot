@@ -332,11 +332,19 @@ export class FakeInteraction {
   async deleteReply() {
     this.#follow('deleteReply');
   }
+  /** Opening a form answers a button, so it counts as the acknowledgement. */
+  async showModal(m: { toJSON(): unknown }) {
+    this.#ack('showModal', { modal: m.toJSON() } as Payload, 'reply');
+  }
+  isModalSubmit() {
+    return false;
+  }
 
-  /** Number of acknowledgements (reply, deferReply, update, deferUpdate). */
+  /** Number of acknowledgements (reply, deferReply, update, deferUpdate, showModal). */
   get acks(): number {
-    return this.calls.filter((c) => ['reply', 'deferReply', 'update', 'deferUpdate'].includes(c.method))
-      .length;
+    return this.calls.filter((c) =>
+      ['reply', 'deferReply', 'update', 'deferUpdate', 'showModal'].includes(c.method),
+    ).length;
   }
   /** Was the first acknowledgement private? */
   get ephemeral(): boolean {
@@ -452,6 +460,43 @@ export class FakeComponent extends FakeInteraction {
   }
   isRoleSelectMenu() {
     return this.kind === 'role';
+  }
+}
+
+/** A submitted form (modal), with what was typed into each text box. */
+export class FakeModal extends FakeInteraction {
+  readonly customId: string;
+  readonly fields: { getTextInputValue(id: string): string };
+  readonly #fromMessage: boolean;
+  constructor(
+    actor: Actor,
+    guild: FakeGuild,
+    customId: string,
+    values: Record<string, string>,
+    fromMessage = true,
+  ) {
+    super(actor, guild);
+    this.customId = customId;
+    this.#fromMessage = fromMessage;
+    this.fields = {
+      getTextInputValue: (id: string) => {
+        const v = values[id];
+        if (v === undefined) throw new Error(`no text box ${id}`);
+        return v;
+      },
+    };
+  }
+  isChatInputCommand() {
+    return false;
+  }
+  isMessageComponent() {
+    return false;
+  }
+  override isModalSubmit() {
+    return true;
+  }
+  isFromMessage() {
+    return this.#fromMessage;
   }
 }
 
@@ -628,24 +673,13 @@ export function setup(opts: SetupOptions = {}) {
       },
     },
     custom: {
-      // Stands in for CustomStationService.add (which would probe the URL).
-      add: async (guildId: string, userId: string, c: { name: string }) => {
+      // Stands in for CustomStationService.add (which would probe the URL): it saves the station
+      // with its stream, as the real one does once the check passes.
+      add: async (_guildId: string, _userId: string, c: { name: string }) => {
         const failure = customFailures.get(c.name);
         if (failure) throw failure;
         customAdds.push(c.name);
-        const slug = c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        repos.stations.insertCustomStation({
-          id: `custom:${slug}`,
-          guildId,
-          slug,
-          displayName: c.name,
-          description: null,
-          category: null,
-          websiteUrl: null,
-          language: null,
-          createdById: userId,
-        });
-        return { station: repos.stations.getStation(`custom:${slug}`) as Station, report: custom.report };
+        return { station: addCustomStation(c.name), report: custom.report };
       },
       edit: async (_guildId: string, id: string, patch: Record<string, unknown>) => {
         customEdits.push({ id, patch });
@@ -751,6 +785,8 @@ export function setup(opts: SetupOptions = {}) {
       values: string[] = [],
       messageId?: string,
     ) => run(new FakeComponent(actor, guild, customId, kind, values, messageId)),
+    submit: (actor: Actor, customId: string, values: Record<string, string>, fromMessage = true) =>
+      run(new FakeModal(actor, guild, customId, values, fromMessage)),
     run,
   };
 }

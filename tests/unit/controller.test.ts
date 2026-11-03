@@ -469,6 +469,7 @@ describe('describeInteraction', () => {
     isAutocomplete: () => false,
     isMessageComponent: () => false,
     isButton: () => false,
+    isModalSubmit: () => false,
     ...o,
   });
   const options = (group: string | null, sub: string | null) => ({
@@ -499,6 +500,12 @@ describe('describeInteraction', () => {
         }) as never,
       ),
     ).toBe(`button ${'a'.repeat(16)}`);
+    // A submitted form logs its action, never what was typed into it.
+    expect(
+      describeInteraction(
+        fake({ isModalSubmit: () => true, customId: 'rb2:bsearch:tok:0:sig', fields: 'secret' }) as never,
+      ),
+    ).toBe('form bsearch');
     expect(describeInteraction(fake({ type: 1 }) as never)).toBe('type 1');
   });
 });

@@ -166,6 +166,63 @@ describe('Browse and List buttons', () => {
     }
   });
 
+  it('Search opens a box holding the current search, and what is typed redraws the list in place', async () => {
+    const t = setup();
+    const open = await t.command(t.people.member, { sub: 'browse' });
+    const button = open.componentIds.find((id) => decode(t.ids, id)?.action === 'bsearch')!;
+    const token = decode(t.ids, button)!.arg;
+    const ask = await t.click(t.people.member, button);
+    expect(methods(ask)).toEqual(['showModal']);
+    const modal = (ask.calls[0]!.payload as { modal: { custom_id: string } }).modal;
+    expect(decode(t.ids, modal.custom_id)).toEqual({ action: 'bsearch', arg: token });
+
+    const found = await t.submit(t.people.member, modal.custom_id, { search: '  techno ' });
+    expect(found.violations).toEqual([]);
+    expect(methods(found)).toEqual(['update']);
+    // Fewer stations than the whole list: the search narrowed it (and was trimmed).
+    expect(firstEmbed(found).footer?.text).toMatch(/^Page 1\/1 · \d+ stations? · search: "techno"\./);
+    // A form sent from somewhere other than the list gets the results as a new private reply.
+    const elsewhere = await t.submit(t.people.member, modal.custom_id, { search: 'techno' }, false);
+    expect(methods(elsewhere)).toEqual(['reply']);
+    expect(elsewhere.ephemeral).toBe(true);
+    expect(elsewhere.calls[0]!.payload.embeds![0]!.toJSON().footer?.text).toMatch(/search: "techno"/);
+    // The box opens again with the search in it, and emptying it shows every station.
+    const again = await t.click(t.people.member, button);
+    expect(JSON.stringify(again.calls[0]!.payload)).toContain('"value":"techno"');
+    const everything = await t.submit(t.people.member, modal.custom_id, { search: '' });
+    expect(firstEmbed(everything).footer?.text).toMatch(/^Page 1\/4 · 63 stations\. /);
+  });
+
+  it('a search form whose list has expired, or that is not one of ours, changes nothing', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const t = setup();
+    const open = await t.command(t.people.member, { sub: 'browse' });
+    const token = decode(
+      t.ids,
+      open.componentIds.find((id) => decode(t.ids, id)?.action === 'bsearch')!,
+    )!.arg;
+    vi.setSystemTime(Date.now() + 16 * 60_000);
+    for (const i of [
+      await t.click(t.people.member, t.ids.make(GUILD, 'bsearch', token)),
+      await t.submit(t.people.member, t.ids.make(GUILD, 'bsearch', token), { search: 'jazz' }),
+    ]) {
+      expect(methods(i)).toEqual(['reply']);
+      expect(i.text).toMatch(/This station list has expired\. Run \/radio browse again\./);
+      expect(i.ephemeral).toBe(true);
+    }
+    const other = await t.submit(t.people.member, t.ids.make(GUILD, 'play', 'x'), { search: 'jazz' });
+    expect(other.text).toMatch(/This form is not valid here\./);
+    const forged = await t.submit(t.people.member, signedId(GUILD, 'bsearch', token, 'wrong'), {
+      search: 'jazz',
+    });
+    expect(forged.text).toMatch(/This form is not valid here\./);
+    // A form left open past its 15 minutes has expired, whatever the list's state.
+    const old = t.ids.make(GUILD, 'bsearch', token);
+    vi.setSystemTime(Date.now() + 16 * 60_000);
+    const late = await t.submit(t.people.member, old, { search: 'jazz' });
+    expect(late.text).toMatch(/This form has expired\. Run the command again\./);
+  });
+
   it('List pages move through the station list in place', async () => {
     const t = setup();
     const i = await t.click(t.people.member, t.ids.make(GUILD, 'list', 'packs_:p1'));
@@ -184,10 +241,14 @@ describe('Browse and List buttons', () => {
       ['list', 'packs_:p1'],
       ['srcs', 'custom:my-station'],
       ['now', ''],
+      ['bsearch', 'x'],
     ] as const) {
       const i = await t.click(t.people.member, t.ids.make(GUILD, action, arg));
       expect(i.text).toMatch(/Radio commands are only allowed in <#800000000000000099>/);
     }
+    // A submitted search form is checked the same way.
+    const form = await t.submit(t.people.member, t.ids.make(GUILD, 'bsearch', 'x'), { search: 'jazz' });
+    expect(form.text).toMatch(/Radio commands are only allowed in <#800000000000000099>/);
   });
 });
 

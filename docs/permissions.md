@@ -73,8 +73,8 @@ Separately, the bot **operator** is the person running the bot: a Discord user l
 
 Each command, button and menu needs one of three kinds of access (*capabilities*): **read** to look, **control** to change what is playing, and **admin** for settings, custom stations and the other admin tools.
 
-- **read**: `/radio browse`, `list` (including `scope:favourites`), `now`, `quality`, `sources`, `inspect`, `status`, `help` and `queue list`. Also the buttons that browse, page through lists, refresh the now-playing card and open Sources or Inspect, including the Favourites filter in a browse list.
-- **control**: `/radio play`, `stop`, `join`, `leave`, `skip`, `queue add`, `queue remove` and `queue clear`. Also choosing a station from a browse list or a "which station did you mean?" menu, the Previous, Next, Skip, Stop and Leave buttons, and the **Favourite** and **Unfavourite** buttons. The source menu under `/radio sources` needs *control* too: it switches the source of the station that is playing, until the station changes. When an admin has pinned the station to one source, only admins can use that menu.
+- **read**: `/radio browse`, `list` (including `scope:favourites`), `now`, `quality`, `sources`, `inspect`, `status`, `help` and `queue list`. Also the buttons that browse, page through lists, refresh the now-playing card and open Sources or Inspect, including the Favourites filter and the **Search** box in a browse list, and the button that hides or shows custom stations in `/radio list`.
+- **control**: `/radio play`, `stop`, `join`, `leave`, `skip`, `queue add`, `queue remove` and `queue clear`. Also choosing a station from a browse list, a `/radio list` page or a "which station did you mean?" menu, the **Play now** button after `/radio add`, the Previous, Next, Skip, Stop and Leave buttons, and the **Favourite** and **Unfavourite** buttons. The source menu under `/radio sources` needs *control* too: it switches the source of the station that is playing, until the station changes. When an admin has pinned the station to one source, only admins can use that menu.
 - **admin**: `/radio stats` (and its Refresh button), `add`, `edit`, `remove`, `rescan` (and the **Check sources again** button), `sync`, `config` (and every settings control), `export`, `import` (and its Apply and Cancel buttons), `panel`, and `source pin`, `prefer`, `auto` and `verify`. Also the **Use this source first** and **Choose automatically** buttons under `/radio sources`. The Close button of `/radio stats` needs only *read*: it deletes the clicker's own private reply.
 
 ### Capability matrix
@@ -125,18 +125,19 @@ The capability check runs against that channel. So DJs and admins can name any c
 A button posted in a public channel must not let anyone get round the rules above. This is how the bot makes sure:
 
 1. **Every click is authorised again,** using the clicking user's current roles, channel and voice channel, exactly as the matching slash command would be. A Stop button in a public panel still needs *control*. A settings menu still needs *admin*.
-2. **Signed button IDs.** Every button and menu carries a hidden ID of the form `rb2:<action>:<argument>:<expiry>:<signature>`.
+2. **Signed button IDs.** Every button and menu, and the form behind Browse's **Search** button, carries a hidden ID of the form `rb2:<action>:<argument>:<expiry>:<signature>`.
    - The signature is an HMAC-SHA256 (a keyed checksum), cut to 16 characters. It covers the server ID and the rest of the ID, and uses a secret that each installation generates once and stores in its database. It is checked in constant time, so the time a check takes gives nothing away.
-   - A forged ID, or an ID copied from another server, fails the check with "This button or menu is not valid here.".
+   - A forged ID, or an ID copied from another server, fails the check with "This button or menu is not valid here." (for a form: "This form is not valid here.").
    - **The signature is not permission.** It only proves that this installation made the ID for this server. Step 1 still applies.
    - Every ID fits Discord's 100-character limit by design: the action name is at most 7 characters (all are listed in `COMPONENT_ACTIONS`), the argument at most 65 (the longest possible station ID) and the expiry 5. Making an ID with anything longer is refused.
    - IDs in the older `rb1` format (Radio Bot 1.0.5 and earlier) are still checked, then treated as expired. The control panel is redrawn when the bot starts, so its own buttons are replaced automatically.
 3. **Expiry.** The expiry is stored in whole minutes, rounded up.
-   - Now-playing buttons, sources views and "which station?" menus expire after 15 minutes.
+   - Now-playing card buttons (from `/radio play`, `/radio now`, `/radio join` and the buttons that play a station) expire after an hour. The bot keeps nothing for a card, so this costs nothing.
+   - Sources views, "which station?" menus, the **Play now** button after `/radio add` and `/radio list` pages expire after 15 minutes.
    - A browse list stays open for 15 minutes after it was last used.
    - Settings pages and the `/radio stats` panel expire after 30 minutes.
    - Import previews expire after 10 minutes.
-   - Expired controls answer "These buttons have expired. Run the command again." (an expired browse list says to run `/radio browse` again).
+   - Expired controls answer "These buttons have expired. Run the command again." (an expired browse list says to run `/radio browse` again). Browse's search box is a form with a signed, expiring ID too; an expired one answers "This form has expired. Run the command again."
    - Control-panel buttons never expire, so the panel keeps working across restarts. They are still authorised on every click.
 4. **State kept by the bot.** Browse lists and import previews are referred to by a random token. The list or preview itself stays inside the bot. An import can be applied only by an admin of the same server, only before its preview expires, and only once. Each server has at most one import preview: a new `/radio import` replaces the previous one, whose buttons then say it has expired.
 5. **Newer requests win.** Each play or switch request gets a number. An older request that is still running can't overwrite a newer one; its reply says "Request replaced: A newer station request took over from this one."
@@ -153,7 +154,7 @@ These limits are kept in memory (`RateLimits` in `src/discord/context.ts`), so r
 | Adding custom stations, with `/radio add` or by an import | server | 5 per hour |
 | Catalogue sync (`/radio sync`) | server | 2 per hour |
 | Catalogue sync (`/radio sync`) | whole installation | 1 per 10 min |
-| Button and menu clicks | user | 20 per 20 s |
+| Button and menu clicks, and submitted forms | user | 20 per 20 s |
 | Settings import (`/radio import`) | server | 5 per 10 min |
 
 Other limits that apply to the whole installation:

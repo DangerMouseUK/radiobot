@@ -5,9 +5,13 @@ import {
   ChannelSelectMenuBuilder,
   ChannelType,
   EmbedBuilder,
+  LabelBuilder,
   type MessageActionRowComponentBuilder,
+  ModalBuilder,
   RoleSelectMenuBuilder,
   StringSelectMenuBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } from 'discord.js';
 import { searchStations } from '../../catalogue/search.ts';
 import { AVAILABILITY_LABEL, type Station } from '../../catalogue/types.ts';
@@ -149,7 +153,9 @@ export function browseView(
           : // "No favourites yet" only when there are none: a search can also leave the favourites empty.
             onlyFavourites && favourites === 0
             ? 'No favourites yet. Press Favourite under a playing station to add one.'
-            : 'No stations match. Try a shorter search or another filter, or run `/radio browse` on its own to see every station.',
+            : state.search
+              ? 'No stations match. Press **Change search** to try a shorter or different word, or empty the search to see every station.'
+              : 'No stations match. Try another filter, or run `/radio browse` on its own to see every station.',
         4000,
       ),
     )
@@ -172,9 +178,13 @@ export function browseView(
       );
     components.push(row(select));
   }
-  // The favourites switch has a row of its own, so the page buttons below it stay an even pair.
+  // Search and the favourites switch share a row, so the page buttons below them stay an even pair.
   components.push(
     row(
+      new ButtonBuilder()
+        .setCustomId(ctx.ids.make(guildId, 'bsearch', token))
+        .setLabel(state.search ? 'Change search' : 'Search')
+        .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(ctx.ids.make(guildId, 'bfav', token))
         .setLabel(
@@ -190,6 +200,29 @@ export function browseView(
     ...pageRow(ctx, guildId, 'browse', (n) => `${token}:p${n}`, p, pages),
   );
   return { embeds: [embed], components };
+}
+
+/** The custom ID of the search modal's text box. */
+export const SEARCH_INPUT = 'search';
+
+/** The text box behind Browse's Search button; it keeps the current search so it can be changed. */
+export function browseSearchModal(ctx: AppContext, guildId: string, token: string, current: string | null) {
+  const input = new TextInputBuilder()
+    .setCustomId(SEARCH_INPUT)
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false)
+    .setMaxLength(60)
+    .setPlaceholder('For example: jazz');
+  if (current) input.setValue(current);
+  return new ModalBuilder()
+    .setCustomId(ctx.ids.make(guildId, 'bsearch', token))
+    .setTitle('Search stations')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('Name, alias or genre')
+        .setDescription('Leave it empty to see every station again.')
+        .setTextInputComponent(input),
+    );
 }
 
 /**
@@ -233,7 +266,8 @@ export function ambiguityView(
   return { embeds: [embed], components: [row(select)] };
 }
 
-export type ListScope = 'packs' | 'custom' | 'favourites';
+/** `all` is every station (the packs, then this server's custom stations); the others narrow it. */
+export type ListScope = 'all' | 'packs' | 'custom' | 'favourites';
 
 /** Encodes a list query into a component argument (pack ids never contain "_"). */
 export const listArg = (scope: ListScope, pack: string | null, page: number) =>
@@ -242,12 +276,37 @@ export const listArg = (scope: ListScope, pack: string | null, page: number) =>
 export function parseListArg(arg: string): { scope: ListScope; pack: string | null; page: number } {
   const [head = '', p = 'p0'] = arg.split(':');
   const [scope, pack] = head.split('_');
-  const valid: ListScope[] = ['packs', 'custom', 'favourites'];
+  const valid: ListScope[] = ['all', 'packs', 'custom', 'favourites'];
   return {
-    scope: valid.includes(scope as ListScope) ? (scope as ListScope) : 'packs',
+    scope: valid.includes(scope as ListScope) ? (scope as ListScope) : 'all',
     pack: pack ? pack : null,
     page: Number(p.slice(1)) || 0,
   };
+}
+
+/**
+ * The button that widens or narrows the list: hide or show this server's custom stations, or go
+ * back to every station from the custom or favourites list. None when a pack is chosen.
+ */
+function listToggle(ctx: AppContext, guildId: string, scope: ListScope, pack: string | null, custom: number) {
+  let to: ListScope;
+  let label: string;
+  if (scope === 'custom' || scope === 'favourites') {
+    to = 'all';
+    label = 'Show all stations';
+  } else if (pack || custom === 0) {
+    return null;
+  } else if (scope === 'all') {
+    to = 'packs';
+    label = `Hide custom stations (${custom})`;
+  } else {
+    to = 'all';
+    label = `Show custom stations (${custom})`;
+  }
+  return new ButtonBuilder()
+    .setCustomId(ctx.ids.make(guildId, 'list', listArg(to, null, 0)))
+    .setLabel(label)
+    .setStyle(ButtonStyle.Secondary);
 }
 
 export function listView(
@@ -258,6 +317,7 @@ export function listView(
   page: number,
 ): View {
   const all = visibleStations(ctx, guildId);
+  const custom = all.filter((s) => s.provider === 'custom');
   let list: Station[];
   if (scope === 'favourites') {
     // A lookup table, not a search per favourite: favourites have no cap, and packs can be large.
@@ -267,14 +327,20 @@ export function listView(
       .map((id) => byId.get(id))
       .filter((s): s is Station => Boolean(s));
   } else if (scope === 'custom') {
-    list = all.filter((s) => s.provider === 'custom');
+    list = custom;
+  } else if (pack) {
+    // A chosen pack lists only that pack, whichever of the two wider scopes asked for it.
+    list = all.filter((s) => s.provider === pack);
   } else {
-    list = all.filter((s) => s.provider !== 'custom' && (!pack || s.provider === pack));
+    // Already in order: the packs, then this server's custom stations.
+    list = scope === 'all' ? all : all.filter((s) => s.provider !== 'custom');
   }
   const per = PAGE_SIZE;
   const pages = Math.max(1, Math.ceil(list.length / per));
   const p = Math.min(Math.max(0, page), pages - 1);
-  const lines = groupedLines(ctx, list.slice(p * per, (p + 1) * per), null, true, p * per);
+  const slice = list.slice(p * per, (p + 1) * per);
+  const current = ctx.sessions.get(guildId)?.stationId ?? null;
+  const lines = groupedLines(ctx, slice, current, true, p * per);
   const title =
     scope === 'favourites'
       ? 'Favourite stations'
@@ -282,7 +348,9 @@ export function listView(
         ? 'Custom stations (this server)'
         : pack
           ? `Station pack: ${groupName(ctx, pack)}`
-          : 'Station packs';
+          : scope === 'all' && custom.length > 0
+            ? 'All stations'
+            : 'Station packs';
   const embed = new EmbedBuilder()
     .setTitle(title)
     .setColor(COLOR.info)
@@ -298,7 +366,7 @@ export function listView(
       ),
     );
   let footer = pageLine(p, pages, list.length);
-  if (scope === 'packs') {
+  if (scope === 'all' || scope === 'packs') {
     const cov = ctx.sources.coverage(list);
     footer += ` · ${cov.withSources} with a known stream · ${cov.usable} with a working stream · ${cov.verifiedPlayable} verified and playable`;
     const packMeta = pack ? ctx.packs.get(pack) : null;
@@ -311,11 +379,42 @@ export function listView(
     if (packMeta?.meta.disclaimer) footer += ` · ${packMeta.meta.disclaimer}`;
   }
   embed.setFooter({ text: truncate(`${footer}. ${DISCLAIMER}`, 2048) });
-  return {
-    embeds: [embed],
-    components: pageRow(ctx, guildId, 'list', (n) => listArg(scope, pack, n), p, pages),
-  };
+  // The menu plays a station from this page, as Browse's does; then the toggle, then the pages.
+  const components: Row[] = [];
+  if (slice.length > 0) {
+    // The pack is shown only when the page mixes several, which is when it tells them apart.
+    const several = new Set(slice.map((s) => s.provider)).size > 1;
+    components.push(
+      row(
+        new StringSelectMenuBuilder()
+          .setCustomId(ctx.ids.make(guildId, 'pick'))
+          .setPlaceholder('Choose a station to play')
+          .addOptions(
+            slice.map((s) => ({
+              label: truncate(s.displayName, 100),
+              value: s.id,
+              description: truncate(
+                `${AVAILABILITY_LABEL[ctx.sources.availability(s)]}${several ? ` · ${groupName(ctx, s.provider)}` : ''}`,
+                100,
+              ),
+              default: s.id === current,
+            })),
+          ),
+      ),
+    );
+  }
+  const toggle = listToggle(ctx, guildId, scope, pack, custom.length);
+  if (toggle) components.push(row(toggle));
+  components.push(...pageRow(ctx, guildId, 'list', (n) => listArg(scope, pack, n), p, pages));
+  return { embeds: [embed], components };
 }
+
+/**
+ * How long a now-playing card's buttons work. The bot keeps nothing for a card (the expiry is in
+ * each button's signed ID), so a long life costs nothing; an hour covers someone who leaves the
+ * card open while they listen. Browse lists keep state in memory, so they stay at 15 minutes.
+ */
+export const CARD_TTL_MS = 60 * 60_000;
 
 /**
  * Now-playing controls. `persistent` buttons (control panel) do not expire but are re-authorised on
@@ -328,7 +427,7 @@ export function controlRows(
   persistent = false,
   queue: readonly QueueEntry[] = ctx.guilds.listQueue(guildId),
 ): Row[] {
-  const ttl = persistent ? null : 15 * 60_000;
+  const ttl = persistent ? null : CARD_TTL_MS;
   const b = (action: ComponentAction, label: string, style: ButtonStyle, arg = '') =>
     new ButtonBuilder()
       .setCustomId(ctx.ids.make(guildId, action, arg, ttl))

@@ -17,6 +17,7 @@ import {
   type MessageActionRowComponentBuilder,
   type MessageComponentInteraction,
   MessageFlags,
+  type ModalSubmitInteraction,
   PermissionFlagsBits,
   RESTJSONErrorCodes,
   StringSelectMenuBuilder,
@@ -72,6 +73,7 @@ import {
 import {
   ambiguityView,
   type BrowseState,
+  browseSearchModal,
   browseView,
   type ConfigPage,
   configView,
@@ -79,6 +81,7 @@ import {
   type ListScope,
   listView,
   parseListArg,
+  SEARCH_INPUT,
   type View,
 } from './ui/views.ts';
 
@@ -117,6 +120,7 @@ const NO_DEFAULT_STATION = 'none';
 
 type Cmd = ChatInputCommandInteraction<'cached'>;
 type Comp = MessageComponentInteraction<'cached'>;
+type Modal = ModalSubmitInteraction<'cached'>;
 const EPHEMERAL = MessageFlags.Ephemeral;
 /** Shown when a quality change re-encodes the playing station. */
 const REENCODE_NOTE = 'The station restarts for a moment to use the new quality.';
@@ -136,6 +140,7 @@ export function describeInteraction(i: Interaction): string {
     const action = i.customId.split(':')[1] ?? '?';
     return `${i.isButton() ? 'button' : 'menu'} ${action.slice(0, 16)}`;
   }
+  if (i.isModalSubmit()) return `form ${(i.customId.split(':')[1] ?? '?').slice(0, 16)}`;
   return `type ${i.type}`;
 }
 
@@ -185,6 +190,7 @@ export class RadioController {
       if (i.isAutocomplete()) await this.#autocomplete(i);
       else if (i.isChatInputCommand() && i.commandName === 'radio') await this.#command(i);
       else if (i.isMessageComponent()) await this.#component(i);
+      else if (i.isModalSubmit()) await this.#modal(i);
     } catch (err) {
       await this.#fail(i, err);
     }
@@ -232,11 +238,11 @@ export class RadioController {
     }
   }
 
-  #auth(i: Cmd | Comp, cap: Capability, target: string | null = null): AuthResult {
+  #auth(i: Cmd | Comp | Modal, cap: Capability, target: string | null = null): AuthResult {
     return authorize(authContext(this.#ctx, i), this.#ctx.guilds.getSettings(i.guildId), cap, target);
   }
 
-  async #deny(i: Cmd | Comp, reason: string): Promise<void> {
+  async #deny(i: Cmd | Comp | Modal, reason: string): Promise<void> {
     await i.reply({ embeds: [errorEmbed(reason)], flags: EPHEMERAL });
   }
 
@@ -717,7 +723,7 @@ export class RadioController {
   async #cmdList(i: Cmd): Promise<void> {
     const pack = i.options.getString('pack');
     const requested = i.options.getString('scope') as ListScope | null;
-    const scope: ListScope = pack === 'custom' ? 'custom' : (requested ?? 'packs');
+    const scope: ListScope = pack === 'custom' ? 'custom' : (requested ?? 'all');
     const page = (i.options.getInteger('page') ?? 1) - 1;
     await this.#replyView(
       i,
@@ -1279,7 +1285,7 @@ export class RadioController {
           [
             `Stream checked: ${checkedLine(o)}`,
             `Station ID: \`${station.id}\` (custom, this server only).`,
-            'Play it with `/radio play`. It is listed under Custom in `/radio browse`, after the station packs.',
+            'Press **Play now**, or type its name in `/radio play`. It is also listed under **Custom (this server)** in `/radio browse` and `/radio list`, after the station packs.',
             o.transport === 'http-continuous' && i.options.getString('url', true).startsWith('http://')
               ? '⚠️ This stream uses plain HTTP, so it is not encrypted on its way to the bot.'
               : '',
@@ -1287,6 +1293,15 @@ export class RadioController {
             .filter(Boolean)
             .join('\n'),
           COLOR.ok,
+        ),
+      ],
+      // Playing it is the usual next step; the button checks Control like any other Play.
+      components: [
+        new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(this.#ctx.ids.make(i.guildId, 'play', station.id))
+            .setLabel('Play now')
+            .setStyle(ButtonStyle.Primary),
         ),
       ],
     });
@@ -1301,8 +1316,13 @@ export class RadioController {
     const url = i.options.getString('url');
     const website = i.options.getString('website');
     const description = i.options.getString('description');
-    if (!name && !url && website === null && description === null)
-      return this.#deny(i, 'Nothing to change. Give a new name, url, website or description.');
+    const category = i.options.getString('category');
+    const language = i.options.getString('language');
+    if (!name && !url && website === null && description === null && category === null && language === null)
+      return this.#deny(
+        i,
+        'Nothing to change. Give a new name, url, website, description, category or language.',
+      );
     if (url) this.#rate(this.#ctx.limits.probeGuild, i.guildId, 'stream checks');
     await i.deferReply({ flags: EPHEMERAL });
     const { station, report } = await this.#ctx.custom.edit(i.guildId, st.id, {
@@ -1310,12 +1330,16 @@ export class RadioController {
       ...(url ? { url } : {}),
       ...(website !== null ? { website } : {}),
       ...(description !== null ? { description } : {}),
+      ...(category !== null ? { category } : {}),
+      ...(language !== null ? { language } : {}),
     });
     const changed = [
       name ? 'name' : null,
       url ? 'stream URL' : null,
       website !== null ? 'website' : null,
       description !== null ? 'description' : null,
+      category !== null ? 'category' : null,
+      language !== null ? 'language' : null,
     ].filter(Boolean);
     await i.editReply({
       embeds: [
@@ -1702,8 +1726,8 @@ export class RadioController {
         {
           name: '🎧 Listen',
           value: lines(
-            '`/radio browse`: pick a station from the list',
-            '`/radio play <station>`: play a station in your voice channel',
+            '`/radio browse`: pick a station from the list (**Search** narrows it)',
+            '`/radio play <station>`: play a station in your voice channel (type part of its name)',
             '`/radio now` what is playing · `/radio stop` stop playing · `/radio leave` leave the channel',
             '-# Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
             '-# Station and queue changes, Stop and Leave are announced in the channel in one line. Everything else is shown only to you.',
@@ -1936,6 +1960,15 @@ export class RadioController {
           await i.update(browseView(this.#ctx, i.guildId, state, token!, Number((p ?? 'p0').slice(1)) || 0));
           return;
         }
+        case 'bsearch': {
+          const a = this.#auth(i, 'read');
+          if (!a.ok) return this.#deny(i, a.reason);
+          const state = this.#useBrowse(arg);
+          if (!state) return this.#deny(i, 'This station list has expired. Run /radio browse again.');
+          if (!i.isButton()) return;
+          await i.showModal(browseSearchModal(this.#ctx, i.guildId, arg, state.search));
+          return;
+        }
         case 'bfav': {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
@@ -2070,6 +2103,34 @@ export class RadioController {
       if (err instanceof AmbiguousStation) return;
       throw err;
     }
+  }
+
+  // ------------------------------------------------------------------ forms
+
+  /** A submitted form (modal). Its custom ID is signed like a button's and checked the same way. */
+  async #modal(i: Modal): Promise<void> {
+    const parsed = this.#ctx.ids.parse(i.guildId, i.customId);
+    if (parsed?.expired) {
+      await i.reply({
+        embeds: [errorEmbed('This form has expired. Run the command again.')],
+        flags: EPHEMERAL,
+      });
+      return;
+    }
+    if (parsed?.action !== 'bsearch') {
+      await i.reply({ embeds: [errorEmbed('This form is not valid here.')], flags: EPHEMERAL });
+      return;
+    }
+    this.#rate(this.#ctx.limits.componentUser, i.user.id, 'clicks');
+    const a = this.#auth(i, 'read');
+    if (!a.ok) return this.#deny(i, a.reason);
+    const state = this.#useBrowse(parsed.arg);
+    if (!state) return this.#deny(i, 'This station list has expired. Run /radio browse again.');
+    state.search = i.fields.getTextInputValue(SEARCH_INPUT).trim().slice(0, 60) || null;
+    const view = browseView(this.#ctx, i.guildId, state, parsed.arg, 0);
+    // The form was opened from the browse list, so the list itself changes to the results.
+    if (i.isFromMessage()) await i.update(view);
+    else await i.reply({ ...view, flags: EPHEMERAL });
   }
 
   /**

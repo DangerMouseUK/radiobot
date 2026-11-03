@@ -26,6 +26,7 @@ import {
 } from '../../src/discord/ui/format.ts';
 import {
   ambiguityView,
+  browseSearchModal,
   browseView,
   configView,
   controlRows,
@@ -119,6 +120,7 @@ const parseAll = (ids: ComponentIds, comps: Array<Record<string, unknown>>) =>
 
 describe('list arguments for paging buttons', () => {
   it.each([
+    ['all', null, 0],
     ['packs', 'fg', 0],
     ['packs', null, 3],
     ['custom', null, 1],
@@ -128,9 +130,9 @@ describe('list arguments for paging buttons', () => {
     expect(parseListArg(listArg(scope, pack, page))).toEqual({ scope, pack, page });
   });
 
-  it('falls back to the first page of all packs for unknown input', () => {
-    expect(parseListArg('')).toEqual({ scope: 'packs', pack: null, page: 0 });
-    expect(parseListArg('bogus_x:pz')).toEqual({ scope: 'packs', pack: 'x', page: 0 });
+  it('falls back to the first page of every station for unknown input', () => {
+    expect(parseListArg('')).toEqual({ scope: 'all', pack: null, page: 0 });
+    expect(parseListArg('bogus_x:pz')).toEqual({ scope: 'all', pack: 'x', page: 0 });
   });
 
   it('fits through a signed component id', () => {
@@ -208,14 +210,17 @@ describe('control buttons', () => {
     ]);
   });
 
-  it('builds persistent panel buttons that never expire, and expiring ones otherwise', () => {
+  it('builds persistent panel buttons that never expire, and card buttons that last an hour', () => {
     let now = 1_800_000_000_000;
     const { ctx, ids } = context({ now: () => now });
     const panel = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic', true) });
     const temporary = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic') });
     expect(panel).toHaveLength(10);
     expect(panel.map((c) => c.label)).toEqual(expect.arrayContaining(['Skip', 'Browse']));
-    now += 16 * 60_000;
+    // Still working after the 15 minutes they used to last, and up to the hour.
+    now += 59 * 60_000;
+    expect(parseAll(ids, temporary).every((p) => p && !p.expired)).toBe(true);
+    now += 2 * 60_000;
     expect(parseAll(ids, panel).every((p) => p && !p.expired)).toBe(true);
     expect(parseAll(ids, temporary).every((p) => p?.expired)).toBe(true);
   });
@@ -287,7 +292,7 @@ describe('browse and list views', () => {
     expect(empty().description).toMatch(/^No favourites yet\./);
     guilds.toggleFavourite(GUILD, ctx.stations.listStations(GUILD)[0]!.id);
     // There is a favourite now; the search is what found nothing, so say that.
-    expect(empty().description).toMatch(/^No stations match\. Try a shorter search/);
+    expect(empty().description).toMatch(/^No stations match\. Press \*\*Change search\*\*/);
     expect(empty().footer?.text).toMatch(/^Page 1\/1 · 0 stations · favourites only · search: "zzzz"\./);
   });
 
@@ -356,8 +361,10 @@ describe('browse and list views', () => {
     expect(e.footer?.text).toContain('not affiliated with or endorsed by any broadcaster');
     expect(e.footer?.text).not.toMatch(/Radio FG|Maison/);
     embedSize(v.embeds[0]!);
-    const nav = checkComponents(v);
-    expect(ids.parse(GUILD, String(nav[1]!.custom_id))).toMatchObject({ arg: 'packs_fg:p1' });
+    // The play menu, then the page buttons. A chosen pack has no custom stations to show or hide.
+    const [menu, , next] = checkComponents(v);
+    expect(ids.parse(GUILD, String(menu!.custom_id))).toMatchObject({ action: 'pick', arg: '' });
+    expect(ids.parse(GUILD, String(next!.custom_id))).toMatchObject({ arg: 'packs_fg:p1' });
   });
 
   it('shows empty custom and favourite lists without paging buttons', () => {
@@ -365,10 +372,79 @@ describe('browse and list views', () => {
     const custom = listView(ctx, GUILD, 'custom', null, 0);
     expect(custom.embeds[0]!.toJSON().description).toMatch(/^This server has no custom stations yet\./);
     expect(custom.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/1 · 0 stations\. /);
-    expect(custom.components).toEqual([]);
+    // No menu and no page buttons: only the way back to every station.
+    expect(checkComponents(custom).map((c) => c.label)).toEqual(['Show all stations']);
     expect(listView(ctx, GUILD, 'favourites', null, 0).embeds[0]!.toJSON().description).toMatch(
       /No favourites yet/,
     );
+  });
+
+  it('lists custom stations by default, after the packs, with a toggle to hide them', () => {
+    const { ctx, ids, stations } = context();
+    stations.insertCustomStation({
+      id: 'custom:my-station',
+      guildId: GUILD,
+      slug: 'my-station',
+      displayName: 'My Station',
+      description: null,
+      category: null,
+      websiteUrl: null,
+      language: null,
+      createdById: '900000000000000001',
+    });
+    const toggle = (v: View) =>
+      checkComponents(v).find(
+        (c) =>
+          (ids.parse(GUILD, String(c.custom_id)) as { action?: string } | null)?.action === 'list' && c.label,
+      )!;
+    // 63 pack stations, then the custom one on page 4 under its own heading.
+    const all = listView(ctx, GUILD, 'all', null, 3);
+    const e = all.embeds[0]!.toJSON();
+    expect(e.title).toBe('All stations');
+    expect(e.description).toMatch(/\*\*Custom \(this server\)\*\*\n64\. \*\*My Station\*\*/);
+    // The custom station here has no stream saved, so it is counted but has no known stream.
+    expect(e.footer?.text).toMatch(/^Page 4\/4 · 64 stations · 63 with a known stream/);
+    expect(toggle(all)).toMatchObject({ label: 'Hide custom stations (1)' });
+    expect(ids.parse(GUILD, String(toggle(all).custom_id))).toMatchObject({ arg: 'packs_:p0' });
+    // The menu plays from this page, and says which group each station is in when the page mixes them.
+    const menu = checkComponents(all)[0]!;
+    expect(ids.parse(GUILD, String(menu.custom_id))).toMatchObject({ action: 'pick' });
+    const options = menu.options as Array<{ label: string; value: string; description: string }>;
+    expect(options.at(-1)).toMatchObject({ label: 'My Station', value: 'custom:my-station' });
+    expect(options.at(-1)!.description).toMatch(/· Custom \(this server\)$/);
+
+    // Hidden: the packs only, and the toggle brings them back.
+    const packs = listView(ctx, GUILD, 'packs', null, 3);
+    expect(packs.embeds[0]!.toJSON().title).toBe('Station packs');
+    expect(packs.embeds[0]!.toJSON().description).not.toMatch(/My Station/);
+    expect(toggle(packs)).toMatchObject({ label: 'Show custom stations (1)' });
+    expect(ids.parse(GUILD, String(toggle(packs).custom_id))).toMatchObject({ arg: 'all_:p0' });
+  });
+
+  it('has no custom toggle, and the plain title, when the server has no custom stations', () => {
+    const { ctx, ids } = context();
+    const v = listView(ctx, GUILD, 'all', null, 0);
+    expect(v.embeds[0]!.toJSON().title).toBe('Station packs');
+    const actions = checkComponents(v).map((c) => ids.parse(GUILD, String(c.custom_id)));
+    // The menu and the two page buttons only.
+    expect(actions.map((p) => p && 'action' in p && p.action)).toEqual(['pick', 'list', 'list']);
+  });
+
+  it('has a Search button that opens a search box holding the current search', () => {
+    const { ctx, ids } = context();
+    const button = (search: string | null) =>
+      checkComponents(browseView(ctx, GUILD, { pack: null, category: null, search }, 'tok123', 0)).find(
+        (c) => (ids.parse(GUILD, String(c.custom_id)) as { action?: string } | null)?.action === 'bsearch',
+      )!;
+    expect(button(null)).toMatchObject({ label: 'Search' });
+    expect(button('techno')).toMatchObject({ label: 'Change search' });
+    expect(ids.parse(GUILD, String(button(null).custom_id))).toMatchObject({ arg: 'tok123' });
+
+    const modal = browseSearchModal(ctx, GUILD, 'tok123', 'techno').toJSON();
+    expect(ids.parse(GUILD, modal.custom_id)).toMatchObject({ action: 'bsearch', arg: 'tok123' });
+    expect(modal.custom_id.length).toBeLessThanOrEqual(100);
+    expect(JSON.stringify(modal.components)).toContain('"value":"techno"');
+    expect(JSON.stringify(browseSearchModal(ctx, GUILD, 'tok123', null).toJSON())).not.toContain('"value"');
   });
 
   it('offers at most 25 candidates when a name is ambiguous', () => {

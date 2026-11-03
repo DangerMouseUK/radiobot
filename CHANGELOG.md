@@ -6,8 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `/radio browse` has a **Search** button. It opens a small box to search by name, alias or genre, so you can change or clear the search without running the command again.
+- `/radio list` has a menu that plays a station from the page, as Browse does.
+- The reply to `/radio add` has a **Play now** button.
+- `/radio edit` can change a custom station's category and language, which `/radio add` could already set.
+### Fixed
+
+- `/radio list` left out this server's custom stations unless you chose the Custom scope, so a station you had just added seemed to be missing. It now lists every station by default (the packs, then this server's custom stations), with a button to hide or show the custom ones and a new **All stations** scope choice. **Station packs only**, **Custom (this server)** and **Favourites** still narrow the list.
+
 ### Changed
 
+- The buttons on a private now-playing card (from `/radio play`, `/radio now`, `/radio join` and the buttons that play a station) now work for an hour instead of 15 minutes, so a card left open while you listen keeps working. The control panel's buttons still never expire, and browse lists still close 15 minutes after they were last used.
 - Plainer English across the bot, the `radio-bot` command and the docs, for people who are new to Discord bots or to running a server. Buttons, menus, replies and error messages now say what happens rather than how it works inside. No command or option was renamed. The most visible changes:
   - The control panel and now-playing buttons are in rows of two or three, so every row fits a phone screen: **Previous**, **Next** and **Skip**; **Browse** and **Favourite**; **Sources** and **Inspect**; then **Refresh**, **Stop** and **Leave**. **Skip** no longer shows a count (it is blurple while something is queued, and "Up next" lists the queue). **Stop** is no longer red, because it deletes nothing. The now-playing card shows the stream in one full-width field instead of three narrow columns.
   - `/radio config` shows only the page you're on, and each page ends with the page buttons (**Access**, **Playback**, **Notices**). **Who else can control the radio** moved to the Access page, next to the other access settings. **Autostart**, **Resume after restart** and **Channel lock** (formerly **Lock to preferred channel**) are now one menu that says what each does, because three buttons didn't fit a phone. Menu options have short names, with the detail underneath. `/radio config default_station:` or `manual_bitrate:` opens the Playback page, where the change shows.

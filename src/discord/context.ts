@@ -79,10 +79,11 @@ export class RateLimits {
   }
 }
 
+/** A form (modal) submission may not say which channel it came from; authorize() then refuses where it matters. */
 type GuildInteraction = Pick<
   ChatInputCommandInteraction<'cached'>,
-  'guildId' | 'user' | 'member' | 'channelId' | 'guild' | 'memberPermissions'
->;
+  'guildId' | 'user' | 'member' | 'guild' | 'memberPermissions'
+> & { channelId: string | null };
 
 /** Builds the authorisation context from the interaction itself (no member intent needed). */
 export function authContext(ctx: AppContext, i: GuildInteraction): AuthContext {

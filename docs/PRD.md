@@ -145,7 +145,7 @@ Provenance details for each station are recorded in the pack folder's `SOURCE_PR
 - Packs are enabled by `enabledByDefault`, `ENABLED_PACKS` and `DISABLED_PACKS`. Stations of a disabled or missing pack are hidden.
 - The bundled starter pack has all 63 names on its broadcaster's official list (Appendix A), with aliases and six categories.
 - Partial and fuzzy search by name, alias, tag or category (for example `techno`, `deep`, `lounge`, or part of a station's name).
-- `/radio browse` and `/radio list` group stations under pack headings in pack order, with custom stations last. They filter by pack and by category (categories come from the enabled packs), and are paged to fit Discord's component limits.
+- `/radio browse` and `/radio list` group stations under pack headings in pack order, with custom stations last. They filter by pack and by category (categories come from the enabled packs), and are paged to fit Discord's component limits. `/radio list` shows every station by default, custom ones included, with a button to hide or show the custom stations. Both have a menu that plays a station from the page, and Browse has a **Search** button that opens a search box.
 - Visible statuses: Available, Degraded, Unverified, Temporarily unavailable, No stream source known, Retired.
 - Ambiguous input is never resolved silently: only an exact ID, name or alias match, or a single clearly dominant match, plays directly; otherwise the user picks from a list.
 
@@ -327,13 +327,13 @@ One top-level `/radio` command, registered per server.
 
 | Command | Who | Purpose |
 |---|---|---|
-| `/radio browse [pack] [category] [search]` | Everyone | Station picker grouped by pack; pack and category autocomplete; choose to play |
+| `/radio browse [pack] [category] [search]` | Everyone | Station picker grouped by pack; pack and category autocomplete; a Search button; choose to play |
 | `/radio play <station> [channel]` | DJ / eligible listener | Play or switch station |
 | `/radio stop` | DJ / eligible listener | Stop audio; stay connected briefly; cancel auto-resume |
 | `/radio join [channel]` | DJ / eligible listener | Join, and play the default station if set |
 | `/radio leave` | DJ / eligible listener | Disconnect; no rejoin until the next play |
 | `/radio now` | Everyone | Station, state, source, output, track |
-| `/radio list [packs\|custom\|favourites] [pack] [page]` | Everyone | Stations with statuses and IDs, grouped by pack |
+| `/radio list [all\|packs\|custom\|favourites] [pack] [page]` | Everyone | Stations with statuses and IDs, grouped by pack (all of them by default); choose to play |
 | `/radio inspect <station>` | Everyone | Full technical inspection of all candidates |
 | `/radio sources <station>` | Everyone | Candidates, choice and fallback |
 | `/radio quality` | Everyone | Input vs output report |
