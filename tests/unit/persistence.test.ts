@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Db, loadMigrations, type Migration, matchOwner } from '../../src/persistence/db.ts';
 import { GuildRepository } from '../../src/persistence/repositories/guilds.ts';
-import { StationRepository } from '../../src/persistence/repositories/stations.ts';
+import { compareNoCase, StationRepository } from '../../src/persistence/repositories/stations.ts';
 import { bootDecision } from '../../src/voice/session-manager.ts';
 import { memoryDb } from '../helpers.ts';
 
@@ -418,16 +418,163 @@ describe('station and source cache', () => {
     expect(stations.getStation('mypack:b')?.catalogueStatus).toBe('missing_from_official');
     expect(stations.listStations(null).map((x) => x.id)).toEqual(['mypack:a', 'mypack:b']);
     expect(all).not.toHaveBeenCalled();
-    // A new source, a move to another station or priority, or a delete re-reads the source list
-    // (rare, and cheaper than re-sorting it per row while a pack is seeded) and lands right.
+    // A new source, a move to another station or priority, or a delete is put in place too.
     stations.upsertSeedSource({ ...source('s1', 'mypack:b', 1), url: 'https://moved.example.com/' });
     stations.upsertSeedSource(source('s3', 'mypack:a', 0));
     expect(stations.listSources('mypack:a').map((x) => x.id)).toEqual(['s3', 's2']);
     expect(stations.listSources('mypack:b').map((x) => x.id)).toEqual(['s1']);
     stations.deleteSource('s2');
     expect(stations.listAllSources().map((x) => x.id)).toEqual(['s3', 's1']);
-    // The station list was not re-read for any of it.
-    expect(all.mock.calls.every(([sql]) => String(sql).includes('station_sources'))).toBe(true);
+    // So are a new pack station and a rename that moves one.
+    stations.upsertProviderStation(station('mypack:c', 'A first'));
+    stations.renameStation('mypack:a', 'Zed', true);
+    expect(stations.listStations(null).map((x) => x.id)).toEqual(['mypack:c', 'mypack:b', 'mypack:a']);
+    expect(all).not.toHaveBeenCalled();
+  });
+
+  it('keeps both caches the same as a fresh read through a run of writes, never reading a table again', () => {
+    const { db, stations } = memoryDb();
+    // Names that sort differently with and without NOCASE, accents, and a character beyond U+FFFF.
+    const names = [
+      'alpha',
+      'Beta',
+      'beta two',
+      'Émile',
+      'émile',
+      'zulu',
+      'Zulu FM',
+      '_under',
+      '😀 Smile',
+      'ﬀ',
+    ];
+    let seed = 7;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    for (let i = 0; i < 6; i++)
+      stations.upsertProviderStation({ ...station(`mypack:s${i}`), sortOrder: i % 3 });
+    for (let i = 0; i < 6; i++) stations.upsertSeedSource(source(`src${i}`, `mypack:s${i % 3}`, i % 2));
+    stations.insertCustomStation({
+      id: 'custom:mine',
+      guildId: '111111111111111111',
+      slug: 'mine',
+      displayName: 'Mine',
+      description: null,
+      category: null,
+      websiteUrl: null,
+      language: null,
+      createdById: '222222222222222222',
+    });
+    stations.upsertSeedSource(source('src-custom', 'custom:mine'));
+    stations.listStations('111111111111111111');
+    stations.listAllSources();
+    const all = vi.spyOn(db, 'all');
+    let next = 6;
+    for (let step = 0; step < 300; step++) {
+      const st = `mypack:s${rand(next)}`;
+      switch (rand(7)) {
+        case 0:
+          stations.upsertProviderStation({
+            ...station(`mypack:s${next++}`, names[rand(names.length)]),
+            sortOrder: rand(3),
+          });
+          break;
+        case 1:
+          stations.renameStation(st, names[rand(names.length)]!, rand(2) === 0);
+          break;
+        case 2:
+          stations.upsertProviderStation({ ...station(st, names[rand(names.length)]), sortOrder: rand(3) });
+          break;
+        case 3:
+          stations.setCatalogueStatus(st, rand(2) === 0 ? 'retired' : 'active');
+          break;
+        case 4:
+          stations.upsertSeedSource(source(`src${rand(40)}`, st, rand(3)));
+          break;
+        case 5:
+          stations.deleteSource(`src${rand(40)}`);
+          break;
+        default:
+          stations.markSeen([st, `mypack:s${rand(next)}`], `2026-11-0${1 + rand(9)}`);
+      }
+    }
+    stations.deleteGuildCustomStations('111111111111111111');
+    // Only the rows written were read again (by ID, or that server's custom stations), never a table.
+    for (const [sql] of all.mock.calls) expect(sql).toMatch(/WHERE (id IN|provider = 'custom' AND guild_id)/);
+    const fresh = new StationRepository(db);
+    const ids = (list: Array<{ id: string }>) => list.map((x) => x.id);
+    expect(ids(stations.listStations(null, { includeRetired: true }))).toEqual(
+      ids(fresh.listStations(null, { includeRetired: true })),
+    );
+    expect(stations.listStations(null)).toEqual(fresh.listStations(null));
+    expect(stations.listAllSources()).toEqual(fresh.listAllSources());
+    expect(stations.providerIds()).toEqual(fresh.providerIds());
+    expect(stations.getSource('src-custom')).toBeNull();
+    for (let i = 0; i < next; i++) {
+      expect(stations.getStation(`mypack:s${i}`)).toEqual(fresh.getStation(`mypack:s${i}`));
+      expect(stations.listSources(`mypack:s${i}`)).toEqual(fresh.listSources(`mypack:s${i}`));
+    }
+  });
+
+  it('compares names the way SQLite’s NOCASE collation does', () => {
+    const { db } = memoryDb();
+    const words = [
+      '',
+      'a',
+      'A',
+      'ab',
+      'aB',
+      'b',
+      'Z',
+      '_',
+      '[',
+      '`',
+      'é',
+      'É',
+      'z',
+      '�',
+      '😀',
+      '😁',
+      'ﬀ',
+      'a😀',
+    ];
+    for (const a of words) {
+      for (const b of words) {
+        const r = db.get<{ c: number }>(
+          'SELECT CASE WHEN ?1 = ?2 COLLATE NOCASE THEN 0 WHEN ?1 < ?2 COLLATE NOCASE THEN -1 ELSE 1 END AS c',
+          [a, b],
+        )!;
+        expect(Math.sign(compareNoCase(a, b)), `${a} vs ${b}`).toBe(r.c);
+      }
+    }
+  });
+
+  it('drops a deleted custom station’s sources from the cache without reading them all again', () => {
+    const { db, stations } = memoryDb();
+    stations.upsertProviderStation(station('mypack:a'));
+    stations.upsertSeedSource(source('s1', 'mypack:a'));
+    stations.insertCustomStation({
+      id: 'custom:mine',
+      guildId: '111111111111111111',
+      slug: 'mine',
+      displayName: 'Mine',
+      description: null,
+      category: null,
+      websiteUrl: null,
+      language: null,
+      createdById: '222222222222222222',
+    });
+    stations.upsertSeedSource(source('s2', 'custom:mine'));
+    expect(stations.listAllSources().map((x) => x.id)).toEqual(['s2', 's1']);
+    const all = vi.spyOn(db, 'all');
+    // Another server's station of that ID is not this server's to delete.
+    expect(stations.deleteCustomStation('333333333333333333', 'custom:mine')).toBe(false);
+    expect(stations.getSource('s2')).not.toBeNull();
+    expect(stations.deleteCustomStation('111111111111111111', 'custom:mine')).toBe(true);
+    expect(stations.getSource('s2')).toBeNull();
+    expect(stations.listAllSources().map((x) => x.id)).toEqual(['s1']);
+    expect(all.mock.calls.some(([sql]) => String(sql).includes('FROM station_sources'))).toBe(false);
   });
 
   it("lists each server's own custom stations without scanning every server's", () => {

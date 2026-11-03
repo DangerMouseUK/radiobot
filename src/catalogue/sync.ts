@@ -38,8 +38,9 @@ export const MAX_OFFICIAL_ENTRIES = 5000;
  */
 const SLICE_MS = 2;
 /**
- * Most changes written in one transaction (about 2 ms of writes here). A day's changes to a
- * station group's list are a handful, so a sync is normally written all or nothing.
+ * Most rows written in one transaction (about 2 ms of writes here). A day's changes to a
+ * station group's list are a handful, so they are normally written all or nothing; marking
+ * thousands of stations seen again is written in several (one statement took over 20 ms).
  */
 const WRITE_BATCH = 50;
 
@@ -83,6 +84,8 @@ export interface CatalogueSyncOptions {
 
 /** One change a sync makes: `write` runs inside a transaction, `record` once that has committed. */
 interface SyncStep {
+  /** Rows it writes, towards a transaction's `batchSize` (1 if not given). */
+  rows?: number;
   write(): void;
   record(report: SyncReport): void;
 }
@@ -261,20 +264,12 @@ export class CatalogueSync {
       if (s.externalId) byExternal.set(s.externalId, s);
       byName.set(normalizeName(s.displayName), s);
     }
-    // Stations on the list are marked active and seen today in a single statement, the first step:
-    // the daily sync of an unchanged list is that one write.
+    // Stations on the list are marked active and seen today first, a batch's worth to a statement:
+    // the daily sync of an unchanged list is just those writes, one for nearly every station.
     const seenToday: string[] = [];
     const returned: string[] = [];
     let unchanged = 0;
-    const steps: SyncStep[] = [
-      {
-        write: () => repo.markSeen(seenToday, today),
-        record: (r) => {
-          r.returned.push(...returned);
-          r.unchanged += unchanged;
-        },
-      },
-    ];
+    const steps: SyncStep[] = [];
     const seen = new Set<string>();
     const unmatched: Array<{ e: OfficialEntry; index: number }> = [];
     for (const [index, e] of entries.entries()) {
@@ -359,20 +354,39 @@ export class CatalogueSync {
         record: (r) => r.missing.push(s.displayName),
       });
     }
-    return steps;
+    const seenSteps: SyncStep[] = [];
+    for (let i = 0; i < seenToday.length; i += this.#batchSize) {
+      const ids = seenToday.slice(i, i + this.#batchSize);
+      seenSteps.push({ rows: ids.length, write: () => repo.markSeen(ids, today), record: () => {} });
+    }
+    // The counts go with the last of them: they hold once every station on the list is marked.
+    const record = (r: SyncReport) => {
+      r.returned.push(...returned);
+      r.unchanged += unchanged;
+    };
+    const last = seenSteps.at(-1);
+    if (last) last.record = record;
+    else seenSteps.push({ rows: 0, write: () => {}, record });
+    return [...seenSteps, ...steps];
   }
 
   /**
-   * Writes the changes in one transaction, all or nothing. Only a list with more than
-   * `batchSize` changes at once (hundreds of new stations, say) is written in several, giving the
-   * event loop a turn in between; each is all or nothing, and the report lists only what was
-   * written: if one fails, the changes before it stay and the next sync does the rest.
+   * Writes the changes in transactions of at most `batchSize` rows, giving the event loop a turn
+   * in between: a handful of changes is one transaction, all or nothing, and a big one (every
+   * station seen again today, hundreds of new stations) is several. Each is all or nothing, and
+   * the report lists only what was written: if one fails, the changes before it stay and the
+   * next sync does the rest.
    */
   async #write(steps: SyncStep[], report: SyncReport, signal?: AbortSignal): Promise<void> {
-    for (let from = 0; from < steps.length; from += this.#batchSize) {
-      if (from > 0) await yieldToEventLoop();
+    let next = 0;
+    while (next < steps.length) {
+      if (next > 0) await yieldToEventLoop();
       if (signal?.aborted) throw new RadioError('CANCELLED', 'The sync was cancelled.');
-      const batch = steps.slice(from, from + this.#batchSize);
+      const batch: SyncStep[] = [];
+      for (let rows = 0; next < steps.length && rows < this.#batchSize; next++) {
+        batch.push(steps[next]!);
+        rows += steps[next]!.rows ?? 1;
+      }
       this.#repo.transaction(() => {
         for (const step of batch) step.write();
       });

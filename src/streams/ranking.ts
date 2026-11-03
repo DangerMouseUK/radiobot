@@ -1,5 +1,6 @@
 import type { StationSource } from '../catalogue/types.ts';
 import type { SourcePreference } from '../persistence/repositories/guilds.ts';
+import { compareText } from '../shared/text.ts';
 import { codecLabel } from './probe.ts';
 
 export type QualityConclusion =
@@ -181,7 +182,7 @@ export function compareSources(a: StationSource, b: StationSource): number {
   if (a.startupMs !== null && b.startupMs !== null && Math.abs(a.startupMs - b.startupMs) > 1500) {
     return a.startupMs - b.startupMs;
   }
-  return a.priority - b.priority || a.id.localeCompare(b.id);
+  return a.priority - b.priority || compareText(a.id, b.id);
 }
 
 function describe(s: StationSource): string {
@@ -212,7 +213,7 @@ export function selectSource(
   // start from a fixed order: the choice then never depends on database row order.
   const ordered = sources
     .filter((s) => eligibleIds.has(s.id))
-    .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+    .sort((a, b) => a.priority - b.priority || compareText(a.id, b.id))
     .sort(compareSources);
   const mode = preference?.mode ?? 'auto';
   const explanation: string[] = [];

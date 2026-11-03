@@ -318,6 +318,27 @@ describe('CatalogueSync: staying off the voice thread', () => {
     expect(r.added).toEqual(extra);
   });
 
+  it('marks the stations still listed as seen a batch at a time, not in one long statement', async () => {
+    const { sync, stations } = setup(ALL, undefined, { batchSize: 3 });
+    const transactions = vi.spyOn(stations, 'transaction');
+    const markSeen = vi.spyOn(stations, 'markSeen');
+    const r = await sync.sync('mypack', 'admin');
+    expect(r).toMatchObject({ ok: true, unchanged: 4, added: [] });
+    expect(markSeen.mock.calls.map(([ids]) => ids.length)).toEqual([3, 1]);
+    expect(transactions).toHaveBeenCalledTimes(2);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(stations.listProviderStations('mypack').map((s) => s.officialLastSeenAt?.slice(0, 10))).toEqual([
+      today,
+      today,
+      today,
+      today,
+    ]);
+    // Seen already today: nothing to mark, and the report still counts them.
+    markSeen.mockClear();
+    expect(await sync.sync('mypack', 'admin')).toMatchObject({ ok: true, unchanged: 4 });
+    expect(markSeen).not.toHaveBeenCalled();
+  });
+
   it('keeps what an earlier transaction wrote when a later one fails, and reports just that', async () => {
     // One change per transaction.
     const { sync, stations } = setup([...ALL, 'New One', 'New Two'], undefined, { batchSize: 1 });

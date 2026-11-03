@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import type { StationRepository } from '../persistence/repositories/stations.ts';
 import { rootPath } from '../shared/paths.ts';
-import { normalizeName } from '../shared/text.ts';
+import { compareText, normalizeName } from '../shared/text.ts';
 import { botVersion, compareVersions } from '../shared/version.ts';
 import { SYNC_ADAPTERS } from './sync-adapters.ts';
 
@@ -297,7 +297,7 @@ export interface SkippedPack {
  */
 export function packConflict(
   packs: readonly StationPack[],
-  pack: StationPack,
+  pack: Pick<StationPack, 'meta' | 'dir'> & { sources: ReadonlyArray<{ id: string }> },
   opts: { replacing?: boolean } = {},
 ): string | null {
   const other = packs.find((p) => p.meta.id === pack.meta.id);
@@ -339,7 +339,7 @@ export class PackRegistry {
   }
 
   #rebuild(): void {
-    this.#packs.sort((a, b) => a.meta.order - b.meta.order || a.meta.id.localeCompare(b.meta.id));
+    this.#packs.sort((a, b) => a.meta.order - b.meta.order || compareText(a.meta.id, b.meta.id));
     this.#byId.clear();
     this.#brand.clear();
     this.#enabled.clear();

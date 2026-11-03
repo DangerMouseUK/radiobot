@@ -12,9 +12,11 @@ import {
 } from 'discord.js';
 import { checkFfmpeg, ProcessRegistry } from './audio/ffmpeg.ts';
 import { CustomStationService } from './catalogue/custom-provider.ts';
+import { warmLocaleData } from './catalogue/pack-library.ts';
 import { PackManager } from './catalogue/pack-manager.ts';
 import { installedPacksDir, PackStore } from './catalogue/pack-store.ts';
 import { PackRegistry, seedPacks } from './catalogue/packs.ts';
+import { prepareStations } from './catalogue/search.ts';
 import { CatalogueSync } from './catalogue/sync.ts';
 import { scheduleCatalogueSyncs } from './catalogue/sync-schedule.ts';
 import type { AppConfig } from './config/env.ts';
@@ -81,6 +83,9 @@ export function createApp(
     },
     'station packs loaded',
   );
+  // One-off costs paid here, before anything plays, rather than by the first search or stats.
+  warmLocaleData();
+  prepareStations(stations.listBuiltinStations());
 
   const policy = new UrlPolicy({ allowInsecureHttp: config.allowInsecureHttpStreams });
   const http = new SafeHttpClient(policy, undefined, config.streamUserAgent ?? undefined);

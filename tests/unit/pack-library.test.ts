@@ -3,21 +3,24 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runPacksCli } from '../../scripts/packs.ts';
 import {
   bundleUrl,
   checkBundle,
   countryName,
+  installable,
   type LibraryIndex,
+  type LibraryPack,
   languageName,
   parseLibraryIndex,
   searchLibrary,
+  warmLocaleData,
 } from '../../src/catalogue/pack-library.ts';
-import { PackManager } from '../../src/catalogue/pack-manager.ts';
+import { checkBundleInWorker, loadPackInWorker, PackManager } from '../../src/catalogue/pack-manager.ts';
 import { installedPacksDir, PackStore } from '../../src/catalogue/pack-store.ts';
-import { PackRegistry, seedPackInSlices } from '../../src/catalogue/packs.ts';
+import { loadPack, PackRegistry, seedPackInSlices } from '../../src/catalogue/packs.ts';
 import { compareVersions } from '../../src/shared/version.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
@@ -190,6 +193,50 @@ describe('library index and bundles', () => {
     expect(searchLibrary(lib.index, { language: 'FR' }).map((p) => p.id)).toEqual(['beta']);
     expect(countryName('GB')).toBe('United Kingdom');
     expect(languageName('fr')).toBe('French');
+  });
+
+  it('names countries and languages after start-up has set them up, and keeps a bad code as it is', () => {
+    warmLocaleData();
+    expect(countryName('FR')).toBe('France');
+    expect(languageName('de')).toBe('German');
+    expect(countryName('not a code')).toBe('not a code');
+  });
+});
+
+describe('pack workers', () => {
+  it('loads a pack folder exactly as the main thread would, a chunk at a time', async () => {
+    const store = new PackStore(join(temp(), 'installed-packs'));
+    const bytes = bundleBytes(packFiles('alpha', '2026.11.01', 600));
+    await store.install(checkBundle(bytes, { id: 'alpha', sha256: null }), 'official');
+    let turns = 0;
+    let done = false;
+    const spin = () => {
+      if (done) return;
+      turns++;
+      setImmediate(spin);
+    };
+    setImmediate(spin);
+    const pack = await loadPackInWorker(store.packDir('alpha'));
+    done = true;
+    expect(pack).toStrictEqual(loadPack(store.packDir('alpha'), 'installed'));
+    // 600 stations and 600 sources, 250 to a chunk: six chunks, each parsed in a turn of its own.
+    expect(turns).toBeGreaterThanOrEqual(6);
+    // Every optional field survives the trip too.
+    for (const dir of [join('catalog', 'packs', '_template'), join('tests', 'fixtures', 'packs', 'demo')])
+      expect(await loadPackInWorker(resolve(dir))).toStrictEqual(loadPack(resolve(dir), 'installed'));
+  });
+
+  it('sends back only what installing a checked bundle needs', async () => {
+    const bytes = bundleBytes(packFiles('alpha', '2026.11.01'));
+    const expected = installable(checkBundle(bytes, { id: 'alpha', sha256: null }));
+    const checked = await checkBundleInWorker(bytes, { id: 'alpha', sha256: sha(bytes) } as LibraryPack);
+    expect(checked).toStrictEqual(expected);
+    expect(checked.pack.sources).toEqual([
+      { id: 'alpha-1-mp3' },
+      { id: 'alpha-2-mp3' },
+      { id: 'alpha-3-mp3' },
+    ]);
+    expect(Object.keys(checked.pack)).toEqual(['meta', 'sources']);
   });
 });
 

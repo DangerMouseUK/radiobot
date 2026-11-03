@@ -369,12 +369,7 @@ async function install(
   const checked = checkBundle(await lib.bundle(entry), { id, sha256: entry.sha256 });
   const conflict = packConflict(
     registry.packs,
-    {
-      ...checked.pack,
-      dir: store.packDir(id),
-      origin: 'installed',
-      contentHash: '',
-    },
+    { ...checked.pack, dir: store.packDir(id) },
     { replacing: true },
   );
   if (conflict) throw new Error(conflict);
