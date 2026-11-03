@@ -146,8 +146,14 @@ describe('/radio option ranges agree with the code that consumes them', () => {
 
   it('list scope choices are exactly the scopes the list view understands', () => {
     const values = (find('list scope').choices ?? []).map((c) => String(c.value));
-    expect(values).toEqual(['packs', 'custom', 'favourites']);
+    expect(values).toEqual(['all', 'packs', 'custom', 'favourites']);
     for (const v of values) expect(parseListArg(`${v}_:p0`).scope).toBe(v);
+  });
+
+  it('/radio edit can change everything /radio add sets, apart from the station itself', () => {
+    const optionNames = (sub: string) =>
+      flat.filter((x) => x.path.startsWith(`${sub} `)).map((x) => x.o.name);
+    expect(optionNames('edit').filter((n) => n !== 'station')).toEqual(optionNames('add'));
   });
 
   it('every station-taking subcommand uses an autocompleted, required station option', () => {

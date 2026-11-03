@@ -20,6 +20,7 @@ export const MAX_ACTION_LENGTH = 7;
 export const COMPONENT_ACTIONS = [
   'bfav',
   'browse',
+  'bsearch',
   'cfg',
   'close',
   'fav',

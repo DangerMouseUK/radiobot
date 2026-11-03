@@ -150,7 +150,7 @@ In particular:
 ### Discord permissions
 
 - **Ask for nothing new without discussion.** No new gateway intents and no new bot permissions unless they have been discussed in an issue. The documented minimal set is a feature.
-- **Check permissions on the server side.** Every new command or component must call `authorize()` with the right capability (`read`, `control` or `admin`). Components must use `ComponentIds`. Add a new action to `COMPONENT_ACTIONS` in `src/discord/components/custom-id.ts` (at most 7 characters); its argument can be at most 65 characters, which is the longest station ID, so every ID fits Discord's 100-character limit.
+- **Check permissions on the server side.** Every new command, component or form (modal) must call `authorize()` with the right capability (`read`, `control` or `admin`). Components and forms must use `ComponentIds`. Add a new action to `COMPONENT_ACTIONS` in `src/discord/components/custom-id.ts` (at most 7 characters); its argument can be at most 65 characters, which is the longest station ID, so every ID fits Discord's 100-character limit.
 - **Statistics stay private.** `/radio stats` and other diagnostics are ephemeral and admin-only; never post them publicly.
 - **`/radio` is full.** It uses all 25 top-level options Discord allows. A new command has to go into a subcommand group (as `queue` and `source` do), or replace an existing subcommand.
 - **Admin means owner or Administrator.** Don't reintroduce admin roles or Manage Server checks without an issue first.

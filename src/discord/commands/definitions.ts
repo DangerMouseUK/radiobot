@@ -82,9 +82,10 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addStringOption((o) =>
           o
             .setName('scope')
-            .setDescription('Which stations to list')
+            .setDescription('Which stations to list (all of them if you leave this out)')
             .addChoices(
-              { name: 'Station packs', value: 'packs' },
+              { name: 'All stations', value: 'all' },
+              { name: 'Station packs only', value: 'packs' },
               { name: 'Custom (this server)', value: 'custom' },
               { name: 'Favourites', value: 'favourites' },
             ),
@@ -153,6 +154,10 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
         .addStringOption((o) => o.setName('website').setDescription('Station website').setMaxLength(300))
         .addStringOption((o) =>
           o.setName('description').setDescription('Short description').setMaxLength(300),
+        )
+        .addStringOption((o) => o.setName('category').setDescription('Category or genre').setMaxLength(40))
+        .addStringOption((o) =>
+          o.setName('language').setDescription('Language the station broadcasts in').setMaxLength(20),
         ),
     )
     .addSubcommand((s) =>
