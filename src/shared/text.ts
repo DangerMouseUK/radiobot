@@ -76,3 +76,8 @@ export function truncate(text: string, max: number): string {
   if (last >= 0xd800 && last <= 0xdbff) cut--;
   return `${text.slice(0, cut)}…`;
 }
+
+/** A count with its noun: "1 station", "63 stations". */
+export function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}

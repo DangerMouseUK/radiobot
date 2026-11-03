@@ -153,7 +153,14 @@ exec_low() {
 # stopped or restarting, so backups can be fetched from a bot that won't start.
 copy_backups_out() {
   mkdir -p backups && chmod 700 backups &&
-    "${DOCKER[@]}" cp "$SERVICE:/app/data/backups/." backups/ >/dev/null
+    "${DOCKER[@]}" cp "$SERVICE:/app/data/backups/." backups/ >/dev/null && own_copies backups
+}
+
+# docker cp writes its copies as whoever runs it, so as root when Docker needs sudo. Gives them back to
+# the user and keeps them private: they hold the bot's settings.
+own_copies() { # own_copies DIR
+  if [ "${DOCKER[0]}" = sudo ]; then sudo chown -R "$(id -u):$(id -g)" "$1" 2>/dev/null || true; fi
+  chmod -R go-rwx "$1" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------- versions
@@ -551,6 +558,8 @@ cmd_packs() {
   ensure_docker
   [ $# -gt 0 ] || set -- list
   local sub=$1 state status=0
+  # add and update exit 3 when every pack was already up to date: then there's nothing to load.
+  case "$sub" in add | update) set -- "$@" --unchanged-status ;; esac
   state=$(container_state)
   if [ "$state" = running ]; then
     exec_low node dist/scripts/packs.js "$@" || status=$?
@@ -559,7 +568,9 @@ cmd_packs() {
   fi
   case "$sub" in
     add | update | remove)
-      if [ "$state" = running ]; then
+      if [ "$status" = 3 ]; then
+        status=0
+      elif [ "$state" = running ]; then
         if compose kill -s HUP "$SERVICE" >/dev/null 2>&1; then
           ok "Radio Bot is loading the change now. Nothing that is playing is interrupted."
         else
@@ -704,7 +715,7 @@ cmd_uninstall() {
     keep="$HOME/radio-bot-backup-$(date +%Y%m%d-%H%M%S)"
     mkdir -p "$keep"
     compose cp "$SERVICE:/app/data/backups/." "$keep/" >/dev/null
-    chmod 700 "$keep"
+    own_copies "$keep"
     ok "Saved to $keep"
   elif [ "$(container_state)" != running ]; then
     warn "The bot isn't running, so a fresh copy of its data can't be made now (run radio-bot start first if you want one)."
@@ -714,7 +725,7 @@ cmd_uninstall() {
     keep=${keep:-"$HOME/radio-bot-backup-$(date +%Y%m%d-%H%M%S)"}
     mkdir -p "$keep/earlier-backups"
     cp -R backups/. "$keep/earlier-backups/"
-    chmod 700 "$keep"
+    own_copies "$keep"
     ok "Moved your earlier backups to $keep/earlier-backups"
   fi
   local down=(down --rmi all --remove-orphans)

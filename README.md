@@ -218,7 +218,7 @@ Radio never ends, so the queue moves only when you skip.
 | Command | Level | What it does |
 |---|---|---|
 | `/radio packs installed` | Admin | Every pack the bot has: version, station count, where it came from (the library, your `EXTRA_PACKS_DIR`, or the bot itself), available updates, packs that couldn't be loaded and why, and notices such as a withdrawn pack. A menu opens a pack's card, with **Update** and **Remove** (Operator) |
-| `/radio packs library [search] [country]` | Admin | The official library's packs, filtered by words (company, brand, city or pack name) and country (a name or a code such as `GB`). A pack's card shows its company, stations, countries, languages and when its streams were last checked, with **Install** (Operator). Installs run in the background without interrupting what's playing |
+| `/radio packs library [search] [country]` | Admin | The official library's packs, filtered by words (company, brand, city or pack name) and country (a name or a code such as `GB`). A pack's card shows its company, stations, countries, languages and when its streams were last checked, with **Install** (Operator). Installs run in the background without interrupting what's playing; the card shows **Installing…** until it's done |
 | `/radio packs sync [pack]` | Admin | Checks station names against each pack's official station list (or one `pack`), and reports stations added, renamed or missing, and stations whose sources all failed their last check. (This used to be `/radio sync`) |
 
 Pack changes are limited to 10 an hour for the whole installation.

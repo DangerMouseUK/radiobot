@@ -13,6 +13,8 @@
  *
  * Packs are written to the installed-packs folder next to the database (DATABASE_PATH). A running
  * bot loads the change when it receives SIGHUP (`radio-bot packs` sends it), or at its next start.
+ * Exits 0 on success and 1 on any failure; with --unchanged-status (radio-bot.sh), add and update
+ * exit 3 when every pack was already up to date, so there is nothing to load.
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -37,6 +39,7 @@ import { installedPacksDir, PackStore } from '../src/catalogue/pack-store.ts';
 import { PackRegistry, packConflict } from '../src/catalogue/packs.ts';
 import { matchOwner } from '../src/persistence/db.ts';
 import { errorMessage, isRadioError } from '../src/shared/errors.ts';
+import { plural } from '../src/shared/text.ts';
 import { botVersion, compareVersions } from '../src/shared/version.ts';
 import { SafeHttpClient } from '../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../src/streams/url-policy.ts';
@@ -67,6 +70,15 @@ interface Args {
   country: string | null;
   language: string | null;
   collection: string | null;
+  /** For radio-bot.sh: exit with UNCHANGED_STATUS when add or update had nothing to do. */
+  unchangedStatus: boolean;
+}
+
+/** add or update changed nothing (every pack was already up to date), so there's nothing to reload. */
+export const UNCHANGED_STATUS = 3;
+
+function unchanged(args: Args): number {
+  return args.unchangedStatus ? UNCHANGED_STATUS : 0;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -77,6 +89,7 @@ function parseArgs(argv: string[]): Args {
     country: null,
     language: null,
     collection: null,
+    unchangedStatus: false,
   };
   for (let i = 1; i < argv.length; i++) {
     const v = argv[i]!;
@@ -89,6 +102,7 @@ function parseArgs(argv: string[]): Args {
     else if (v === '--country') a.country = next();
     else if (v === '--language') a.language = next();
     else if (v === '--collection') a.collection = next();
+    else if (v === '--unchanged-status') a.unchangedStatus = true;
     else if (v.startsWith('--')) throw new Error(`Unknown option ${v}.`);
     else a.rest.push(v.toLowerCase());
   }
@@ -135,7 +149,7 @@ async function openLibrary(from: string | null, http: SafeHttpClient): Promise<L
 function describe(p: LibraryPack): string {
   const where = p.countries.map(countryName).join(', ');
   const owner = p.owner ? ` · ${p.owner.brand ? `${p.owner.brand} (${p.owner.name})` : p.owner.name}` : '';
-  return `${p.id.padEnd(20)} ${p.name} · ${p.stations} stations${where ? ` · ${where}` : ''}${owner}`;
+  return `${p.id.padEnd(20)} ${p.name} · ${plural(p.stations, 'station')}${where ? ` · ${where}` : ''}${owner}`;
 }
 
 export async function runPacksCli(argv: string[], io: PacksCliIo): Promise<number> {
@@ -184,7 +198,8 @@ export async function runPacksCli(argv: string[], io: PacksCliIo): Promise<numbe
         if (collections.length) {
           io.out('');
           io.out('Collections (install with --collection <name>):');
-          for (const c of collections) io.out(`  ${c.id.padEnd(20)} ${c.name} · ${c.packs.length} packs`);
+          for (const c of collections)
+            io.out(`  ${c.id.padEnd(20)} ${c.name} · ${plural(c.packs.length, 'pack')}`);
         }
         io.out('');
         io.out('Install one with: radio-bot packs add <pack>');
@@ -232,15 +247,18 @@ export async function runPacksCli(argv: string[], io: PacksCliIo): Promise<numbe
         if (ids.length === 0)
           throw new Error('Name at least one pack, for example: radio-bot packs add mypack');
         let failed = 0;
+        let changed = false;
         for (const id of [...new Set(ids)]) {
           try {
-            io.out(await install(store, extraDir, lib, id, args.command === 'update'));
+            const r = await install(store, extraDir, lib, id, args.command === 'update');
+            changed ||= r.changed;
+            io.out(r.message);
           } catch (err) {
             failed++;
             io.err(`${id}: ${isRadioError(err) ? err.userMessage : errorMessage(err)}`);
           }
         }
-        return failed ? 1 : 0;
+        return failed ? 1 : changed ? 0 : unchanged(args);
       }
       case 'remove': {
         if (args.rest.length === 0)
@@ -296,7 +314,7 @@ async function list(
           ? ` · update available (${entry.version})`
           : '';
     io.out(
-      `  ${p.meta.id.padEnd(20)} ${p.meta.name} · version ${p.meta.version ?? 'unknown'} · ${p.stations.length} stations${from && from !== 'official' ? ` · from ${from}` : ''}${update}`,
+      `  ${p.meta.id.padEnd(20)} ${p.meta.name} · version ${p.meta.version ?? 'unknown'} · ${plural(p.stations.length, 'station')}${from && from !== 'official' ? ` · from ${from}` : ''}${update}`,
     );
   }
   for (const p of registry.packs.filter((x) => x.origin === 'extra'))
@@ -329,7 +347,7 @@ async function install(
   lib: Library,
   id: string,
   updateOnly: boolean,
-): Promise<string> {
+): Promise<{ changed: boolean; message: string }> {
   const entry = lib.index.packs.find((p) => p.id === id);
   if (!entry) throw new Error(`${lib.label} has no pack called "${id}".`);
   if (entry.status !== 'available') throw new Error(`"${id}" was withdrawn from ${lib.label}.`);
@@ -344,7 +362,10 @@ async function install(
   if (updateOnly && !current)
     throw new Error(`"${id}" isn't installed. Add it with: radio-bot packs add ${id}`);
   if (current?.meta.version && compareVersions(entry.version, current.meta.version) <= 0)
-    return `${current.meta.name} (${id}) is already up to date (version ${current.meta.version}).`;
+    return {
+      changed: false,
+      message: `${current.meta.name} (${id}) is already up to date (version ${current.meta.version}).`,
+    };
   const checked = checkBundle(await lib.bundle(entry), { id, sha256: entry.sha256 });
   const conflict = packConflict(
     registry.packs,
@@ -359,9 +380,12 @@ async function install(
   if (conflict) throw new Error(conflict);
   await store.install(checked, lib.source);
   ownLikeData(store, id);
-  return current
-    ? `Updated ${checked.pack.meta.name} (${id}) from version ${current.meta.version ?? 'unknown'} to ${checked.pack.meta.version}.`
-    : `Installed ${checked.pack.meta.name} (${id}): ${checked.pack.stations.length} stations.`;
+  return {
+    changed: true,
+    message: current
+      ? `Updated ${checked.pack.meta.name} (${id}) from version ${current.meta.version ?? 'unknown'} to ${checked.pack.meta.version}.`
+      : `Installed ${checked.pack.meta.name} (${id}): ${plural(checked.pack.stations.length, 'station')}.`,
+  };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

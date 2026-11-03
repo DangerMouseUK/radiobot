@@ -14,7 +14,7 @@ import {
   searchLibrary,
 } from '../../catalogue/pack-library.ts';
 import type { StationPack } from '../../catalogue/packs.ts';
-import { truncate } from '../../shared/text.ts';
+import { plural, truncate } from '../../shared/text.ts';
 import type { AppContext } from '../context.ts';
 import { COLOR, DISCLAIMER } from './format.ts';
 import type { View } from './views.ts';
@@ -44,7 +44,7 @@ export function packsInstalledView(ctx: AppContext, guildId: string): View {
     const parts = [
       `**${p.meta.name}** (\`${p.meta.id}\`)`,
       p.meta.version ? `version ${p.meta.version}` : null,
-      `${p.stations.length} stations`,
+      plural(p.stations.length, 'station'),
       origin(p),
       ctx.packs.isEnabled(p.meta.id) ? null : 'switched off (DISABLED_PACKS or ENABLED_PACKS)',
       updates.has(p.meta.id) ? `**update available: ${updates.get(p.meta.id)}**` : null,
@@ -123,7 +123,7 @@ export function packsLibraryView(
     const owner = ownerText(p.owner);
     const loaded = ctx.packs.get(p.id);
     const state = loaded ? (ctx.packManager.updates.has(p.id) ? ' · update available' : ' · installed') : '';
-    return `**${p.name}** (\`${p.id}\`) · ${p.stations} stations${where ? ` · ${where}` : ''}${owner ? ` · ${owner}` : ''}${state}`;
+    return `**${p.name}** (\`${p.id}\`) · ${plural(p.stations, 'station')}${where ? ` · ${where}` : ''}${owner ? ` · ${owner}` : ''}${state}`;
   });
   const embed = new EmbedBuilder()
     .setTitle(`Pack library${filters.length ? `: ${filters.join(', ')}` : ''}`)
@@ -150,7 +150,7 @@ export function packsLibraryView(
               found.slice(0, MAX_LISTED).map((p) => ({
                 label: truncate(p.name, 100),
                 value: p.id,
-                description: truncate(`${p.id} · ${p.stations} stations`, 100),
+                description: truncate(`${p.id} · ${plural(p.stations, 'station')}`, 100),
               })),
             ),
         ),
@@ -159,9 +159,19 @@ export function packsLibraryView(
   return { embeds: [embed], components };
 }
 
+/** A pack change in progress, shown on its card until it finishes. */
+export type PackWork = 'installing' | 'updating' | 'removing';
+
+const BUSY_LABEL: Record<PackWork, string> = {
+  installing: 'Installing…',
+  updating: 'Updating…',
+  removing: 'Removing…',
+};
+
 /**
  * One pack: what the library says about it and what is installed, with Install, Update or Remove.
- * `entry` is null when the library couldn't be reached or doesn't list it.
+ * `entry` is null when the library couldn't be reached or doesn't list it. While `busy`, the
+ * buttons give way to one disabled button that says what is happening.
  */
 export function packCardView(
   ctx: AppContext,
@@ -169,6 +179,7 @@ export function packCardView(
   id: string,
   entry: LibraryPack | null,
   note: string | null = null,
+  busy: PackWork | null = null,
 ): View {
   const loaded = ctx.packs.get(id);
   const name = entry?.name ?? loaded?.meta.name ?? id;
@@ -193,6 +204,16 @@ export function packCardView(
   if (note) embed.addFields({ name: 'Result', value: truncate(note, 1024) });
   embed.setFooter({ text: DISCLAIMER });
 
+  if (busy) {
+    // While the change runs, one greyed-out button says what is happening, so nobody presses
+    // Install again or wonders why it is still there.
+    const button = new ButtonBuilder()
+      .setCustomId(ctx.ids.make(guildId, busy === 'removing' ? 'pkrm' : 'pkinst', id))
+      .setLabel(BUSY_LABEL[busy])
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true);
+    return { embeds: [embed], components: [row(button)] };
+  }
   const buttons: ButtonBuilder[] = [];
   const installable = entry?.status === 'available' && (!loaded || loaded.origin === 'installed');
   if (installable && (!loaded || ctx.packManager.updates.has(id))) {

@@ -431,12 +431,14 @@ describe('radio-bot packs (scripts/packs.ts)', () => {
     lib.add(packFiles('beta', '2026.11.01'));
     lib.index.collections = [
       { id: 'everything', name: 'Everything', description: '', packs: ['alpha', 'beta'] },
+      { id: 'just-alpha', name: 'Just alpha', description: '', packs: ['alpha'] },
     ];
     const data = temp();
     const from = ['--from', `${baseUrl}/index.json`];
-    expect((await cli(['browse', 'manchester', ...from], data)).out).toMatch(
-      /alpha .*Pack alpha · 3 stations/,
-    );
+    const browsed = (await cli(['browse', 'manchester', ...from], data)).out;
+    expect(browsed).toMatch(/alpha .*Pack alpha · 3 stations/);
+    expect(browsed).toMatch(/Everything · 2 packs/);
+    expect(browsed).toMatch(/Just alpha · 1 pack$/m);
     const added = await cli(['add', '--collection', 'everything', ...from], data);
     expect(added.code).toBe(0);
     expect(added.out).toMatch(/Installed Pack alpha \(alpha\): 3 stations/);
@@ -444,9 +446,16 @@ describe('radio-bot packs (scripts/packs.ts)', () => {
     expect((await cli(['count'], data)).out).toBe('2');
     lib.add(packFiles('alpha', '2026.11.09', 4));
     expect((await cli(['list', ...from], data)).out).toMatch(/update available \(2026\.11\.09\)/);
-    const updated = await cli(['update', ...from], data);
+    const updated = await cli(['update', '--unchanged-status', ...from], data);
+    expect(updated.code).toBe(0);
     expect(updated.out).toMatch(/Updated Pack alpha \(alpha\) from version 2026\.11\.01 to 2026\.11\.09/);
     expect(updated.out).toMatch(/beta.*already up to date/);
+    // Nothing left to update: radio-bot.sh asks for status 3 so it doesn't reload the bot for nothing.
+    const again = await cli(['update', '--unchanged-status', ...from], data);
+    expect(again.code).toBe(3);
+    expect(again.out).toMatch(/alpha.*already up to date/);
+    expect((await cli(['update', ...from], data)).code).toBe(0);
+    expect((await cli(['add', 'beta', '--unchanged-status', ...from], data)).code).toBe(3);
     expect((await cli(['remove', 'beta'], data)).out).toMatch(/Removed beta/);
     expect((await cli(['remove', 'beta'], data)).code).toBe(1);
     const record = JSON.parse(readFileSync(join(data, 'installed-packs', 'installed.json'), 'utf8'));
