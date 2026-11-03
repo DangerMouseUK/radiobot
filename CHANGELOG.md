@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - While a pack installs, updates or is removed from its card in Discord (`/radio packs`), the card shows a greyed-out **Installing…**, **Updating…** or **Removing…** button until it's done, instead of the **Install** button (or the "Remove it" question) staying there as if nothing had happened.
+- In `/radio browse` and `/radio list`, each group of stations is headed **Pack: <name>**, and a server's own stations **Custom stations (this server)**. When a pack and its main station share a name, the heading no longer looks like a second copy of the station.
 
 ### Fixed
 

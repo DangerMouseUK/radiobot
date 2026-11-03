@@ -331,7 +331,8 @@ describe('browse and list views', () => {
   it('filters by search, category and favourites and says when nothing matches', () => {
     const { ctx, guilds } = context();
     const search = browseView(ctx, GUILD, { pack: 'demo', category: null, search: 'techno' }, 't', 0);
-    expect(search.embeds[0]!.toJSON().description).toMatch(/Demo Techno/);
+    // The pack's heading is labelled, so it can't be mistaken for a station of the same name.
+    expect(search.embeds[0]!.toJSON().description).toMatch(/^\*\*Pack: Radio Demo\*\*\n.*Demo Techno/);
     expect(search.embeds[0]!.toJSON().footer?.text).toMatch(/search: "techno"/);
     guilds.toggleFavourite(GUILD, 'demo:demo-yoga');
     const fav = browseView(ctx, GUILD, { pack: null, category: 'favourites', search: null }, 't', 0);
@@ -353,7 +354,7 @@ describe('browse and list views', () => {
     const v = listView(ctx, GUILD, 'packs', 'demo', 0);
     const e = v.embeds[0]!.toJSON();
     expect(e.title).toBe('Station pack: Radio Demo');
-    expect(e.description).toMatch(/^\*\*Radio Demo\*\*\n1\. /);
+    expect(e.description).toMatch(/^\*\*Pack: Radio Demo\*\*\n1\. /);
     expect(e.description).toContain('`demo:demo-radio`');
     expect(e.footer?.text).toMatch(/Page 1\/2 · 26 stations · 26 with a known stream/);
     expect(e.footer?.text).toMatch(/list may be out of date/);
@@ -401,7 +402,7 @@ describe('browse and list views', () => {
     const all = listView(ctx, GUILD, 'all', null, 1);
     const e = all.embeds[0]!.toJSON();
     expect(e.title).toBe('All stations');
-    expect(e.description).toMatch(/\*\*Custom \(this server\)\*\*\n27\. \*\*My Station\*\*/);
+    expect(e.description).toMatch(/\*\*Custom stations \(this server\)\*\*\n27\. \*\*My Station\*\*/);
     // The custom station here has no stream saved, so it is counted but has no known stream.
     expect(e.footer?.text).toMatch(/^Page 2\/2 · 27 stations · 26 with a known stream/);
     expect(toggle(all)).toMatchObject({ label: 'Hide custom stations (1)' });
