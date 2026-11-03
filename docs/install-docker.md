@@ -44,7 +44,7 @@ Open it, choose your server and authorise. You can do this before or after start
 ```sh
 git clone https://github.com/DangerMouseUK/radiobot.git
 cd radiobot
-git checkout v1.1.0          # the newest release; the default branch may hold unreleased changes
+git checkout v1.2.0          # the newest release; the default branch may hold unreleased changes
 cp .env.example .env
 chmod 600 .env
 ```
@@ -92,7 +92,7 @@ docker compose up -d
 docker compose logs -f radio-bot
 ```
 
-The image is published as `ghcr.io/dangermouseuk/radio-bot`, with version tags; `compose.yaml` defaults to `ghcr.io/dangermouseuk/radio-bot:1.1.0`. To use another image or tag, set `RADIO_BOT_IMAGE` in your shell or in the `.env` file next to `compose.yaml`, for example `RADIO_BOT_IMAGE=ghcr.io/dangermouseuk/radio-bot:1.1` (the release workflow also publishes `<major>.<minor>` tags). If the image hasn't been published yet, or you want to build from source, build it locally from the `Dockerfile`:
+The image is published as `ghcr.io/dangermouseuk/radio-bot`, with version tags; `compose.yaml` defaults to `ghcr.io/dangermouseuk/radio-bot:1.2.0`. To use another image or tag, set `RADIO_BOT_IMAGE` in your shell or in the `.env` file next to `compose.yaml`, for example `RADIO_BOT_IMAGE=ghcr.io/dangermouseuk/radio-bot:1.2` (the release workflow also publishes `<major>.<minor>` tags). If the image hasn't been published yet, or you want to build from source, build it locally from the `Dockerfile`:
 
 ```sh
 docker compose build
