@@ -4,10 +4,10 @@
 
 | Version | Supported |
 |---|---|
-| 1.0.x | Yes |
-| earlier | No |
+| The [latest release](https://github.com/DangerMouseUK/radiobot/releases/latest) | Yes |
+| Any earlier release | No |
 
-Security fixes are released as patch versions of the latest minor release. Please upgrade to the newest 1.0.x before reporting, if you can.
+Security fixes are released as a new version on top of the latest release; earlier releases don't get fixes. `radio-bot update` moves a Docker install to the newest release. Please check that the issue still happens on the latest release before reporting, if you can.
 
 ## Reporting a vulnerability
 
