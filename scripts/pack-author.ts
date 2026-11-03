@@ -838,18 +838,35 @@ export function generatePack(dir: string, opts: { now?: Date } = {}): GenerateRe
 
 const TABLE_HEADER = ['Source ID', 'Station', 'Found at', 'Date', 'Provenance'];
 
-function tableCells(line: string): string[] {
-  return line
-    .trim()
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split(/(?<!\\)\|/)
-    .map((c) => c.trim().replace(/\\\|/g, '|'));
+/** A table row's cells: `\|` is a pipe inside a cell and `\\` a backslash (the reverse of `markdownTable`). */
+export function tableCells(line: string): string[] {
+  const body = line.trim().replace(/^\|/, '');
+  const cells: string[] = [];
+  let cell = '';
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i]!;
+    const next = body[i + 1];
+    if (ch === '\\' && (next === '\\' || next === '|')) {
+      cell += next;
+      i++;
+    } else if (ch === '|') {
+      cells.push(cell.trim());
+      cell = '';
+    } else cell += ch;
+  }
+  // A row ends with "|"; anything after the last one is a cell of its own.
+  if (cell.trim()) cells.push(cell.trim());
+  return cells;
 }
 
 /** Renders a Markdown table padded the way Biome formats one. */
 export function markdownTable(header: readonly string[], rows: ReadonlyArray<ReadonlyArray<string>>): string {
-  const esc = (c: string) => c.replace(/[\r\n]+/g, ' ').replace(/\|/g, '\\|');
+  // Backslashes first, so an escaped pipe can't be undone by a backslash already in the text.
+  const esc = (c: string) =>
+    c
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\\/g, '\\\\')
+      .replace(/\|/g, '\\|');
   const all = [header, ...rows].map((r) => r.map(esc));
   const widths = header.map((_, i) => Math.max(3, ...all.map((r) => (r[i] ?? '').length)));
   const line = (r: readonly string[]) => `| ${widths.map((w, i) => (r[i] ?? '').padEnd(w)).join(' | ')} |`;

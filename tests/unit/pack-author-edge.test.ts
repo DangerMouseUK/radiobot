@@ -31,6 +31,7 @@ import {
   stationSlug,
   strictProblems,
   TEMPLATE_DIR,
+  tableCells,
   writeCsv,
 } from '../../scripts/pack-author.ts';
 import { checkBundle } from '../../src/catalogue/pack-library.ts';
@@ -162,6 +163,15 @@ describe('formatting, CSV and IDs: edge cases', () => {
 
   it('pads short Markdown rows and escapes pipes', () => {
     expect(markdownTable(['a', 'b'], [['x|y']])).toBe('| a    | b   |\n| ---- | --- |\n| x\\|y |     |');
+  });
+
+  it('escapes backslashes too, so any cell text survives a round trip', () => {
+    const cells = ['ends with \\', 'a\\|b', 'pipe | here', '\\\\double'];
+    const table = markdownTable(['1', '2', '3', '4'], [cells]);
+    expect(table.split('\n')[2]).toContain('ends with \\\\ |');
+    expect(tableCells(table.split('\n')[2]!)).toEqual(cells);
+    expect(tableCells('| a |  |')).toEqual(['a', '']);
+    expect(tableCells('| a | b')).toEqual(['a', 'b']);
   });
 });
 
