@@ -1,11 +1,35 @@
-# Radio Bot
+<p align="center">
+  <img src="docs/assets/radio-bot-banner.png" alt="Radio Bot: live radio in your voice channels" width="100%">
+</p>
 
-[![CI](https://github.com/DangerMouseUK/radiobot/actions/workflows/ci.yml/badge.svg)](https://github.com/DangerMouseUK/radiobot/actions/workflows/ci.yml)
-[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
-![Node.js 24.17+](https://img.shields.io/badge/node-%3E%3D24.17-339933?logo=nodedotjs&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+<h1 align="center">
+  <img src="docs/assets/radio-bot-icon-rounded.png" alt="" width="56" height="56" align="absmiddle">&nbsp;Radio Bot
+</h1>
 
-**A self-hosted Discord bot that plays live internet radio in your voice channels, and is honest about what it plays.**
+<p align="center">
+  <strong>A self-hosted Discord bot that plays live internet radio in your voice channels,<br>and is honest about what it plays.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/DangerMouseUK/radiobot/actions/workflows/ci.yml"><img src="https://github.com/DangerMouseUK/radiobot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-blue.svg" alt="Licence: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D24.17-339933?logo=nodedotjs&amp;logoColor=white" alt="Node.js 24.17+">
+  <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&amp;logoColor=white" alt="TypeScript">
+</p>
+
+<p align="center">
+  <a href="#quick-start"><strong>Quick start</strong></a>
+  &nbsp;·&nbsp;
+  <a href="docs/install.md">Beginner's install guide</a>
+  &nbsp;·&nbsp;
+  <a href="#commands">Commands</a>
+  &nbsp;·&nbsp;
+  <a href="#station-packs">Station packs</a>
+  &nbsp;·&nbsp;
+  <a href="docs/troubleshooting.md">Troubleshooting</a>
+</p>
+
+<br>
 
 You choose the stations by installing **station packs**: small sets of JSON files, one pack per radio company, from the reviewed [pack library](https://github.com/DangerMouseUK/radiobot-packs) or written by you. Before the bot plays a stream, it tests it, checks that it really is the station it claims to be, and can tell you why it picked it. The sound is converted **once** into Opus, Discord's audio format, at the station's own bitrate, with nothing else done to it.
 
