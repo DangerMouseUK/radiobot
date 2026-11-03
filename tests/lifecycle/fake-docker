@@ -4,8 +4,9 @@
 # container restart-loop like a bot with a bad token. FAKE_COMPOSE_VERSION sets the reported version,
 # and FAKE_PLAYING the number of servers the bot reports playing in. FAKE_UP_FAIL=1 makes `compose up`
 # fail (an update interrupted before the restart) and FAKE_RUN_FAIL=1 makes `compose run` fail (a
-# restore that can't copy the file). Local images are listed in $FAKE_STATE/images as
-# "repository:tag id", one per line; pull and build add the checked-out version's.
+# restore that can't copy the file), and FAKE_COUNT_FAIL=1 makes `packs.js count` fail. Local images are
+# listed in $FAKE_STATE/images as "repository:tag id", one per line; pull and build add the checked-out
+# version's. `compose exec` and `compose run` calls whose input is a terminal go to $FAKE_STATE/tty-input.log.
 st=$FAKE_STATE
 echo "docker $*" >>"$st/calls.log"
 now() { date -u +%Y-%m-%dT%H:%M:%S.000000000Z; }
@@ -53,6 +54,7 @@ case "$1" in
   compose) shift ;;
   *) exit 2 ;;
 esac
+case "$1" in exec | run) [ ! -t 0 ] || echo "docker compose $*" >>"$st/tty-input.log" ;; esac
 case "$1" in
   version) echo "Docker Compose version v${FAKE_COMPOSE_VERSION:-2.40.0}" ;;
   config) echo "$REPO:$(version)" ;; # --images: the image the checked-out compose.yaml names
@@ -70,7 +72,10 @@ case "$1" in
   exec)
     case "$*" in
       *backup.js*) echo "Backup written: /app/data/backups/radio-bot-manual-x.sqlite" ;;
-      *"packs.js count"*) cat "$st/packs" 2>/dev/null || echo 0 ;;
+      *"packs.js count"*)
+        [ -z "${FAKE_COUNT_FAIL:-}" ] || exit 1
+        cat "$st/packs" 2>/dev/null || echo 0
+        ;;
       *"packs.js browse"*) echo "Packs in the official pack library:" && echo "  mypack  My Pack · 3 stations" ;;
       *"packs.js add"*) echo "Installed My Pack (mypack): 3 stations." && echo 1 >"$st/packs" ;;
       *packs.js*) echo "(packs)" ;;

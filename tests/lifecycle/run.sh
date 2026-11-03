@@ -198,6 +198,9 @@ echo "reinstall"
 out=$(tty_run "bash $T/origin/install.sh" </dev/null)
 check "keeps existing settings" has "$out" "Using your existing settings"
 check "doesn't offer packs again once one is installed" test "$(has "$out" "Add some stations" && echo y)" != y
+out=$(tty_run "FAKE_COUNT_FAIL=1 bash $T/origin/install.sh" </dev/null)
+check "finishes with the invite link when the packs can't be counted" has "$out" "client_id=$APP&scope=bot"
+check "says how to add packs later" has "$out" "To add stations later, run: radio-bot packs browse"
 
 echo "uninstall"
 out=$(printf 'y\ny\nn\n' | tty_run "radio-bot uninstall")
@@ -210,6 +213,9 @@ check "keeps earlier backups from the deleted folder"   bash -c 'ls "$1"/radio-b
 check "removes the folder" test ! -e "$RADIO_BOT_DIR"
 check "removes the shortcut" test ! -e "$HOME/.local/bin/radio-bot"
 check "removes container and image" grep -q "docker compose down --rmi all --remove-orphans$" "$T/state/calls.log"
+
+# Compose reading the terminal can be stopped by the kernel and hang (see exec_low in radio-bot.sh).
+check "commands in the container never read the terminal" test ! -e "$T/state/tty-input.log"
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
