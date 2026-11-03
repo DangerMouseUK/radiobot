@@ -15,6 +15,7 @@ import { memoryDb, silentLogger } from '../helpers.ts';
 
 const mocks = vi.hoisted(() => ({
   probe: vi.fn(),
+  checkFfmpeg: vi.fn(),
   compare: vi.fn(),
   setPriority: vi.fn(),
   restGet: vi.fn(),
@@ -25,6 +26,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../src/streams/probe.ts', async (orig) => ({
   ...(await orig<typeof import('../../src/streams/probe.ts')>()),
   probeSource: mocks.probe,
+}));
+// validate-catalogue checks FFmpeg before probing; no real binary runs here.
+vi.mock('../../src/audio/ffmpeg.ts', async (orig) => ({
+  ...(await orig<typeof import('../../src/audio/ffmpeg.ts')>()),
+  checkFfmpeg: mocks.checkFfmpeg,
 }));
 vi.mock('../../src/streams/identity.ts', async (orig) => ({
   ...(await orig<typeof import('../../src/streams/identity.ts')>()),
@@ -103,8 +109,16 @@ async function runScript(name: keyof typeof SCRIPTS, args: string[] = []) {
 
 const dirs: string[] = [];
 const savedCwd = process.cwd();
+const FFMPEG_INFO = {
+  ffmpegVersion: 'ffmpeg version 7.1',
+  ffprobeVersion: 'ffprobe version 7.1',
+  libopus: true,
+  libavformat: 'Lavf/61.7.100',
+};
 beforeEach(() => {
   mocks.probe.mockReset();
+  mocks.checkFfmpeg.mockReset();
+  mocks.checkFfmpeg.mockResolvedValue(FFMPEG_INFO);
   mocks.compare.mockReset();
   mocks.setPriority.mockReset();
   mocks.restGet.mockReset();
@@ -353,6 +367,53 @@ describe('validate-catalogue (in process)', () => {
     expect(deps.client.userAgent).toBe('Lavf/60.16.100');
     expect(mocks.compare).not.toHaveBeenCalled();
     expect(r.out).not.toMatch(/compare /);
+  });
+
+  it('falls back to the bundled FFmpeg when none is on PATH, and sends its Lavf version', async () => {
+    const dir = writePack(tempDir());
+    vi.stubEnv('FFMPEG_PATH', undefined);
+    vi.stubEnv('FFPROBE_PATH', undefined);
+    vi.stubEnv('STREAM_USER_AGENT', undefined);
+    mocks.checkFfmpeg.mockImplementation(async (_registry: unknown, paths: { ffmpeg: string }) => {
+      if (paths.ffmpeg === 'ffmpeg') throw new Error('spawn ffmpeg ENOENT');
+      return { ...FFMPEG_INFO, libavformat: 'Lavf/62.3.100' };
+    });
+    mocks.probe.mockResolvedValue(outcome({}));
+    const r = await runScript('validate-catalogue.ts', ['--pack', dir, '--probe', 'mypack:two']);
+    expect(r.code).toBeNull();
+    const deps = mocks.probe.mock.calls[0]![0] as {
+      ffmpegPath: string;
+      ffprobePath: string;
+      client: { userAgent: string };
+    };
+    expect(deps.ffmpegPath).toMatch(/ffmpeg-static/);
+    expect(deps.ffprobePath).toMatch(/ffprobe-static/);
+    expect(deps.client.userAgent).toBe('Lavf/62.3.100');
+    expect(r.out).toMatch(/^Using ffprobe version 7\.1 \(.*ffprobe-static.*\)\.$/m);
+  });
+
+  it('contacts nothing and writes no report when FFmpeg cannot run', async () => {
+    const root = tempDir();
+    const dir = writePack(root);
+    const jsonPath = join(root, 'evidence.json');
+    vi.stubEnv('FFMPEG_PATH', undefined);
+    vi.stubEnv('FFPROBE_PATH', join(root, 'no-ffprobe'));
+    mocks.checkFfmpeg.mockRejectedValue(new Error('spawn ENOENT'));
+    const r = await runScript('validate-catalogue.ts', [
+      '--pack',
+      dir,
+      '--probe',
+      '--pack-id',
+      'mypack',
+      '--json',
+      jsonPath,
+    ]);
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/none could be run[\s\S]*Nothing was contacted and no report was written/);
+    // A path set in the environment is the only one tried.
+    expect(mocks.checkFfmpeg).toHaveBeenCalledTimes(1);
+    expect(mocks.probe).not.toHaveBeenCalled();
+    expect(readdirSync(root)).toEqual(['mypack']);
   });
 });
 

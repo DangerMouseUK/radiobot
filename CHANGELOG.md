@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Pack tools: `validate-catalogue --strict` accepted any `.json` file in a pack's `evidence/` folder, even a live check in which every source failed. The newest report must now be a real check of the pack's own sources with at least one source that played, and not one in which FFmpeg couldn't run. Enabled sources that failed the newest check are listed as warnings.
+- Pack tools: `validate-catalogue --probe` didn't find the FFmpeg that `pnpm install` brings, and when it found none it still contacted every stream and wrote a report of failures. It now falls back to `ffmpeg-static`/`ffprobe-static`, checks FFmpeg before contacting anything, stops with code 2 if none runs, and sends the same `Lavf/<version>` User-Agent as the bot.
+- Pack tools: `pack-author generate` bumped a pack's version on every run, so a pack that had never been published could reach `….4` before its first release. With the new `--base <git-ref>` option (such as `origin/main`) it bumps once against the published version, and a new pack keeps its start date.
+- Pack tools: the next steps that `pack-author new` prints gave commands that only worked from the bot's folder, with unquoted paths. They are now written to run from the current folder, with forward slashes and quotes where needed.
+
 ## [1.2.1] - 2026-11-03
 
 ### Fixed

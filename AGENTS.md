@@ -98,7 +98,7 @@ src/
                         workers (one-off worker threads), version (the bot's version, for minBotVersion)
 scripts/                validate-catalogue, register-commands, healthcheck, backup, smoke (CLI entry points);
                         packs (installed packs: list, browse, info, add, update, remove);
-                        pack-author (new, export, generate, build-library, diff-check; strictProblems());
+                        pack-author (new, export, generate, build-library, diff-check; strictProblems(), strictWarnings());
                         radio-bot.sh, the bash manager behind the `radio-bot` command (install, update,
                         backup, restore, packs, uninstall …) for Docker Compose installs
 install.sh              one-line bootstrap: clones into ~/radio-bot, then runs `radio-bot.sh install`
