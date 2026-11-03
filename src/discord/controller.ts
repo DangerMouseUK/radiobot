@@ -41,7 +41,7 @@ import type {
   SettingsPatch,
 } from '../persistence/repositories/guilds.ts';
 import { errorCode, isRadioError, RadioError } from '../shared/errors.ts';
-import { truncate } from '../shared/text.ts';
+import { plural, truncate } from '../shared/text.ts';
 import { codecLabel } from '../streams/probe.ts';
 import { STATE_LABEL } from '../voice/state-machine.ts';
 import {
@@ -1546,6 +1546,17 @@ export class RadioController {
     this.#rate(this.#ctx.limits.packGlobal, 'global', 'station pack changes');
     if (action === 'pkrmok') {
       await i.deferUpdate();
+      const entry = await entryFor(arg);
+      await i.editReply(
+        packCardView(
+          this.#ctx,
+          i.guildId,
+          arg,
+          entry,
+          'Removing it now. This message updates when it’s done.',
+          'removing',
+        ),
+      );
       let note: string;
       try {
         note = (await pm.remove(arg))
@@ -1554,7 +1565,7 @@ export class RadioController {
       } catch (err) {
         note = isRadioError(err) ? err.userMessage : 'Removing the pack failed; the log has the details.';
       }
-      await i.editReply(packCardView(this.#ctx, i.guildId, arg, await entryFor(arg), note));
+      await i.editReply(packCardView(this.#ctx, i.guildId, arg, entry, note)).catch(() => {});
       return;
     }
     // Install or update: a background job that waits for any stream that is starting, so the
@@ -1567,14 +1578,15 @@ export class RadioController {
         arg,
         entry,
         'Working on it in the background, without interrupting any music. This message updates when it’s done.',
+        this.#ctx.packs.get(arg) ? 'updating' : 'installing',
       ),
     );
     let note: string;
     try {
       const r = await pm.install(arg);
       note = r.previousVersion
-        ? `Updated from version ${r.previousVersion} to ${r.version}: ${r.stations} stations.`
-        : `Installed: ${r.stations} stations, ready to play now.`;
+        ? `Updated from version ${r.previousVersion} to ${r.version}: ${plural(r.stations, 'station')}.`
+        : `Installed: ${plural(r.stations, 'station')}, ready to play now.`;
     } catch (err) {
       this.#ctx.logger.warn({ err: safeErr(err), pack: arg }, 'station pack install failed');
       note = isRadioError(err) ? err.userMessage : 'Installing the pack failed; the log has the details.';

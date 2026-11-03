@@ -158,6 +158,13 @@ echo "station packs"
 out=$(radio-bot packs remove mypack 2>&1 | strip)
 check "removes a pack in the running container" grep -qF "packs.js remove mypack" "$FAKE_STATE/calls.log"
 check "says the change loads without interrupting" has "$out" "Nothing that is playing is interrupted."
+hups=$(grep -c "compose kill -s HUP" "$FAKE_STATE/calls.log")
+out=$(radio-bot packs update 2>&1 | strip)
+check "update with nothing to do says so" has "$out" "already up to date"
+check "asks the container to report an update with nothing to do" grep -qF "packs.js update --unchanged-status" "$FAKE_STATE/calls.log"
+check "doesn't reload the bot when nothing changed" test "$(grep -c "compose kill -s HUP" "$FAKE_STATE/calls.log")" = "$hups"
+check "doesn't say a change is loading when there is none" test "$(has "$out" "loading the change" && echo y)" != y
+check "nothing to update counts as success" radio-bot packs update
 radio-bot packs >/dev/null 2>&1
 check "lists installed packs by default" grep -qF "packs.js list" "$FAKE_STATE/calls.log"
 
@@ -165,6 +172,7 @@ echo "backup and crash detection"
 rm -rf "$RADIO_BOT_DIR/backups"
 out=$(radio-bot backup 2>&1 | strip)
 check "copies backups out" test -f "$RADIO_BOT_DIR/backups/radio-bot-manual-x.sqlite"
+check "keeps the copied backups private" test "$(mode "$RADIO_BOT_DIR/backups/radio-bot-manual-x.sqlite")" = 600
 radio-bot stop >/dev/null 2>&1
 rm -rf "$RADIO_BOT_DIR/backups"
 out=$(radio-bot backup 2>&1 | strip)
@@ -210,6 +218,8 @@ check "keeps the data volume when asked" has "$out" "Keeping the bot's data"
 check "saves a data copy" bash -c 'ls "$1"/radio-bot-backup-*/radio-bot-manual-x.sqlite' _ "$HOME"
 # shellcheck disable=SC2016
 check "keeps earlier backups from the deleted folder"   bash -c 'ls "$1"/radio-bot-backup-*/earlier-backups/radio-bot-manual-x.sqlite' _ "$HOME"
+for keep in "$HOME"/radio-bot-backup-*; do break; done
+check "keeps the saved copy private" test "$(mode "$keep/earlier-backups")" = 700
 check "removes the folder" test ! -e "$RADIO_BOT_DIR"
 check "removes the shortcut" test ! -e "$HOME/.local/bin/radio-bot"
 check "removes container and image" grep -q "docker compose down --rmi all --remove-orphans$" "$T/state/calls.log"

@@ -11,6 +11,7 @@ import {
   levenshtein,
   MAX_SLUG_LENGTH,
   normalizeName,
+  plural,
   similarity,
   slugify,
   truncate,
@@ -163,6 +164,12 @@ describe('text helpers', () => {
     expect(normalizeName('Demo HÏ Island')).toBe('demo hi island');
     expect(normalizeName('R&B / Soul!')).toBe('r and b soul');
     expect(normalizeName('---')).toBe('');
+  });
+
+  it('counts with the right noun: 1 pack, 2 packs, 0 packs', () => {
+    expect(plural(1, 'pack')).toBe('1 pack');
+    expect(plural(2, 'pack')).toBe('2 packs');
+    expect(plural(0, 'station')).toBe('0 stations');
   });
 
   it('caps slugs at 64 characters', () => {

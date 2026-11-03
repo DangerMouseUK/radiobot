@@ -45,6 +45,15 @@ function componentId(t: Harness, ids: string[], action: string): string {
   return id;
 }
 
+/** Label and disabled state of every button in a reply. */
+function buttonsIn(payload: { components?: unknown[] }): Array<{ label: string; disabled: boolean }> {
+  return (payload.components ?? []).flatMap((row) =>
+    (row as { toJSON(): { components: Array<{ label?: string; disabled?: boolean }> } })
+      .toJSON()
+      .components.map((c) => ({ label: String(c.label), disabled: c.disabled === true })),
+  );
+}
+
 describe('/radio packs', () => {
   it('lists the installed packs privately, for admins only', async () => {
     const t = setup();
@@ -108,8 +117,18 @@ describe('/radio packs', () => {
     const done = await t.click(t.people.owner, componentId(t, card.componentIds, 'pkinst'));
     expect(t.packLibrary.installs).toEqual(['northern']);
     expect(done.text).toMatch(/Working on it in the background/);
+    // While it installs, Install gives way to one greyed-out "Installing…" button.
+    expect(buttonsIn(done.calls[0]!.payload)).toEqual([{ label: 'Installing…', disabled: true }]);
     expect(done.lastText).toMatch(/Installed: 12 stations, ready to play now\./);
+    expect(buttonsIn(done.calls.at(-1)!.payload).every((b) => !b.disabled)).toBe(true);
     expect(done.violations).toEqual([]);
+  });
+
+  it('says "Updating…" while an installed pack updates', async () => {
+    const t = setup({ operators: [OWNER] });
+    t.ctx.packs.put(loadPack(rootPath('catalog', 'packs', '_template'), 'installed'));
+    const done = await t.click(t.people.owner, t.ids.make('123456789012345678', 'pkinst', 'template'));
+    expect(buttonsIn(done.calls[0]!.payload)).toEqual([{ label: 'Updating…', disabled: true }]);
   });
 
   it('reports a failed install with its reason', async () => {
@@ -140,6 +159,9 @@ describe('/radio packs', () => {
     expect(ask.lastText).toMatch(/Its stations disappear from every server this bot is in/);
     const done = await t.click(t.people.owner, componentId(t, ask.componentIds, 'pkrmok'));
     expect(t.packLibrary.removes).toEqual(['demo']);
+    // The confirmation gives way to the card with a greyed-out "Removing…" until it is done.
+    const working = done.calls.find((c) => c.method === 'editReply')!.payload;
+    expect(buttonsIn(working)).toEqual([{ label: 'Removing…', disabled: true }]);
     expect(done.lastText).toMatch(/Removed\./);
   });
 

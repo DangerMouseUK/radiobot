@@ -6,12 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- While a pack installs, updates or is removed from its card in Discord (`/radio packs`), the card shows a greyed-out **Installing…**, **Updating…** or **Removing…** button until it's done, instead of the **Install** button (or the "Remove it" question) staying there as if nothing had happened.
+
 ### Fixed
 
 - Pack tools: `validate-catalogue --strict` accepted any `.json` file in a pack's `evidence/` folder, even a live check in which every source failed. The newest report must now be a real check of the pack's own sources with at least one source that played, and not one in which FFmpeg couldn't run. Enabled sources that failed the newest check are listed as warnings.
 - Pack tools: `validate-catalogue --probe` didn't find the FFmpeg that `pnpm install` brings, and when it found none it still contacted every stream and wrote a report of failures. It now falls back to `ffmpeg-static`/`ffprobe-static`, checks FFmpeg before contacting anything, stops with code 2 if none runs, and sends the same `Lavf/<version>` User-Agent as the bot.
 - Pack tools: `pack-author generate` bumped a pack's version on every run, so a pack that had never been published could reach `….4` before its first release. With the new `--base <git-ref>` option (such as `origin/main`) it bumps once against the published version, and a new pack keeps its start date.
 - Pack tools: the next steps that `pack-author new` prints gave commands that only worked from the bot's folder, with unquoted paths. They are now written to run from the current folder, with forward slashes and quotes where needed.
+- `radio-bot packs update` (and `add`) for packs that were already up to date still said "Radio Bot is loading the change now" and reloaded the bot. When nothing changed, it now only says the packs are up to date.
+- Backups that `radio-bot` copies out of the bot (when updating, with `radio-bot backup`, and the copy `radio-bot uninstall` saves) were owned by root on systems where Docker needs `sudo`, so you couldn't move or delete them without `sudo`. They now belong to you, and only you can read them.
+- Counts of one said "1 packs" or "1 stations" in `radio-bot packs` and `/radio packs`. They now say "1 pack" and "1 station".
 
 ## [1.2.1] - 2026-11-03
 

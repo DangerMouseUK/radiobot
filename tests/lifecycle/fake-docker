@@ -78,6 +78,10 @@ case "$1" in
         ;;
       *"packs.js browse"*) echo "Packs in the official pack library:" && echo "  mypack  My Pack · 3 stations" ;;
       *"packs.js add"*) echo "Installed My Pack (mypack): 3 stations." && echo 1 >"$st/packs" ;;
+      *"packs.js update"*) # like the real one: nothing to update, so status 3 when asked for it
+        echo "My Pack (mypack) is already up to date (version 2026.11.03)."
+        case "$*" in *--unchanged-status*) exit 3 ;; esac
+        ;;
       *packs.js*) echo "(packs)" ;;
       *healthcheck.js*) echo "healthy: ok" ;;
       *health.json*)
