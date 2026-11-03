@@ -73,6 +73,12 @@ const fakePack = (
     id,
     name: `Pack ${id}`,
     description: '',
+    version: null,
+    owner: null,
+    countries: [],
+    regions: [],
+    languages: [],
+    minBotVersion: null,
     disclaimer: null,
     order: 100,
     enabledByDefault: true,
@@ -85,6 +91,8 @@ const fakePack = (
   dir: `/packs/${id}`,
   stations: [],
   sources: sourceIds.map((sid) => ({ ...source(sid, 'one'), stationId: `${id}:one` }) as never),
+  origin: 'extra',
+  contentHash: '',
 });
 
 describe('loadPack validation', () => {

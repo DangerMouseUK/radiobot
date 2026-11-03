@@ -21,8 +21,8 @@ afterAll(async () => {
 function setup(path: string, provenance: 'official-player' | 'auto-discovered' = 'official-player') {
   const repos = memoryDb();
   repos.stations.upsertProviderStation({
-    id: 'fg:test-station',
-    provider: 'fg',
+    id: 'demo:test-station',
+    provider: 'demo',
     slug: 'test-station',
     externalId: null,
     displayName: 'TEST STATION',
@@ -37,7 +37,7 @@ function setup(path: string, provenance: 'official-player' | 'auto-discovered' =
   });
   repos.stations.upsertSeedSource({
     id: 'test-src',
-    stationId: 'fg:test-station',
+    stationId: 'demo:test-station',
     url: `${radio.base}${path}`,
     label: 'Direct',
     priority: 10,
@@ -68,14 +68,14 @@ function setup(path: string, provenance: 'official-player' | 'auto-discovered' =
 describe('SourceService', () => {
   it('probes on first play and makes an official mapping eligible', async () => {
     const t = setup('/mp3');
-    expect(t.service.availability(t.stations.getStation('fg:test-station')!)).toBe('unverified');
-    const sel = await t.service.prepareForPlayback('g', 'fg:test-station');
+    expect(t.service.availability(t.stations.getStation('demo:test-station')!)).toBe('unverified');
+    const sel = await t.service.prepareForPlayback('g', 'demo:test-station');
     expect(sel.selected?.id).toBe('test-src');
     const src = t.stations.getSource('test-src')!;
     expect(src.verificationState).toBe('eligible');
     expect(src.codec).toBe('mp3');
     expect(t.stations.listProbeResults('test-src')).toHaveLength(1);
-    expect(t.service.availability(t.stations.getStation('fg:test-station')!)).toBe('available');
+    expect(t.service.availability(t.stations.getStation('demo:test-station')!)).toBe('available');
   }, 60_000);
 
   it('a cancelled waiter never records a failure or cancels another guild (review #2)', async () => {
@@ -97,7 +97,7 @@ describe('SourceService', () => {
     const abort = new AbortController();
     abort.abort();
     await expect(
-      t.service.prepareForPlayback('g', 'fg:test-station', { signal: abort.signal }),
+      t.service.prepareForPlayback('g', 'demo:test-station', { signal: abort.signal }),
     ).rejects.toMatchObject({
       code: 'CANCELLED',
     });
@@ -106,7 +106,7 @@ describe('SourceService', () => {
 
   it('marks access-refused sources offline with ACCESS_DENIED evidence and keeps them out of selection', async () => {
     const t = setup('/forbidden');
-    const sel = await t.service.prepareForPlayback('g', 'fg:test-station');
+    const sel = await t.service.prepareForPlayback('g', 'demo:test-station');
     expect(sel.selected).toBeNull();
     const src = t.stations.getSource('test-src')!;
     expect(src.verificationState).toBe('offline');
@@ -115,7 +115,7 @@ describe('SourceService', () => {
 
   it('marks missing (HTTP 404) sources offline, recorded as NOT_FOUND (gone)', async () => {
     const t = setup('/nope');
-    const sel = await t.service.prepareForPlayback('g', 'fg:test-station');
+    const sel = await t.service.prepareForPlayback('g', 'demo:test-station');
     expect(sel.selected).toBeNull();
     const src = t.stations.getSource('test-src')!;
     expect(src.verificationState).toBe('offline');

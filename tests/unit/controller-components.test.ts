@@ -190,7 +190,7 @@ describe('Browse and List buttons', () => {
     const again = await t.click(t.people.member, button);
     expect(JSON.stringify(again.calls[0]!.payload)).toContain('"value":"techno"');
     const everything = await t.submit(t.people.member, modal.custom_id, { search: '' });
-    expect(firstEmbed(everything).footer?.text).toMatch(/^Page 1\/4 · 63 stations\. /);
+    expect(firstEmbed(everything).footer?.text).toMatch(/^Page 1\/2 · 26 stations\. /);
   });
 
   it('a search form whose list has expired, or that is not one of ours, changes nothing', async () => {

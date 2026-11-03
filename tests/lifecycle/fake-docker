@@ -70,6 +70,10 @@ case "$1" in
   exec)
     case "$*" in
       *backup.js*) echo "Backup written: /app/data/backups/radio-bot-manual-x.sqlite" ;;
+      *"packs.js count"*) cat "$st/packs" 2>/dev/null || echo 0 ;;
+      *"packs.js browse"*) echo "Packs in the official pack library:" && echo "  mypack  My Pack · 3 stations" ;;
+      *"packs.js add"*) echo "Installed My Pack (mypack): 3 stations." && echo 1 >"$st/packs" ;;
+      *packs.js*) echo "(packs)" ;;
       *healthcheck.js*) echo "healthy: ok" ;;
       *health.json*)
         echo "{\"at\":\"x\",\"activeStreams\":${FAKE_PLAYING:-0},\"discordReady\":true,\"dbOk\":true,\"ffmpegOk\":true}"

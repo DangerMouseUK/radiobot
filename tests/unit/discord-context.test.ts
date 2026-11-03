@@ -1,6 +1,6 @@
 import { ChannelType, type Client, type Guild, PermissionFlagsBits, type VoiceChannel } from 'discord.js';
 import { describe, expect, it } from 'vitest';
-import { PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
+import { seedPacks } from '../../src/catalogue/packs.ts';
 import { loadConfig } from '../../src/config/env.ts';
 import {
   type AppContext,
@@ -20,7 +20,7 @@ import {
   userVoiceChannelId,
 } from '../../src/discord/voice-access.ts';
 import type { GuildSettings } from '../../src/persistence/repositories/guilds.ts';
-import { memoryDb } from '../helpers.ts';
+import { demoRegistry, memoryDb } from '../helpers.ts';
 
 const G1 = '111111111111111111';
 const G2 = '222222222222222222';
@@ -29,7 +29,7 @@ function setup(
   opts: { disabledPacks?: string[]; session?: { connected: boolean; channelId: string | null } } = {},
 ) {
   const repos = memoryDb();
-  const packs = PackRegistry.load(null, { enabled: new Set(), disabled: new Set(opts.disabledPacks ?? []) });
+  const packs = demoRegistry(null, { enabled: new Set(), disabled: new Set(opts.disabledPacks ?? []) });
   seedPacks(repos.stations, packs);
   for (const [guildId, id] of [
     [G1, 'custom:mine'],
@@ -66,7 +66,7 @@ describe('station visibility', () => {
   it('shows enabled packs in pack order and only this server’s custom stations, last', () => {
     const { ctx } = setup();
     const list = visibleStations(ctx, G1);
-    expect(list[0]!.id).toBe('fg:fg-dj-radio');
+    expect(list[0]!.id).toBe('demo:demo-radio');
     expect(list.at(-1)!.id).toBe('custom:mine');
     expect(list.some((s) => s.id === 'custom:theirs')).toBe(false);
     expect(visibleStation(ctx, G1, 'custom:theirs')).toBeNull();
@@ -74,14 +74,14 @@ describe('station visibility', () => {
   });
 
   it('hides stations of switched-off packs', () => {
-    const { ctx } = setup({ disabledPacks: ['fg'] });
+    const { ctx } = setup({ disabledPacks: ['demo'] });
     expect(visibleStations(ctx, G1).map((s) => s.id)).toEqual(['custom:mine']);
-    expect(visibleStation(ctx, G1, 'fg:fg-dj-radio')).toBeNull();
+    expect(visibleStation(ctx, G1, 'demo:demo-radio')).toBeNull();
   });
 
   it('names groups after their pack', () => {
     const { ctx } = setup();
-    expect(groupName(ctx, 'fg')).toBe('Radio FG');
+    expect(groupName(ctx, 'demo')).toBe('Radio Demo');
     expect(groupName(ctx, 'custom')).toBe('Custom (this server)');
     expect(groupName(ctx, 'unknown-pack')).toBe('unknown-pack');
   });

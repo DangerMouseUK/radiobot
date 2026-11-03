@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "template-example-hits-mp3",
+      "station": "example-hits",
+      "url": "https://stream.example.org/hits.mp3",
+      "label": "Direct MP3",
+      "priority": 10,
+      "transportHint": "http-continuous",
+      "codecHint": "mp3",
+      "provenance": "official-player",
+      "provenanceDetail": "Linked from https://www.example.org/hits/listen on 2026-11-03.",
+      "enabled": true,
+      "disabledReason": null
+    },
+    {
+      "id": "template-example-hits-hls",
+      "station": "example-hits",
+      "url": "https://stream.example.org/hits/playlist.m3u8",
+      "label": "HLS",
+      "priority": 20,
+      "transportHint": "hls",
+      "codecHint": "aac",
+      "provenance": "official-player",
+      "provenanceDetail": "Linked from https://www.example.org/hits/listen on 2026-11-03.",
+      "enabled": true,
+      "disabledReason": null
+    },
+    {
+      "id": "template-example-news-aac",
+      "station": "example-news",
+      "url": "https://stream.example.org/news.aac",
+      "label": "Direct AAC",
+      "priority": 10,
+      "transportHint": "http-continuous",
+      "codecHint": "aac",
+      "provenance": "official-player",
+      "provenanceDetail": "Linked from https://www.example.org/news/listen on 2026-11-03.",
+      "enabled": true,
+      "disabledReason": null
+    },
+    {
+      "id": "template-example-news-mp3-low",
+      "station": "example-news",
+      "url": "https://stream.example.org/news-low.mp3",
+      "label": "Low-bandwidth MP3",
+      "priority": 30,
+      "transportHint": "http-continuous",
+      "codecHint": "mp3",
+      "provenance": "official-player",
+      "provenanceDetail": "Linked from https://www.example.org/news/listen on 2026-11-03.",
+      "enabled": false,
+      "disabledReason": "Returned HTTP 404 when checked on 2026-11-03."
+    },
+    {
+      "id": "template-example-county-sound-mp3",
+      "station": "example-county-sound",
+      "url": "https://stream.example.org/county.mp3",
+      "label": "Direct MP3",
+      "priority": 10,
+      "transportHint": "http-continuous",
+      "codecHint": "mp3",
+      "provenance": "curated",
+      "provenanceDetail": "Listed in the network's published stream directory (https://www.example.org/streams) on 2026-11-03, and checked against the station's own web player.",
+      "enabled": true,
+      "disabledReason": null
+    }
+  ]
+}

@@ -126,7 +126,7 @@ describe('editing and removing custom stations', () => {
     await expect(t.service.edit('999999999999999999', station.id, { name: 'Theirs' })).rejects.toThrow(
       /not one of this server/,
     );
-    await expect(t.service.edit(G, 'fg:fg-dj-radio', { name: 'Hijack' })).rejects.toThrow(
+    await expect(t.service.edit(G, 'demo:demo-radio', { name: 'Hijack' })).rejects.toThrow(
       /not one of this server/,
     );
     const r = await t.service.edit(G, station.id, { name: 'Renamed', description: null });

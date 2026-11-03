@@ -12,7 +12,8 @@ import {
   PermissionFlagsBits,
 } from 'discord.js';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
-import { discoverPackDirs, loadPack, PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
+import type { LibraryIndex } from '../../src/catalogue/pack-library.ts';
+import { discoverPackDirs, loadPack, seedPacks } from '../../src/catalogue/packs.ts';
 import type { SyncReport } from '../../src/catalogue/sync.ts';
 import type { Station } from '../../src/catalogue/types.ts';
 import { loadConfig } from '../../src/config/env.ts';
@@ -21,11 +22,12 @@ import { type AppContext, RateLimits } from '../../src/discord/context.ts';
 import { RadioController } from '../../src/discord/controller.ts';
 import { EventLoopMonitor } from '../../src/observability/event-loop.ts';
 import { Metrics } from '../../src/observability/metrics.ts';
+import { RadioError } from '../../src/shared/errors.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { SourceService } from '../../src/streams/source-service.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
 import type { SessionStatus } from '../../src/voice/session.ts';
-import { memoryDb, silentLogger } from '../helpers.ts';
+import { demoRegistry, memoryDb, silentLogger } from '../helpers.ts';
 
 export const GUILD = '123456789012345678';
 export const OTHER_GUILD = '223456789012345678';
@@ -515,20 +517,22 @@ export const CHECKED = {
 // ------------------------------------------------------------------ context
 
 export interface SetupOptions {
-  /** Switch every bundled station pack off, leaving only custom stations visible. */
+  /** Switch the demo fixture pack off, leaving only custom stations visible. */
   customOnly?: boolean;
   /** OPERATOR_USER_IDS for the installation. */
   operators?: string[];
-  /** A folder of extra station packs (EXTRA_PACKS_DIR), loaded and switched on alongside the bundled ones. */
+  /** A folder of extra station packs (EXTRA_PACKS_DIR), loaded and switched on alongside the demo pack. */
   extraPacksDir?: string;
 }
 
 export function setup(opts: SetupOptions = {}) {
   const repos = memoryDb();
-  const bundled = opts.customOnly ? PackRegistry.load(null).packs.map((p) => p.meta.id) : [];
   const extra = opts.extraPacksDir ?? null;
-  const extraIds = extra ? discoverPackDirs(extra).map((d) => loadPack(d).meta.id) : [];
-  const packs = PackRegistry.load(extra, { enabled: new Set(extraIds), disabled: new Set(bundled) });
+  const extraIds = extra ? discoverPackDirs(extra).map((d) => loadPack(d, 'extra').meta.id) : [];
+  const packs = demoRegistry(extra, {
+    enabled: new Set(extraIds),
+    disabled: new Set(opts.customOnly ? ['demo'] : []),
+  });
   seedPacks(repos.stations, packs);
   const metrics = new Metrics();
   const sources = new SourceService({
@@ -541,7 +545,7 @@ export function setup(opts: SetupOptions = {}) {
     maxConcurrentProbes: 1,
     logger: silentLogger(),
     metrics,
-    // The bundled packs hold real station addresses: a probe must never reach them from a test.
+    // A probe must never reach a stream host from a test, not even a made-up one.
     probeImpl: async () => {
       throw new Error('no probing in controller tests');
     },
@@ -598,6 +602,45 @@ export function setup(opts: SetupOptions = {}) {
     syncable: [] as string[],
     reports: new Map<string, Partial<SyncReport>>(),
     calls: [] as string[],
+  };
+  // Stands in for PackManager: the official library's index, and what was installed or removed.
+  const packLibrary = {
+    index: null as LibraryIndex | null,
+    installs: [] as string[],
+    removes: [] as string[],
+    failure: null as Error | null,
+    updates: new Map<string, string>(),
+    notices: [] as string[],
+    canInstall: true,
+  };
+  const packManager = {
+    get canInstall() {
+      return packLibrary.canInstall;
+    },
+    updates: packLibrary.updates,
+    notices: packLibrary.notices,
+    cachedIndex: () => packLibrary.index,
+    index: async () => {
+      if (!packLibrary.index)
+        throw new RadioError('HTTP_TIMEOUT', 'The pack library took too long to answer.');
+      return packLibrary.index;
+    },
+    install: async (id: string) => {
+      if (packLibrary.failure) throw packLibrary.failure;
+      packLibrary.installs.push(id);
+      const entry = packLibrary.index?.packs.find((p) => p.id === id);
+      return {
+        id,
+        name: entry?.name ?? id,
+        version: entry?.version ?? null,
+        previousVersion: null,
+        stations: entry?.stations ?? 0,
+      };
+    },
+    remove: async (id: string) => {
+      packLibrary.removes.push(id);
+      return true;
+    },
   };
   const clientChannels = new Map<string, unknown>();
   const ids = new ComponentIds('test-secret');
@@ -659,6 +702,7 @@ export function setup(opts: SetupOptions = {}) {
     sources,
     sessions,
     packs,
+    packManager,
     catalogueSync: {
       syncablePacks: () => sync.syncable.map((id) => packs.get(id)!),
       lastSync: () => ({ at: null, ok: true }),
@@ -761,6 +805,7 @@ export function setup(opts: SetupOptions = {}) {
     rescan,
     compare,
     sync,
+    packLibrary,
     custom,
     customAdds,
     customEdits,

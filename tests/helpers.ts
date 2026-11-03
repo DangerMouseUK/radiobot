@@ -1,4 +1,13 @@
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { pino } from 'pino';
+import {
+  discoverPackDirs,
+  loadPack,
+  PackRegistry,
+  type PackSelection,
+  type StationPack,
+} from '../src/catalogue/packs.ts';
 import type { StationSource } from '../src/catalogue/types.ts';
 import type { Logger } from '../src/observability/logger.ts';
 import { Db } from '../src/persistence/db.ts';
@@ -6,6 +15,22 @@ import { GuildRepository, MetaRepository } from '../src/persistence/repositories
 import { StationRepository } from '../src/persistence/repositories/stations.ts';
 
 export const silentLogger = (): Logger => pino({ level: 'silent' });
+
+/** Folder of made-up station packs for the tests (`demo`); no test depends on catalog/packs. */
+export const FIXTURE_PACKS_DIR = fileURLToPath(new URL('./fixtures/packs/', import.meta.url));
+export const DEMO_PACK_DIR = join(FIXTURE_PACKS_DIR, 'demo');
+
+/** The made-up `demo` pack, loaded as an operator's extra pack. */
+export const demoPack = (): StationPack => loadPack(DEMO_PACK_DIR, 'extra');
+
+/**
+ * The `demo` fixture pack plus any packs in `extraDir`, checked together as `PackRegistry.load`
+ * would, but without reading the packs shipped in catalog/packs.
+ */
+export function demoRegistry(extraDir: string | null = null, selection?: PackSelection): PackRegistry {
+  const extra = extraDir ? discoverPackDirs(extraDir).map((d) => loadPack(d, 'extra')) : [];
+  return new PackRegistry([demoPack(), ...extra], selection);
+}
 
 export function memoryDb() {
   const db = new Db(':memory:');
@@ -26,7 +51,7 @@ export function makeSource(overrides: Partial<StationSource> = {}): StationSourc
   const now = new Date().toISOString();
   return {
     id: 'src-a',
-    stationId: 'fg:fg-dj-radio',
+    stationId: 'demo:demo-radio',
     url: 'https://stream.example.com/a',
     label: 'Direct',
     priority: 10,
@@ -71,69 +96,3 @@ export function makeSource(overrides: Partial<StationSource> = {}): StationSourc
     ...overrides,
   };
 }
-
-export const PRD_STATION_NAMES = [
-  'FG DJ RADIO',
-  'FG CHIC',
-  'FG DANCE',
-  'MAXXIMUM',
-  'FG STARTER FG BY HAKIMAKLI',
-  'FG AMSTERDAM DANCE EVENT',
-  'FG DEEP DANCE',
-  'FG REMIX',
-  'FG AT WORK',
-  'FG HITS',
-  'FG DAVID GUETTA',
-  'FG BOB SINCLAR',
-  'FG CHIC FRENCH',
-  'FG CHIC LOUNGE',
-  'FG CHIC MIX',
-  'FG CHIC SOUL',
-  'FG CHIC & CHILL',
-  'FG CHIC SPA',
-  'FG YOGA',
-  'FG CHIC by Renault',
-  'FG CHIC VINTAGE',
-  'FG DISCO FUNK',
-  'FG CLASSICS',
-  "MAXXIMUM 90's",
-  'FG NEW WAVE',
-  'FG MADONNA',
-  'FG POP LEGENDS',
-  'FG RnB LEGENDS',
-  'FG DANCEFLOOR',
-  'FG MIX HOUSE',
-  'FG MIX AFRO HOUSE',
-  'FG BUDDHA BAR',
-  'FG NOMADE',
-  'FG APERO',
-  'FG FRENCH TOUCH',
-  'FG DISCO HOUSE',
-  'FG DEEP HOUSE',
-  'FG TRAINING',
-  'FG ON THE ROAD',
-  'FG RELAX',
-  'FG DEFECTED',
-  'FG PURPLE DISCO MACHINE',
-  'FG USHUAÏA IBIZA',
-  'FG HÏ IBIZA',
-  'FG UNVRS',
-  'FG MARTIN GARRIX',
-  'FG CLUBBING',
-  'FG PULSE',
-  'FG FUCKING GOOD MUSIC',
-  'FG TECHNO',
-  'FG MIX TECHNO',
-  'FG MIX TRANCE',
-  'FG MIX FESTIVAL',
-  'FG MIX MELODIC',
-  'FG MIX CLUB',
-  'FG PHONK & GAMING',
-  'FG BEATPORT',
-  'FG BELGIUM',
-  'FG CHIC BERLIN',
-  'FG CHIC LONDON',
-  'FG CHIC IBIZA',
-  'FG DANCE TOP40',
-  'FG FEEL GOOD',
-];

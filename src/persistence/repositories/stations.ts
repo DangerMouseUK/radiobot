@@ -507,6 +507,11 @@ export class StationRepository {
     return this.#cachedStations().all.filter((st) => st.provider === provider);
   }
 
+  /** Every pack that has stations in the database (loaded or not), custom stations excluded. */
+  providerIds(): string[] {
+    return [...new Set(this.#cachedStations().builtin.map((st) => st.provider))];
+  }
+
   /** A station is visible to a guild if it is a provider station or one of its own custom stations. */
   getVisibleStation(guildId: string, id: string): Station | null {
     const s = this.getStation(id);

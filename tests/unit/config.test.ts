@@ -124,13 +124,13 @@ describe('configuration parsing', () => {
 
   it('splits lists on commas and whitespace', () => {
     const c = load({
-      DISABLED_PACKS: 'fg, other',
+      DISABLED_PACKS: 'demo, other',
       ENABLED_PACKS: 'optin\nextra',
-      DISABLED_STATION_IDS: ' fg:fg-hits ,, fg:fg-yoga ',
+      DISABLED_STATION_IDS: ' demo:demo-hits ,, demo:demo-yoga ',
     });
-    expect([...c.disabledPacks]).toEqual(['fg', 'other']);
+    expect([...c.disabledPacks]).toEqual(['demo', 'other']);
     expect([...c.enabledPacks]).toEqual(['optin', 'extra']);
-    expect([...c.disabledStationIds]).toEqual(['fg:fg-hits', 'fg:fg-yoga']);
+    expect([...c.disabledStationIds]).toEqual(['demo:demo-hits', 'demo:demo-yoga']);
   });
 
   it('trims optional strings and treats blank as unset', () => {

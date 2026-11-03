@@ -283,7 +283,7 @@ export async function startTestRadio(fx: Fixtures): Promise<TestRadio> {
         if (req.headers['icy-metadata'] === '1') {
           return sendLive('audio/mpeg', withIcy(fx.mp3Stereo, 8192, 'Synthetic Artist - Test Tone'), {
             'icy-metaint': '8192',
-            'icy-name': 'FG DANCE',
+            'icy-name': 'Demo Dance',
           });
         }
         return sendLive('audio/mpeg', fx.mp3Stereo);

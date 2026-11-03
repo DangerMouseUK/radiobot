@@ -26,7 +26,7 @@ What to expect:
 - **Coordination:** we'll agree a fix and a disclosure date with you and credit you in the advisory, unless you'd rather not be credited.
 - **Testing limits:** please don't test against other people's instances or real broadcasters' servers in ways that could cause harm. Never include real Discord tokens in reports.
 
-Broadcasters and rights holders asking for a station or source to be removed can use the same private channel. See [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md#takedown-procedure).
+Broadcasters and rights holders asking for a station pack, a station or a source to be removed should follow the pack library's takedown page, since packs are published there; this private channel works too. See [docs/rights-and-disclaimer.md](docs/rights-and-disclaimer.md#takedown-procedure).
 
 ## Scope
 
@@ -38,6 +38,7 @@ In scope: vulnerabilities in this repository's code, default configuration, Dock
 
   The policy is in `src/streams/url-policy.ts`, and enforcement is in `src/streams/safe-fetch.ts`.
 - **FFmpeg argument or protocol injection.** Any way for user input to reach FFmpeg arguments, or to make FFmpeg open anything other than its stdin pipe.
+- **Pack library tampering.** Any way to make the bot install or load a station pack that the official library didn't publish (for example getting past the SHA-256 check of a bundle, or making Discord install from another library), or to write outside the installed-packs folder.
 - **Authorisation bypass.** Running admin or control actions without the required role, channel or voice-channel conditions, through slash commands, buttons, select menus or forms. This includes forged, replayed-across-servers or expired button, menu and form IDs, and import previews applied by someone who isn't an admin of that server, or after they expired or were replaced.
 - **Secret leakage.** The Discord token, stream credentials or tokenised URLs appearing in logs, Discord replies, `/radio stats`, exports, backups produced by the bot, or the diagnostics endpoint.
 - **Resource exhaustion.** Inputs that get around the documented bounds: playlist and segment size caps, probe budgets, the import file limit (a Discord attachment of at most 256 KB), concurrency limits, rate limits, the clean-up of finished FFmpeg processes. Examples are unbounded memory, zombie FFmpeg processes, or a crafted stream that hangs a session forever.
@@ -56,6 +57,6 @@ Out of scope:
 
 - **Keep the token secret.** Keep `.env` mode `600`, never commit it, and reset the token in the Developer Portal if it leaks.
 - **Use the shipped Compose file.** It publishes no ports, runs as the non-root `node` user with a read-only root filesystem and all capabilities dropped, and sets `no-new-privileges`.
-- **Limit outgoing traffic with firewall rules (egress rules) as an extra layer of protection.** The bot needs outbound access to Discord (HTTPS, WebSocket and voice UDP) and to the stream hosts you use.
+- **Limit outgoing traffic with firewall rules (egress rules) as an extra layer of protection.** The bot needs outbound access to Discord (HTTPS, WebSocket and voice UDP), to the stream hosts you use, and to `github.com` for the station pack library.
 - **Custom stations are always admin-only** (server owner or Administrator permission). Set `MAX_CUSTOM_STATIONS_PER_GUILD=0` to switch them off entirely.
 - **Keep the image up to date.** Releases pin dependency versions, including the DAVE and voice libraries.

@@ -26,10 +26,10 @@ function setup(opts: { disabledSourceIds?: string[]; disabledStationIds?: string
     disabledStationIds: new Set(opts.disabledStationIds ?? []),
   });
   const station = (slug: string, sources: Array<{ id: string; patch?: SourceProbePatch }> = []) => {
-    const id = `fg:${slug}`;
+    const id = `demo:${slug}`;
     repos.stations.upsertProviderStation({
       id,
-      provider: 'fg',
+      provider: 'demo',
       slug,
       externalId: null,
       displayName: slug.toUpperCase(),
@@ -89,8 +89,8 @@ describe('station availability (FR-001)', () => {
         t.station('down', [{ id: 'down-a', patch: verified({ verificationState: 'offline' }) }]),
       ),
     ).toBe('unavailable');
-    t.stations.setCatalogueStatus('fg:good', 'retired');
-    expect(t.service.availability(t.stations.getStation('fg:good')!)).toBe('retired');
+    t.stations.setCatalogueStatus('demo:good', 'retired');
+    expect(t.service.availability(t.stations.getStation('demo:good')!)).toBe('retired');
   });
 
   it('ignores disabled sources', () => {
@@ -119,7 +119,7 @@ describe('station availability (FR-001)', () => {
 
 describe('operator kill switches', () => {
   it('disables listed sources and every source of listed stations, with a reason', () => {
-    const t = setup({ disabledSourceIds: ['a-1'], disabledStationIds: ['fg:b'] });
+    const t = setup({ disabledSourceIds: ['a-1'], disabledStationIds: ['demo:b'] });
     const a = t.station('a', [
       { id: 'a-1', patch: verified() },
       { id: 'a-2', patch: verified() },
@@ -164,10 +164,10 @@ describe('guild source preferences', () => {
       { id: 'p-1', patch: verified() },
       { id: 'p-2', patch: verified() },
     ]);
-    t.guilds.setPreference('g1', 'fg:p', 'pin', 'p-2', null);
-    expect(t.service.select('g1', 'fg:p')).toMatchObject({ mode: 'pin', selected: { id: 'p-2' } });
-    expect(t.service.select('g2', 'fg:p')).toMatchObject({ mode: 'auto', selected: { id: 'p-1' } });
-    expect(t.service.select('g1', 'fg:p', new Set(['p-2'])).degraded).toBe(true);
+    t.guilds.setPreference('g1', 'demo:p', 'pin', 'p-2', null);
+    expect(t.service.select('g1', 'demo:p')).toMatchObject({ mode: 'pin', selected: { id: 'p-2' } });
+    expect(t.service.select('g2', 'demo:p')).toMatchObject({ mode: 'auto', selected: { id: 'p-1' } });
+    expect(t.service.select('g1', 'demo:p', new Set(['p-2'])).degraded).toBe(true);
   });
 
   it('recovers a cooled-down source once it plays again', () => {

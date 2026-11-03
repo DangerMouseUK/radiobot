@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
+import { seedPacks } from '../../src/catalogue/packs.ts';
 import {
   applyImport,
   EXPORT_SCHEMA,
@@ -9,7 +9,7 @@ import {
   parseImport,
   previewImport,
 } from '../../src/import-export/config-io.ts';
-import { memoryDb } from '../helpers.ts';
+import { demoRegistry, memoryDb } from '../helpers.ts';
 
 const SRC = '111111111111111111';
 const DST = '222222222222222222';
@@ -20,7 +20,7 @@ const GONE = '666666666666666666';
 
 function seeded() {
   const repos = memoryDb();
-  seedPacks(repos.stations, PackRegistry.load(null));
+  seedPacks(repos.stations, demoRegistry());
   const custom = (guildId: string, id: string, url: string) => {
     repos.stations.insertCustomStation({
       id,
@@ -58,7 +58,7 @@ function configured() {
     allowedVoiceChannelIds: [VOICE],
     djRoleIds: [ROLE, GONE],
     memberControlMode: 'none',
-    defaultStationId: 'fg:fg-chic',
+    defaultStationId: 'demo:demo-chic',
     preferredVoiceChannelId: VOICE,
     voiceLock: true,
     qualityMode: 'manual',
@@ -68,8 +68,8 @@ function configured() {
     resumeOnRestart: true,
     notificationChannelId: GONE,
   });
-  t.guilds.setFavourites(SRC, ['fg:fg-techno', 'custom:plain', 'fg:fg-chic']);
-  t.guilds.setPreference(SRC, 'fg:fg-dj-radio', 'pin', 'fg-dj-radio-mp3-wknqhm4yuchvv', '1');
+  t.guilds.setFavourites(SRC, ['demo:demo-techno', 'custom:plain', 'demo:demo-chic']);
+  t.guilds.setPreference(SRC, 'demo:demo-radio', 'pin', 'demo-radio-mp3', '1');
   t.guilds.setPreference(SRC, 'custom:plain', 'prefer', 'src-plain', '1');
   return t;
 }
@@ -85,9 +85,9 @@ describe('guild settings export', () => {
       manualBitrateKbps: 320,
       idleMode: 'pause_when_empty',
     });
-    expect(data.favourites).toEqual(['fg:fg-techno', 'fg:fg-chic']);
+    expect(data.favourites).toEqual(['demo:demo-techno', 'demo:demo-chic']);
     expect(data.sourcePreferences).toEqual([
-      { stationId: 'fg:fg-dj-radio', mode: 'pin', sourceId: 'fg-dj-radio-mp3-wknqhm4yuchvv' },
+      { stationId: 'demo:demo-radio', mode: 'pin', sourceId: 'demo-radio-mp3' },
     ]);
     const byName = Object.fromEntries(data.customStations.map((c) => [c.name, c]));
     expect(byName['Custom plain']).toMatchObject({
@@ -130,13 +130,13 @@ describe('guild settings import', () => {
   it('previews changes and warns about everything that will be dropped', () => {
     const t = configured();
     const data = exportGuild(SRC, t.guilds, t.stations);
-    data.favourites.push('fg:not-a-station');
+    data.favourites.push('demo:not-a-station');
     const p = previewImport(DST, data, t.guilds, t.stations, existingChannels, existingRoles);
     expect(p.lines).toEqual(
       expect.arrayContaining([
         '• Who else can control the radio: listeners in the bot’s channel → DJs and admins only',
         // By name, as the settings page shows it.
-        `• Default station: none → ${t.stations.getStation('fg:fg-chic')!.displayName}`,
+        `• Default station: none → ${t.stations.getStation('demo:demo-chic')!.displayName}`,
         // Every setting the import changes is listed, the channels and bitrate included.
         `• Preferred voice channel: none → <#${VOICE}>`,
         '• Manual bitrate: none → 320 kbps',
@@ -156,11 +156,11 @@ describe('guild settings import', () => {
   it('applies only what exists on the target server', () => {
     const t = configured();
     const data = exportGuild(SRC, t.guilds, t.stations);
-    data.favourites.push('fg:not-a-station');
+    data.favourites.push('demo:not-a-station');
     data.sourcePreferences.push({
-      stationId: 'fg:fg-chic',
+      stationId: 'demo:demo-chic',
       mode: 'prefer',
-      sourceId: 'fg-dj-radio-mp3-wknqhm4yuchvv',
+      sourceId: 'demo-radio-mp3',
     });
     applyImport(DST, data, t.guilds, t.stations, existingChannels, existingRoles, (fn) =>
       t.db.transaction(fn),
@@ -170,7 +170,7 @@ describe('guild settings import', () => {
       allowedVoiceChannelIds: [VOICE],
       djRoleIds: [ROLE],
       memberControlMode: 'none',
-      defaultStationId: 'fg:fg-chic',
+      defaultStationId: 'demo:demo-chic',
       preferredVoiceChannelId: VOICE,
       voiceLock: true,
       qualityMode: 'manual',
@@ -180,10 +180,10 @@ describe('guild settings import', () => {
       resumeOnRestart: true,
       notificationChannelId: null,
     });
-    expect(t.guilds.listFavourites(DST)).toEqual(['fg:fg-techno', 'fg:fg-chic']);
+    expect(t.guilds.listFavourites(DST)).toEqual(['demo:demo-techno', 'demo:demo-chic']);
     // The mismatched preference (source of another station) is skipped.
     expect(t.guilds.listPreferences(DST).map((p) => [p.stationId, p.mode, p.sourceId])).toEqual([
-      ['fg:fg-dj-radio', 'pin', 'fg-dj-radio-mp3-wknqhm4yuchvv'],
+      ['demo:demo-radio', 'pin', 'demo-radio-mp3'],
     ]);
   });
 
@@ -192,17 +192,17 @@ describe('guild settings import', () => {
     const data = exportGuild(SRC, t.guilds, t.stations);
     // A hand-edited file pointing at SRC's custom station, applied to DST.
     data.settings.defaultStationId = 'custom:plain';
-    data.favourites = ['fg:fg-chic', 'custom:plain', 'fg:fg-chic'];
+    data.favourites = ['demo:demo-chic', 'custom:plain', 'demo:demo-chic'];
     data.sourcePreferences.push({ stationId: 'custom:plain', mode: 'pin', sourceId: 'src-plain' });
     const parsed = parseImport(JSON.stringify(data));
-    expect(parsed.favourites).toEqual(['fg:fg-chic', 'custom:plain']);
+    expect(parsed.favourites).toEqual(['demo:demo-chic', 'custom:plain']);
     const preview = previewImport(DST, parsed, t.guilds, t.stations, existingChannels, existingRoles);
     expect(preview.warnings.join('\n')).toMatch(/2 station ID\(s\) are not in this catalogue/);
     applyImport(DST, parsed, t.guilds, t.stations, existingChannels, existingRoles, (fn) =>
       t.db.transaction(fn),
     );
     expect(t.guilds.getSettings(DST).defaultStationId).toBeNull();
-    expect(t.guilds.listFavourites(DST)).toEqual(['fg:fg-chic']);
+    expect(t.guilds.listFavourites(DST)).toEqual(['demo:demo-chic']);
     expect(t.guilds.listPreferences(DST).map((p) => p.stationId)).not.toContain('custom:plain');
   });
 
@@ -253,10 +253,13 @@ describe('guild settings import', () => {
       'an out-of-range bitrate',
       (d: GuildExport) => ({ ...d, settings: { ...d.settings, manualBitrateKbps: 999 } }),
     ],
-    ['a malformed station id', (d: GuildExport) => ({ ...d, favourites: ['FG CHIC'] })],
+    ['a malformed station id', (d: GuildExport) => ({ ...d, favourites: ['Demo Chic'] })],
     [
       'an "auto" preference',
-      (d: GuildExport) => ({ ...d, sourcePreferences: [{ stationId: 'fg:x', mode: 'auto', sourceId: 'x' }] }),
+      (d: GuildExport) => ({
+        ...d,
+        sourcePreferences: [{ stationId: 'demo:x', mode: 'auto', sourceId: 'x' }],
+      }),
     ],
   ])('rejects %s', (_label, mutate) => {
     const t = configured();

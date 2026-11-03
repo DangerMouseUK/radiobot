@@ -2,7 +2,7 @@ import { type APIEmbed, ButtonStyle, type EmbedBuilder } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import { planEncoder } from '../../src/audio/encoder.ts';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
-import { PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
+import { seedPacks } from '../../src/catalogue/packs.ts';
 import type { Station, StationSource } from '../../src/catalogue/types.ts';
 import { loadConfig } from '../../src/config/env.ts';
 import { ComponentIds } from '../../src/discord/components/custom-id.ts';
@@ -42,7 +42,7 @@ import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { SourceService } from '../../src/streams/source-service.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
 import type { SessionStatus } from '../../src/voice/session.ts';
-import { makeSource, memoryDb, silentLogger } from '../helpers.ts';
+import { demoRegistry, makeSource, memoryDb, silentLogger } from '../helpers.ts';
 
 const GUILD = '123456789012345678';
 
@@ -85,7 +85,7 @@ function checkComponents(view: Pick<View, 'components'>): Array<Record<string, u
 
 function context(opts: { stale?: boolean; now?: () => number } = {}) {
   const repos = memoryDb();
-  const packs = PackRegistry.load(null);
+  const packs = demoRegistry();
   seedPacks(repos.stations, packs);
   const sources = new SourceService({
     stations: repos.stations,
@@ -121,7 +121,7 @@ const parseAll = (ids: ComponentIds, comps: Array<Record<string, unknown>>) =>
 describe('list arguments for paging buttons', () => {
   it.each([
     ['all', null, 0],
-    ['packs', 'fg', 0],
+    ['packs', 'demo', 0],
     ['packs', null, 3],
     ['custom', null, 1],
     ['favourites', null, 0],
@@ -160,8 +160,8 @@ describe('control buttons', () => {
 
   it('lays the buttons out in rows of two or three, one blurple button at most per row and nothing red', () => {
     const { ctx, ids, guilds } = context();
-    guilds.enqueue(GUILD, 'fg:fg-chic', null);
-    const rows = controlRows(ctx, GUILD, 'fg:fg-dj-radio', true).map((r) => r.toJSON().components);
+    guilds.enqueue(GUILD, 'demo:demo-chic', null);
+    const rows = controlRows(ctx, GUILD, 'demo:demo-radio', true).map((r) => r.toJSON().components);
     const actions = rows.map((r) =>
       r.map(
         (c) =>
@@ -195,26 +195,26 @@ describe('control buttons', () => {
 
   it('adds station buttons carrying the station id, and a queue-aware skip', () => {
     const { ctx, ids, guilds } = context();
-    guilds.enqueue(GUILD, 'fg:fg-chic', null);
-    guilds.enqueue(GUILD, 'fg:fg-dance', null);
-    guilds.toggleFavourite(GUILD, 'fg:fg-dj-radio');
-    const rows = controlRows(ctx, GUILD, 'fg:fg-dj-radio');
+    guilds.enqueue(GUILD, 'demo:demo-chic', null);
+    guilds.enqueue(GUILD, 'demo:demo-dance', null);
+    guilds.toggleFavourite(GUILD, 'demo:demo-radio');
+    const rows = controlRows(ctx, GUILD, 'demo:demo-radio');
     const comps = checkComponents({ components: rows });
     expect(comps.find((c) => c.label === 'Skip')).toMatchObject({ style: ButtonStyle.Primary });
     expect(comps.map((c) => c.label)).toContain('Unfavourite');
     const parsed = parseAll(ids, comps).filter((p) => p && 'action' in p && p.arg);
     expect(parsed.map((p) => p && 'action' in p && [p.action, p.arg])).toEqual([
-      ['unfav', 'fg:fg-dj-radio'],
-      ['srcs', 'fg:fg-dj-radio'],
-      ['insp', 'fg:fg-dj-radio'],
+      ['unfav', 'demo:demo-radio'],
+      ['srcs', 'demo:demo-radio'],
+      ['insp', 'demo:demo-radio'],
     ]);
   });
 
   it('builds persistent panel buttons that never expire, and card buttons that last an hour', () => {
     let now = 1_800_000_000_000;
     const { ctx, ids } = context({ now: () => now });
-    const panel = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic', true) });
-    const temporary = checkComponents({ components: controlRows(ctx, GUILD, 'fg:fg-chic') });
+    const panel = checkComponents({ components: controlRows(ctx, GUILD, 'demo:demo-chic', true) });
+    const temporary = checkComponents({ components: controlRows(ctx, GUILD, 'demo:demo-chic') });
     expect(panel).toHaveLength(10);
     expect(panel.map((c) => c.label)).toEqual(expect.arrayContaining(['Skip', 'Browse']));
     // Still working after the 15 minutes they used to last, and up to the hour.
@@ -243,13 +243,13 @@ describe('browse and list views', () => {
     expect(next!.disabled).toBe(false);
     expect(ids.parse(GUILD, String(next!.custom_id))).toMatchObject({ action: 'browse', arg: 'tok123:p1' });
     // Browse and list number their pages the same way.
-    expect(first.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/4 · 63 stations\. /);
+    expect(first.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/2 · 26 stations\. /);
     // The page buttons come last, as a pair, under the favourites switch.
     expect(first.components.at(-1)!.toJSON().components).toHaveLength(2);
     embedSize(first.embeds[0]!);
 
     const last = browseView(ctx, GUILD, { pack: null, category: null, search: null }, 'tok123', 99);
-    expect(last.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 4\/4/);
+    expect(last.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 2\/2/);
     expect(pageButtons(last)[1]!.disabled).toBe(true);
   });
 
@@ -330,12 +330,12 @@ describe('browse and list views', () => {
 
   it('filters by search, category and favourites and says when nothing matches', () => {
     const { ctx, guilds } = context();
-    const search = browseView(ctx, GUILD, { pack: 'fg', category: null, search: 'techno' }, 't', 0);
-    expect(search.embeds[0]!.toJSON().description).toMatch(/FG TECHNO/);
+    const search = browseView(ctx, GUILD, { pack: 'demo', category: null, search: 'techno' }, 't', 0);
+    expect(search.embeds[0]!.toJSON().description).toMatch(/Demo Techno/);
     expect(search.embeds[0]!.toJSON().footer?.text).toMatch(/search: "techno"/);
-    guilds.toggleFavourite(GUILD, 'fg:fg-yoga');
+    guilds.toggleFavourite(GUILD, 'demo:demo-yoga');
     const fav = browseView(ctx, GUILD, { pack: null, category: 'favourites', search: null }, 't', 0);
-    expect(fav.embeds[0]!.toJSON().description).toMatch(/FG YOGA/);
+    expect(fav.embeds[0]!.toJSON().description).toMatch(/Demo Yoga/);
     expect(fav.embeds[0]!.toJSON().footer?.text).toMatch(/^Page 1\/1 · 1 station · favourites only\./);
     const none = browseView(ctx, GUILD, { pack: 'custom', category: null, search: null }, 't', 0);
     expect(none.embeds[0]!.toJSON().description).toMatch(/^No stations match\./);
@@ -350,21 +350,21 @@ describe('browse and list views', () => {
 
   it('lists packs 20 per page with numbered ids, coverage and the generic disclaimer', () => {
     const { ctx, ids } = context({ stale: true });
-    const v = listView(ctx, GUILD, 'packs', 'fg', 0);
+    const v = listView(ctx, GUILD, 'packs', 'demo', 0);
     const e = v.embeds[0]!.toJSON();
-    expect(e.title).toBe('Station pack: Radio FG');
-    expect(e.description).toMatch(/^\*\*Radio FG\*\*\n1\. /);
-    expect(e.description).toContain('`fg:fg-dj-radio`');
-    expect(e.footer?.text).toMatch(/Page 1\/4 · 63 stations · 63 with a known stream/);
+    expect(e.title).toBe('Station pack: Radio Demo');
+    expect(e.description).toMatch(/^\*\*Radio Demo\*\*\n1\. /);
+    expect(e.description).toContain('`demo:demo-radio`');
+    expect(e.footer?.text).toMatch(/Page 1\/2 · 26 stations · 26 with a known stream/);
     expect(e.footer?.text).toMatch(/list may be out of date/);
     // Only the generic notice: the bundled pack's footer never names its broadcaster.
     expect(e.footer?.text).toContain('not affiliated with or endorsed by any broadcaster');
-    expect(e.footer?.text).not.toMatch(/Radio FG|Maison/);
+    expect(e.footer?.text).not.toMatch(/Radio Demo|Demo Media/);
     embedSize(v.embeds[0]!);
     // The play menu, then the page buttons. A chosen pack has no custom stations to show or hide.
     const [menu, , next] = checkComponents(v);
     expect(ids.parse(GUILD, String(menu!.custom_id))).toMatchObject({ action: 'pick', arg: '' });
-    expect(ids.parse(GUILD, String(next!.custom_id))).toMatchObject({ arg: 'packs_fg:p1' });
+    expect(ids.parse(GUILD, String(next!.custom_id))).toMatchObject({ arg: 'packs_demo:p1' });
   });
 
   it('shows empty custom and favourite lists without paging buttons', () => {
@@ -397,13 +397,13 @@ describe('browse and list views', () => {
         (c) =>
           (ids.parse(GUILD, String(c.custom_id)) as { action?: string } | null)?.action === 'list' && c.label,
       )!;
-    // 63 pack stations, then the custom one on page 4 under its own heading.
-    const all = listView(ctx, GUILD, 'all', null, 3);
+    // 26 pack stations, then the custom one on page 2 under its own heading.
+    const all = listView(ctx, GUILD, 'all', null, 1);
     const e = all.embeds[0]!.toJSON();
     expect(e.title).toBe('All stations');
-    expect(e.description).toMatch(/\*\*Custom \(this server\)\*\*\n64\. \*\*My Station\*\*/);
+    expect(e.description).toMatch(/\*\*Custom \(this server\)\*\*\n27\. \*\*My Station\*\*/);
     // The custom station here has no stream saved, so it is counted but has no known stream.
-    expect(e.footer?.text).toMatch(/^Page 4\/4 · 64 stations · 63 with a known stream/);
+    expect(e.footer?.text).toMatch(/^Page 2\/2 · 27 stations · 26 with a known stream/);
     expect(toggle(all)).toMatchObject({ label: 'Hide custom stations (1)' });
     expect(ids.parse(GUILD, String(toggle(all).custom_id))).toMatchObject({ arg: 'packs_:p0' });
     // The menu plays from this page, and says which group each station is in when the page mixes them.
@@ -450,7 +450,7 @@ describe('browse and list views', () => {
   it('offers at most 25 candidates when a name is ambiguous', () => {
     const { ctx, ids, stations } = context();
     const candidates = stations.listStations(null).slice(0, 40);
-    const v = ambiguityView(ctx, GUILD, 'fg', candidates, { channelId: '323456789012345678' });
+    const v = ambiguityView(ctx, GUILD, 'demo', candidates, { channelId: '323456789012345678' });
     const [select] = checkComponents(v);
     expect((select!.options as unknown[]).length).toBe(25);
     // The picker plays in the channel the original /radio play named.
@@ -460,7 +460,7 @@ describe('browse and list views', () => {
 
   it('only offers a play picker for /radio play; other commands ask for the exact name', () => {
     const { ctx, stations } = context();
-    const v = ambiguityView(ctx, GUILD, 'fg', stations.listStations(null).slice(0, 3), null);
+    const v = ambiguityView(ctx, GUILD, 'demo', stations.listStations(null).slice(0, 3), null);
     expect(v.components).toEqual([]);
     expect(v.embeds[0]!.toJSON().description).toMatch(/Run the command again/);
     expect(v.embeds[0]!.toJSON().footer?.text).toBe(DISCLAIMER);
@@ -504,7 +504,7 @@ describe('settings view', () => {
       djRoleIds: ['223456789012345678'],
       qualityMode: 'manual',
       manualBitrateKbps: 256,
-      defaultStationId: 'fg:fg-chic',
+      defaultStationId: 'demo:demo-chic',
     });
     const v = configView(ctx, GUILD, s, page);
     const comps = checkComponents(v);
@@ -517,7 +517,7 @@ describe('settings view', () => {
     const d = e.fields![0]!.value;
     if (page === 'access') expect(d).toContain('<@&223456789012345678>');
     if (page === 'playback') {
-      expect(d).toContain('FG CHIC');
+      expect(d).toContain('Demo Chic');
       expect(d).toContain('manual (256 kbps)');
     }
     // Every page ends with the page buttons, and has room to spare under Discord's five rows.
@@ -645,7 +645,7 @@ describe('formatting helpers', () => {
 });
 
 describe('status embeds', () => {
-  const station = { id: 'fg:fg-chic', displayName: 'FG CHIC', provider: 'fg' } as Station;
+  const station = { id: 'demo:demo-chic', displayName: 'Demo Chic', provider: 'demo' } as Station;
   const status = (o: Partial<SessionStatus> = {}): SessionStatus =>
     ({
       guildId: GUILD,
@@ -682,7 +682,7 @@ describe('status embeds', () => {
 
   it('lays out the song, the stream and why this source plays', () => {
     const e = nowEmbed(station, status(), '999').toJSON();
-    expect(e.title).toBe('▶ Playing: FG CHIC');
+    expect(e.title).toBe('▶ Playing: Demo Chic');
     expect(e.color).toBe(COLOR.ok);
     expect(e.description).toBe('-# The station isn’t sending a song or show title right now.');
     const fields = Object.fromEntries((e.fields ?? []).map((f) => [f.name, f]));
@@ -723,7 +723,7 @@ describe('status embeds', () => {
       }),
       null,
     ).toJSON();
-    expect(e.title).toBe('Reconnecting to the stream: FG CHIC');
+    expect(e.title).toBe('Reconnecting to the stream: Demo Chic');
     expect(e.description).toContain('⚠️ The stream stalled.');
     expect(e.color).toBe(COLOR.warn);
   });
@@ -750,7 +750,7 @@ describe('status embeds', () => {
       }),
       '999',
     ).toJSON();
-    expect(e.title).toBe('Stopped: FG CHIC');
+    expect(e.title).toBe('Stopped: Demo Chic');
     expect(e.color).toBe(COLOR.neutral);
     expect(e.description).toBe('Nothing is playing. Press **Browse** or use `/radio play` to start again.');
     expect(e.description).not.toMatch(/⚠️|fallback/);
@@ -759,7 +759,7 @@ describe('status embeds', () => {
 
   it('says Paused while the channel is empty, and that it plays again when someone joins', () => {
     const e = nowEmbed(station, status({ state: 'CONNECTED', desiredState: 'paused_empty' }), '999').toJSON();
-    expect(e.title).toBe('Paused: FG CHIC');
+    expect(e.title).toBe('Paused: Demo Chic');
     expect(e.color).toBe(COLOR.neutral);
     expect(e.description).toMatch(/plays again when someone joins/);
   });
@@ -826,12 +826,12 @@ describe('status embeds', () => {
     const now = Date.now();
     const sources: StationSource[] = Array.from({ length: 4 }, (_, i) =>
       makeSource({
-        id: `fg-chic-src-${i}`,
+        id: `demo-chic-src-${i}`,
         url: `https://stream.example.com/live${i}?token=SECRET${i}&listener=1`,
         transport: i === 3 ? 'hls' : 'http-continuous',
         priority: i,
         lastFailureCode: 'STREAM_STALLED',
-        icyName: 'FG CHIC',
+        icyName: 'Demo Chic',
       }),
     );
     const selection = selectSource(sources, null, { now });

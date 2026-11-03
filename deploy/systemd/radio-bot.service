@@ -16,6 +16,8 @@ EnvironmentFile=/etc/radio-bot/radio-bot.env
 Environment=NODE_ENV=production
 Environment=DATABASE_PATH=/var/lib/radio-bot/radio-bot.sqlite
 ExecStart=/usr/bin/node dist/src/index.js
+# `systemctl reload radio-bot` loads station packs changed with dist/scripts/packs.js, without a restart.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 # Exit code 78 means the configuration is invalid; restarting won't help until it is fixed.

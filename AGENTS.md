@@ -8,7 +8,7 @@ Instructions for AI coding agents (and humans) working in this repository. Read 
 
 - The product name is **Radio Bot** (npm package `radio-bot`, GitHub repository `DangerMouseUK/radiobot`). Never name it after a broadcaster or a station pack, or in any way that implies it belongs to a broadcaster.
 - It is **unofficial**: it is not affiliated with or endorsed by any broadcaster. Station packs name stations only so that people can find them; the names, audio and artwork belong to their owners. Keep that generic disclaimer where it is needed, and never add broadcaster logos or artwork.
-- Outside a pack's own folder (`catalog/packs/<id>/`), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them; use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays. The one exception is the README's Station packs section, which says in a single sentence which pack is bundled and that it can be switched off, deleted or replaced; keep that sentence and add no more.
+- Outside a pack's own folder (which lives in the pack library, `DangerMouseUK/radiobot-packs`, not in this repository), never name a pack's broadcaster or its stations, and never add a disclaimer or warning naming them; use generic examples (`mypack:my-station`). The generic "not affiliated with any broadcaster" disclaimer stays. The one exception is the README's Station packs section, which says in a single sentence that the bot ships with no packs, that they come from the official pack library, and that any of them can be installed, updated or removed; keep that sentence generic and add no more.
 - Nothing personal or site-specific belongs in the repository: no home-lab, NAS or hosting-provider set-ups, personal names, e-mail addresses, IP addresses, Discord server, channel or user IDs, or tokens. Supported deployments are generic: Docker, bare-metal Linux with systemd, and container platforms that run an always-on worker.
 
 ## Commands
@@ -26,8 +26,11 @@ pnpm test:coverage                 # vitest run --coverage: how much of src/ and
 pnpm test:lifecycle                # Linux or macOS: install.sh + radio-bot.sh against a fake docker
 pnpm vitest run tests/unit/session.test.ts      # a single file
 pnpm build                         # tsc -p tsconfig.build.json → dist/
-pnpm smoke                         # after a build: migrations, both workers, an encode, the healthcheck, from dist/
-node scripts/validate-catalogue.ts # validate every station pack, straight from source
+pnpm smoke                         # after a build: migrations, the template pack, the worker threads, an encode, the healthcheck, from dist/
+node scripts/validate-catalogue.ts # validate every station pack (and catalog/packs/_template), straight from source
+node scripts/validate-catalogue.ts --pack <dir> --strict   # one pack, with the extra rules for library packs
+node scripts/pack-author.ts new|export|generate|build-library|diff-check …
+                                   # pack and library authoring tools (see catalog/README.md)
 docker build --target test -t radio-bot:test . && docker run --rm --network none radio-bot:test
                                    # integration tests on the image's own Node and FFmpeg
 ```
@@ -37,7 +40,7 @@ docker build --target test -t radio-bot:test . && docker run --rm --network none
 CI (`.github/workflows/ci.yml`) runs all of these, and also:
 
 - the typecheck and tests on the oldest Node that `engines` allows (24.17.0);
-- `tests/integration/main-thread-budget.test.ts`, part of `pnpm test`: a stream plays through the real pipeline while `/radio stats`, browse, ranking and a 2000-station sync run, and the event-loop delay must stay under 50 ms;
+- `tests/integration/main-thread-budget.test.ts`, part of `pnpm test`: a stream plays through the real pipeline while `/radio stats`, browse, ranking, a 2000-station sync and a live install of a 2000-station pack run, and the event-loop delay must stay under 50 ms;
 - the lifecycle test on macOS with its bash 3.2 (`/bin/bash -n` on every script first);
 - an offline check of the relative links and anchors in README.md, CONTRIBUTING.md, AGENTS.md, SECURITY.md, `docs/` and `catalog/README.md` (lychee);
 - the Docker image build, then in the image: FFmpeg has `libopus`, a missing token exits with code 78, `dist/scripts/smoke.js` passes with no network, and the integration tests pass in the `test` stage (same base, no network).
@@ -62,11 +65,15 @@ The tests need FFmpeg and FFprobe. They use `ffmpeg-static` / `ffprobe-static` f
 
 ```text
 src/
-  index.ts              entry: config → logger → createApp() → start; SIGTERM/SIGINT teardown
+  index.ts              entry: config → logger → createApp() → start; SIGTERM/SIGINT teardown;
+                        SIGHUP reloads the installed packs
   app.ts                wiring: DB, repositories, packs, URL policy, HTTP client, sessions, Discord client, timers
   config/env.ts         every environment variable (Zod); invalid config → exit code 78
-  catalogue/            station packs (packs.ts), official-list sync (sync.ts, sync-adapters.ts,
-                        sync-schedule.ts),
+  catalogue/            station packs (packs.ts: schema, loading, PackRegistry, seeding),
+                        pack libraries (pack-library.ts: index and bundle formats, OFFICIAL_LIBRARY_URL),
+                        the installed-packs folder (pack-store.ts), installs/updates/removals, restore
+                        and the daily check (pack-manager.ts, checks on pack-worker.ts),
+                        official-list sync (sync.ts, sync-adapters.ts, sync-schedule.ts),
                         per-server custom stations (custom-provider.ts), search, shared types
   streams/              THE SOURCE-VALIDATION BOUNDARY: url-policy, safe-fetch (SSRF-safe client),
                         playlists (PLS/M3U/HLS), input (ICY demux, HLS reader), probe (ffprobe + decode),
@@ -78,7 +85,7 @@ src/
                         state-machine.ts, session.ts (per-guild state machine, watchdog, recovery,
                         failover), session-manager.ts (all guilds, boot/resume)
   discord/              controller.ts (every interaction), commands/definitions.ts (/radio),
-                        permissions/authorize.ts, components/custom-id.ts (signed IDs), ui/ (views, format),
+                        permissions/authorize.ts, components/custom-id.ts (signed IDs), ui/ (views, format, packs-view),
                         register.ts, notifier.ts, presence.ts (bot status),
                         voice-status.ts (voice channel status),
                         voice-access.ts, context.ts
@@ -88,15 +95,19 @@ src/
                         event-loop (event-loop delay for /radio stats)
   import-export/        /radio export and import
   shared/               errors (reason codes), backoff, rate limits, redaction, text, async helpers, paths,
-                        workers (one-off worker threads)
+                        workers (one-off worker threads), version (the bot's version, for minBotVersion)
 scripts/                validate-catalogue, register-commands, healthcheck, backup, smoke (CLI entry points);
+                        packs (installed packs: list, browse, info, add, update, remove);
+                        pack-author (new, export, generate, build-library, diff-check; strictProblems());
                         radio-bot.sh, the bash manager behind the `radio-bot` command (install, update,
-                        backup, restore, uninstall …) for Docker Compose installs
+                        backup, restore, packs, uninstall …) for Docker Compose installs
 install.sh              one-line bootstrap: clones into ~/radio-bot, then runs `radio-bot.sh install`
 migrations/             NNNN_name.sql, applied in order, checksummed
-catalog/packs/<id>/     pack.json, stations.json, sources.json, SOURCE_PROVENANCE.md, evidence/
+catalog/packs/_template/  the only pack folder here: a complete example pack, never loaded (the `_` prefix);
+                        real packs live in the pack library (DangerMouseUK/radiobot-packs)
 tests/unit/             fast, pure tests;  tests/integration/  local fixture radio server + synthetic audio
 tests/helpers.ts        memoryDb(), makeSource(), silentLogger()
+tests/fixtures/packs/   demo/: a made-up pack the tests use (no real stations)
 tests/lifecycle/        run.sh + fake-docker: end-to-end test of the installer and manager
 vitest.config.ts        test settings, including the coverage report for `pnpm test:coverage`
 .github/workflows/      ci.yml, release.yml, security.yml (dependency audit, gitleaks, CodeQL, image scan);
@@ -125,7 +136,7 @@ These are coding rules. A change that breaks one is a bug, even if the tests pas
    - When in doubt, do less and do it later.
 4. **The audio path stays minimal.** Code that runs for every packet (every 20 ms) is constant-time: no logging, I/O, `await` or per-packet allocation of its own. Add no buffering or latency beyond what the pipeline needs. Encode once, add no processing, and follow the source's bitrate (invariants 1–3).
 5. **Memory is bounded.** Caches, histories and queues have a limit. The bot and one FFmpeg encoder must fit comfortably in 1 GB alongside the operating system.
-6. **Measure, don't guess.** A change that adds work on the main thread says in its pull request what that work costs and how this was measured, for example a timing against the bundled catalogue. On a running bot, use the event-loop delay and the late-packet count in `/radio stats`. Profile before optimising: in 1.0.4 the cost of `/radio stats` turned out to be statement compilation, not the code that looked slow.
+6. **Measure, don't guess.** A change that adds work on the main thread says in its pull request what that work costs and how this was measured, for example a timing against a 2000-station pack. On a running bot, use the event-loop delay and the late-packet count in `/radio stats`. Profile before optimising: in 1.0.4 the cost of `/radio stats` turned out to be statement compilation, not the code that looked slow.
 7. **Logging costs nothing when it's off.** Never log per packet. When building a debug log entry costs anything, guard it with `logger.isLevelEnabled('debug')`.
 
 ## Invariants: do not break these
@@ -156,7 +167,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 11. **Minimal access.** The intents are `Guilds` and `GuildVoiceStates` only. The bot permission integer is `281474979908608`: View Channels, Send Messages, Embed Links, Attach Files, Connect and Speak (`3197952`), plus the **optional** Set Voice Channel Status. The bot must keep working without the optional one: check it per channel and skip quietly. Adding an intent or permission needs an issue first.
 12. **Authorise on the server side, every time.** Every command, button, select menu and form (modal) calls `authorize()` (`src/discord/permissions/authorize.ts`) with `read`, `control` or `admin`. Component and form custom IDs must be built with `ComponentIds` (signed and bound to the server). A new action goes into `COMPONENT_ACTIONS` in `src/discord/components/custom-id.ts`, at most 7 characters long, and its argument is at most 65 characters (the longest station ID), so every ID fits Discord's 100-character limit. Never raise either limit.
 13. **Admin means the server owner or Discord's Administrator permission. Nothing else.** There are no admin roles, and Manage Server doesn't count. DJ roles grant `control`. Installation-wide decisions (identity reviews of pack sources) also need the user to be an operator: in `OPERATOR_USER_IDS`, or the application owner or a member of its team. The admin check still applies first.
-14. **`/radio` is full.** `src/discord/commands/definitions.ts` has exactly **25** top-level options, which is Discord's maximum. A new command must go into a subcommand group (as `queue` and `source` do) or replace an existing one. Option names and descriptions must stay within Discord's length limits.
+14. **`/radio` is full.** `src/discord/commands/definitions.ts` has exactly **25** top-level options, which is Discord's maximum. A new command must go into a subcommand group (as `queue`, `source` and `packs` do) or replace an existing one. Option names and descriptions must stay within Discord's length limits.
 15. Stats and diagnostics are **ephemeral and admin-only** (`/radio stats`, with Refresh and Close). Never post them publicly.
 
 **Data**
@@ -167,11 +178,12 @@ These are product rules, not style preferences. A change that breaks one is wron
 
 ## Station packs
 
-- A pack is `catalog/packs/<id>/` with `pack.json`, `stations.json` and `sources.json`, validated by the Zod schemas in `src/catalogue/packs.ts`. The authoring guide is [catalog/README.md](catalog/README.md).
+- A pack is a folder `<id>/` with `pack.json`, `stations.json` and `sources.json`, validated by the Zod schemas in `src/catalogue/packs.ts`. The format reference is [catalog/README.md](catalog/README.md).
+- **Packs are authored in the pack library** (`DangerMouseUK/radiobot-packs`), following its playbook, not in this repository. This repository keeps only `catalog/packs/_template/`; don't add other pack folders here.
 - The code must stay **pack-agnostic**. Never special-case a pack ID in `src/`. Pack-specific behaviour lives in pack data (`brandLabels`, `categories`, `sync`) or in a named, generic sync adapter in `src/catalogue/sync-adapters.ts` (`webradio-apidata`, `json-name-list`).
 - Source provenance must be `official-player` or `curated`, with `provenanceDetail` and a matching entry in the pack's `SOURCE_PROVENANCE.md`. Never commit automatically discovered or signed URLs. Disable broken sources with `enabled: false` and a `disabledReason`; don't delete them.
 - `custom` is a reserved provider ID (per-server custom stations).
-- Validate with `node scripts/validate-catalogue.ts`. Live probing (`--probe`, `--compare`) hits real stream hosts, so run it only when you're deliberately gathering evidence, never in tests.
+- Validate with `node scripts/validate-catalogue.ts` (`--pack <dir> --strict` for a library pack). Live probing (`--probe`, `--compare`) hits real stream hosts, so run it only when you're deliberately gathering evidence, never in tests. Tests use the made-up pack in `tests/fixtures/packs/demo/`.
 
 ## Tests
 
@@ -193,7 +205,7 @@ The docs describe what the code **actually does**. When you change behaviour, up
 | a command, option or button | `definitions.ts`, the help text (`#cmdHelp` in `src/discord/controller.ts`), README Commands, `docs/permissions.md` |
 | audio or encoder behaviour | `docs/audio-quality.md`, README |
 | ranking, identity or probing | `docs/station-verification.md`, `docs/architecture.md` |
-| the pack schema or adapters | `catalog/README.md` |
+| the pack schema, adapters, the library format or the pack tools | `catalog/README.md`, `catalog/packs/_template/` |
 | reason codes (`src/shared/errors.ts`) | `docs/troubleshooting.md` |
 | `install.sh`, `scripts/radio-bot.sh`, `compose.yaml` or the Discord setup steps | `docs/install.md` (written for beginners: plain words, every click), `docs/install-docker.md`, README Quick start, `tests/lifecycle/run.sh` |
 | anything user-visible | `CHANGELOG.md` under *Unreleased* |

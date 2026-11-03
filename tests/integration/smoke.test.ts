@@ -49,7 +49,8 @@ describe('scripts/smoke', () => {
     const r = await runSmoke();
     expect(r.out).not.toMatch(/FAIL/);
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/^ok {3}database: migrations and bundled packs \(schema v\d+, \d+ pack\(s\)/m);
+    expect(r.out).toMatch(/^ok {3}database: migrations and the template pack \(schema v\d+, \d+ pack\(s\)/m);
+    expect(r.out).toMatch(/^ok {3}station pack check on the pack worker thread \(template: \d+ stations\)/m);
     expect(r.out).toMatch(/^ok {3}WAL checkpoint on the worker thread/m);
     expect(r.out).toMatch(/^ok {3}station list parsed on the worker thread \(200 entries\)/m);
     expect(r.out).toMatch(/^ok {3}FFmpeg with libopus/m);

@@ -268,7 +268,7 @@ const active = (ps: FakePipeline[]) => ps.filter((p) => !p.stopped);
 describe('GuildSession', () => {
   it('plays a station and persists desired state', async () => {
     const t = setup();
-    const r = await t.session.play('fg:fg-dj-radio', 'voice-1', 'user-1');
+    const r = await t.session.play('demo:demo-radio', 'voice-1', 'user-1');
     expect(r.ok).toBe(true);
     expect(t.session.state).toBe('PLAYING');
     // maximum follows the source's own 128 kbps rather than padding it to 510.
@@ -276,7 +276,7 @@ describe('GuildSession', () => {
     const intent = t.guilds.getIntent('g1')!;
     expect(intent).toMatchObject({
       desiredState: 'playing',
-      desiredStationId: 'fg:fg-dj-radio',
+      desiredStationId: 'demo:demo-radio',
       desiredVoiceChannelId: 'voice-1',
       lastRequestedById: 'user-1',
       lastSuccessfulSourceId: 'primary',
@@ -286,7 +286,7 @@ describe('GuildSession', () => {
 
   it('shows the latest stream title and drops it when the station clears it', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     const meta = {
       title: 'Artist - Title',
       receivedAt: new Date().toISOString(),
@@ -300,11 +300,11 @@ describe('GuildSession', () => {
 
   it('switches stations without leaving two pipelines running', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
-    await t.session.play('fg:fg-chic', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
+    await t.session.play('demo:demo-chic', 'voice-1', null);
     expect(active(t.pipelines)).toHaveLength(1);
     expect(t.links).toHaveLength(1);
-    expect(t.session.stationId).toBe('fg:fg-chic');
+    expect(t.session.stationId).toBe('demo:demo-chic');
   });
 
   it('keeps playing, without a restart, when the station already playing is asked for again', async () => {
@@ -322,18 +322,18 @@ describe('GuildSession', () => {
 
   it('lets a newer request supersede a pending one', async () => {
     const t = setup();
-    const first = t.session.play('fg:fg-dj-radio', 'voice-1', null);
-    const second = t.session.play('fg:fg-chic', 'voice-1', null);
+    const first = t.session.play('demo:demo-radio', 'voice-1', null);
+    const second = t.session.play('demo:demo-chic', 'voice-1', null);
     const [a, b] = await Promise.all([first, second]);
     expect(a.code).toBe('CANCELLED');
     expect(b.ok).toBe(true);
-    expect(t.session.stationId).toBe('fg:fg-chic');
+    expect(t.session.stationId).toBe('demo:demo-chic');
     expect(active(t.pipelines)).toHaveLength(1);
   });
 
   it('stop is authoritative: audio stops and desired state is stopped', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.stop();
     expect(active(t.pipelines)).toHaveLength(0);
     expect(t.session.state).toBe('CONNECTED');
@@ -347,7 +347,7 @@ describe('GuildSession', () => {
         seen.push({ channelId, destroyed: t.links[0]!.destroyed });
       },
     });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.leave();
     expect(seen).toEqual([{ channelId: 'voice-1', destroyed: false }]);
     expect(t.links[0]!.destroyed).toBe(true);
@@ -358,7 +358,7 @@ describe('GuildSession', () => {
   it('keeps the voice connection until the leave hook finishes, so the channel status clears first', async () => {
     let finish!: () => void;
     const t = setup({ onLeaving: () => new Promise<void>((r) => (finish = r)) });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.leave();
     // Audio stops and the session has left at once; only the disconnect waits.
     expect(t.session.state).toBe('IDLE');
@@ -372,9 +372,9 @@ describe('GuildSession', () => {
   it('lets a play during the leave grace period take over the open connection', async () => {
     let finish!: () => void;
     const t = setup({ onLeaving: () => new Promise<void>((r) => (finish = r)) });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.leave();
-    const r = await t.session.play('fg:fg-chic', 'voice-1', null);
+    const r = await t.session.play('demo:demo-chic', 'voice-1', null);
     expect(r.ok).toBe(true);
     finish();
     await wait(20);
@@ -385,7 +385,7 @@ describe('GuildSession', () => {
 
   it('disconnects anyway when the leave hook never finishes', async () => {
     const t = setup({ onLeaving: () => new Promise<void>(() => {}) });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.leave();
     expect(t.links[0]!.destroyed).toBe(false);
     await until(() => t.links[0]!.destroyed, 3_000);
@@ -393,7 +393,7 @@ describe('GuildSession', () => {
 
   it('leave disconnects and records left', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.leave();
     expect(t.links[0]!.destroyed).toBe(true);
     expect(t.session.state).toBe('IDLE');
@@ -402,7 +402,7 @@ describe('GuildSession', () => {
 
   it('reconnects the same source after a transient failure', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.pipelines[0]!.fail();
     await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
     expect(t.session.status().source?.id).toBe('primary');
@@ -416,16 +416,16 @@ describe('GuildSession', () => {
   it('starts background re-checks only once the stream has played steadily', async () => {
     const t = setup();
     const started = Date.now();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     expect(t.refreshed).toEqual([]); // nothing competes with a stream that is starting up
     await until(() => t.refreshed.length === 1);
-    expect(t.refreshed[0]!.stationId).toBe('fg:fg-dj-radio');
+    expect(t.refreshed[0]!.stationId).toBe('demo:demo-radio');
     expect(t.refreshed[0]!.at - started).toBeGreaterThanOrEqual(FAST.stableMs!);
   });
 
   it('fails over at once when the station refuses access (no retries on the same source)', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.pipelines[0]!.fail('ACCESS_DENIED');
     await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
     expect(t.pipelines).toHaveLength(2);
@@ -434,7 +434,7 @@ describe('GuildSession', () => {
 
   it('retries a 404 on the same source, as a station reconnecting its encoder sends for a moment', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.pipelines[0]!.fail('NOT_FOUND');
     await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
     expect(t.session.status().source?.id).toBe('primary');
@@ -443,7 +443,7 @@ describe('GuildSession', () => {
 
   it('fails over to a verified fallback after repeated failures and says so', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     for (let i = 0; i < CIRCUIT_BREAK_FAILURES; i++) {
       // Every failure before the last is retried on the same source, one backoff step each.
       await until(() => t.session.state === 'PLAYING');
@@ -458,7 +458,7 @@ describe('GuildSession', () => {
 
   it('never claims to play when every source fails (FR-008 acceptance)', async () => {
     const t = setup({ behaviour: () => 'silent' });
-    const r = await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    const r = await t.session.play('demo:demo-radio', 'voice-1', null);
     expect(r.ok).toBe(false);
     await until(() => t.session.state === 'ERROR', 5000);
     expect(t.notices.some((n) => n.kind === 'error' && n.code === 'NO_ELIGIBLE_SOURCE')).toBe(true);
@@ -467,7 +467,7 @@ describe('GuildSession', () => {
 
   it('detects a stall from missing output progress', async () => {
     const t = setup({ behaviour: (_u, n) => (n === 0 ? 'stall-after-start' : 'ok') });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     expect(t.session.state).toBe('PLAYING');
     await until(() => t.pipelines.length >= 2 && t.session.state === 'PLAYING', 3000);
     expect(t.session.status().lastError?.code ?? 'STREAM_STALLED').toBe('STREAM_STALLED');
@@ -475,7 +475,7 @@ describe('GuildSession', () => {
 
   it('does not auto-rejoin after being kicked', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.links[0]!.emit('lost', 'kicked');
     await wait(30);
     expect(t.session.state).toBe('IDLE');
@@ -486,7 +486,7 @@ describe('GuildSession', () => {
 
   it('reconnects voice after an unexpected disconnect', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.links[0]!.emit('lost', 'reconnect_failed');
     await until(() => t.links.length === 2 && t.session.state === 'PLAYING');
     expect(active(t.pipelines)).toHaveLength(1);
@@ -494,7 +494,7 @@ describe('GuildSession', () => {
 
   it('leaves an empty channel in leave_when_empty mode', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.onListenersChanged(0);
     await until(() => t.session.state === 'IDLE');
     expect(t.guilds.getIntent('g1')?.desiredState).toBe('idle');
@@ -503,7 +503,7 @@ describe('GuildSession', () => {
   it('pauses and resumes in pause_when_empty mode', async () => {
     const t = setup();
     t.guilds.updateSettings('g1', { idleMode: 'pause_when_empty' });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.onListenersChanged(0);
     await until(() => t.session.state === 'CONNECTED');
     expect(active(t.pipelines)).toHaveLength(0);
@@ -515,7 +515,7 @@ describe('GuildSession', () => {
 
   it('drops a pending empty-channel timer when the idle mode changes', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.onListenersChanged(0); // leave_when_empty: the leave timer is armed
     t.guilds.updateSettings('g1', { idleMode: '24x7' });
     t.session.onListenersChanged(0); // what the settings menu does after a change
@@ -533,7 +533,7 @@ describe('GuildSession', () => {
   it('stays in 24x7 mode', async () => {
     const t = setup();
     t.guilds.updateSettings('g1', { idleMode: '24x7' });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.onListenersChanged(0);
     await wait(80);
     expect(t.session.state).toBe('PLAYING');
@@ -541,7 +541,7 @@ describe('GuildSession', () => {
 
   it('encodes above the channel setting and rebuilds when the quality mode changes', async () => {
     const t = setup({ bitrate: () => 96_000 });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     expect(t.pipelines[0]!.plan.targetKbps).toBe(128);
     expect(t.pipelines[0]!.plan.channelBitrateKbps).toBe(96);
     t.guilds.updateSettings('g1', { qualityMode: 'manual', manualBitrateKbps: 256 });
@@ -553,8 +553,8 @@ describe('GuildSession', () => {
 
   it('shares one connect between overlapping requests and never destroys the live link (review #1)', async () => {
     const t = setup({ connectDelayMs: 40 });
-    const a = t.session.play('fg:fg-dj-radio', 'voice-1', null);
-    const b = t.session.play('fg:fg-chic', 'voice-1', null);
+    const a = t.session.play('demo:demo-radio', 'voice-1', null);
+    const b = t.session.play('demo:demo-chic', 'voice-1', null);
     const [ra, rb] = await Promise.all([a, b]);
     expect(ra.code).toBe('CANCELLED');
     expect(rb.ok).toBe(true);
@@ -565,7 +565,7 @@ describe('GuildSession', () => {
 
   it('honours stop while still joining (review #3)', async () => {
     const t = setup({ connectDelayMs: 40 });
-    const p = t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    const p = t.session.play('demo:demo-radio', 'voice-1', null);
     await wait(5);
     t.session.stop();
     const r = await p;
@@ -585,7 +585,7 @@ describe('GuildSession', () => {
 
   it('brings the station along when joining another channel (review #6)', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     await t.session.join('voice-2');
     expect(t.session.state).toBe('PLAYING');
     expect(t.session.channelId).toBe('voice-2');
@@ -595,7 +595,7 @@ describe('GuildSession', () => {
   it('keeps the post-stop leave timer when listeners change (review #8)', async () => {
     const t = setup({ timings: { stoppedIdleLeaveMs: 60 } });
     t.guilds.updateSettings('g1', { idleMode: 'pause_when_empty' });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.stop();
     t.session.onListenersChanged(3);
     await until(() => t.session.state === 'IDLE');
@@ -604,7 +604,7 @@ describe('GuildSession', () => {
 
   it('exposes live stats for the admin panel', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     const live = t.session.liveStats();
     expect(live.voice?.endpoint).toBe('c-lhr05-test.discord.media:443');
     expect(live.output?.targetKbps).toBe(128);
@@ -619,7 +619,7 @@ describe('GuildSession', () => {
 
   it('keeps playing when /radio join targets the channel it is already in', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     await t.session.join('voice-1');
     expect(t.session.state).toBe('PLAYING');
     expect(active(t.pipelines)).toHaveLength(1);
@@ -638,7 +638,7 @@ describe('GuildSession', () => {
   it('does not let a pending pause undo an explicit stop', async () => {
     const t = setup();
     t.guilds.updateSettings('g1', { idleMode: 'pause_when_empty' });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.onListenersChanged(0);
     t.session.stop();
     await wait(80);
@@ -651,7 +651,7 @@ describe('GuildSession', () => {
 
   it('keeps an explicit stop when leaving an empty channel, so autostart stays off', async () => {
     const t = setup();
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.stop();
     t.session.onListenersChanged(0);
     await until(() => t.session.state === 'IDLE');
@@ -660,7 +660,7 @@ describe('GuildSession', () => {
 
   it('applies the idle mode when it starts playing in an empty channel', async () => {
     const t = setup({ listeners: () => 0 });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     await until(() => t.session.state === 'IDLE');
     expect(t.guilds.getIntent('g1')?.desiredState).toBe('idle');
     expect(t.notices.some((n) => n.kind === 'idle-left')).toBe(true);
@@ -674,7 +674,7 @@ describe('GuildSession', () => {
 
   it('reports a failure before the first audio as retrying, not superseded', async () => {
     const t = setup({ behaviour: (_u, n) => (n === 0 ? 'fail-early' : 'ok') });
-    const r = await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    const r = await t.session.play('demo:demo-radio', 'voice-1', null);
     expect(r.ok).toBe(false);
     expect(r.retrying).toBe(true);
     expect(r.code).toBe('STREAM_EOF');
@@ -684,7 +684,7 @@ describe('GuildSession', () => {
 
   it('still reports superseded when a newer command replaces a start that is waiting for audio', async () => {
     const t = setup({ behaviour: () => 'silent', timings: { backoff: [200] } });
-    const first = t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    const first = t.session.play('demo:demo-radio', 'voice-1', null);
     await wait(20);
     t.session.stop();
     expect((await first).code).toBe('CANCELLED');
@@ -694,7 +694,7 @@ describe('GuildSession', () => {
     let allowed = true;
     const t = setup({ mayStream: () => allowed });
     t.guilds.updateSettings('g1', { idleMode: 'pause_when_empty' });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     t.session.onListenersChanged(0);
     await until(() => t.guilds.getIntent('g1')?.desiredState === 'paused_empty');
     allowed = false;
@@ -833,7 +833,7 @@ describe('GuildSession', () => {
 
   it('closes the opened input when the encoder cannot be created', async () => {
     const t = setup({ pipelineThrows: true, timings: { backoff: [60_000] } });
-    await t.session.play('fg:fg-dj-radio', 'voice-1', null);
+    await t.session.play('demo:demo-radio', 'voice-1', null);
     expect(t.opened()).toBe(1);
     expect(t.closed()).toBe(1);
   });

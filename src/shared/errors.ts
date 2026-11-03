@@ -39,6 +39,7 @@ export type ReasonCode =
   | 'STREAM_LIMIT'
   | 'RATE_LIMITED'
   | 'CUSTOM_STATION_LIMIT'
+  | 'PACK_INVALID'
   | 'CANCELLED'
   | 'INTERNAL';
 

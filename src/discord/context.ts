@@ -1,6 +1,7 @@
 import { type ChatInputCommandInteraction, type Client, GuildMember, PermissionFlagsBits } from 'discord.js';
 import type { ProcessRegistry } from '../audio/ffmpeg.ts';
 import type { CustomStationService } from '../catalogue/custom-provider.ts';
+import type { PackManager } from '../catalogue/pack-manager.ts';
 import type { PackRegistry } from '../catalogue/packs.ts';
 import type { CatalogueSync } from '../catalogue/sync.ts';
 import type { Station } from '../catalogue/types.ts';
@@ -36,6 +37,7 @@ export interface AppContext {
   sessions: SessionManager;
   packs: PackRegistry;
   catalogueSync: CatalogueSync;
+  packManager: PackManager;
   custom: CustomStationService;
   ids: ComponentIds;
   notifier: Notifier;
@@ -62,6 +64,8 @@ export class RateLimits {
   readonly componentUser = RateLimiter.perWindow(20, 20_000);
   /** `/radio import` downloads and parses a file, so it is limited before either. */
   readonly importGuild = RateLimiter.perWindow(5, 10 * 60_000);
+  /** Installing, updating or removing a station pack (installation-wide). */
+  readonly packGlobal = RateLimiter.perWindow(10, 60 * 60_000);
 
   sweep(): void {
     for (const l of [
@@ -73,6 +77,7 @@ export class RateLimits {
       this.syncGlobal,
       this.componentUser,
       this.importGuild,
+      this.packGlobal,
     ]) {
       l.sweep();
     }

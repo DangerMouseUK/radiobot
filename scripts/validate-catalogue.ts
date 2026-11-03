@@ -7,16 +7,21 @@
  *   node dist/scripts/validate-catalogue.js --probe --pack-id mypack  # every enabled source in one pack (slow; be gentle)
  *   add --compare to run a ~40 s audio comparison between sources of each probed station
  *   add --json <file> to write the evidence report
+ *   add --strict to apply the extra rules for packs published in a pack library (see strictProblems()
+ *   in scripts/pack-author.ts): version, owner, countries, languages, provenance, evidence, no signed URLs
+ *   or images
  *
  * Probes run one at a time per host (PRD §7.3 budgets). Audio samples stay in memory only.
  */
 import { writeFileSync } from 'node:fs';
 import { ProcessRegistry } from '../src/audio/ffmpeg.ts';
 import { loadPack, PackRegistry, type StationPack } from '../src/catalogue/packs.ts';
+import { rootPath } from '../src/shared/paths.ts';
 import { compareSources, correlationEvidence } from '../src/streams/identity.ts';
 import { codecLabel, type ProbeOutcome, probeSource } from '../src/streams/probe.ts';
 import { SafeHttpClient } from '../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../src/streams/url-policy.ts';
+import { strictProblems } from './pack-author.ts';
 
 const args = process.argv.slice(2);
 const flag = (f: string) => args.includes(f);
@@ -29,9 +34,16 @@ const packDir = optionValue('--pack');
 const packId = optionValue('--pack-id');
 const stationFilter = args.filter((a) => /^[a-z0-9][a-z0-9-]*:[a-z0-9-]+$/.test(a));
 
-let packs: StationPack[];
+let packs: readonly StationPack[];
 try {
-  packs = packDir ? [loadPack(packDir)] : PackRegistry.load(process.env.EXTRA_PACKS_DIR || null).packs;
+  // Without --pack, the template pack is checked too: the bot ships no packs, and the template is
+  // what new packs start from (and what the smoke test seeds).
+  packs = packDir
+    ? [loadPack(packDir)]
+    : [
+        ...PackRegistry.load(process.env.EXTRA_PACKS_DIR || null).packs,
+        loadPack(rootPath('catalog', 'packs', '_template')),
+      ];
 } catch (err) {
   process.stderr.write(`Invalid pack: ${(err as Error).message}\n`);
   process.exit(1);
@@ -46,6 +58,18 @@ for (const p of packs) {
   const missing = p.stations.filter((s) => !withSource.has(s.id));
   if (missing.length)
     process.stdout.write(`  No enabled source: ${missing.map((s) => s.displayName).join(', ')}\n`);
+}
+
+if (flag('--strict')) {
+  const problems = packs.flatMap((p) => strictProblems(p));
+  for (const problem of problems) process.stderr.write(`${problem}\n`);
+  if (problems.length) {
+    process.stderr.write(
+      `Strict checks failed: ${problems.length} problem${problems.length === 1 ? '' : 's'}.\n`,
+    );
+    process.exit(1);
+  }
+  process.stdout.write('Strict checks passed.\n');
 }
 
 if (!flag('--probe')) process.exit(0);

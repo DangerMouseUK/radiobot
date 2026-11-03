@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "template",
+  "name": "Example Radio Network",
+  "description": "An example pack that shows every field. Copy it with `node scripts/pack-author.ts new <pack-id>`.",
+  "version": "2026.11.03",
+  "owner": {
+    "name": "Example Media Group",
+    "kind": "group",
+    "brand": "Example Radio"
+  },
+  "countries": ["GB"],
+  "regions": ["Example County"],
+  "languages": ["en"],
+  "minBotVersion": "1.1.0",
+  "disclaimer": "Unofficial: not affiliated with the stations listed.",
+  "order": 100,
+  "enabledByDefault": true,
+  "brandLabels": ["Example Radio", "Example Network"],
+  "categories": [
+    {
+      "id": "music",
+      "name": "Music"
+    },
+    {
+      "id": "news",
+      "name": "News & talk"
+    }
+  ],
+  "sync": null,
+  "snapshotDate": "2026-11-03"
+}
