@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- The installer could stop at "Add some stations" and never finish, on systems where `sudo` runs Docker (such as Ubuntu). Docker was waiting to read the terminal while it wasn't allowed to, so the system paused it for good. `radio-bot` no longer lets Docker read the terminal for anything it runs in the bot's container.
+- If the installer couldn't check the bot's station packs, it stopped with an error right after "Radio Bot is online", before showing the link to invite the bot. It now says how to add stations later and carries on to the invite link.
+
 ## [1.2.0] - 2026-11-03
 
 ### Added

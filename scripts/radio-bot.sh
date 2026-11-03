@@ -139,11 +139,14 @@ container_state() { # running | restarting | exited | missing
 # Runs a command in the bot's container at the lowest CPU priority and, where the image has ionice
 # (Debian's util-linux, which it does), the idle disk priority, so it can't hold up the stream.
 # ionice -t still runs the command if the host won't set the disk priority.
+# Input comes from /dev/null, here and in the other `compose exec` and `compose run` calls: none of them
+# needs any, and Compose reading the terminal could get it stopped by the kernel for good (sudo runs it
+# in a terminal of its own, which isn't always in front yet), hanging the command.
 exec_low() {
   # shellcheck disable=SC2016 # "$@" is expanded by the container's shell
   compose exec -T "$SERVICE" sh -c \
     'if command -v ionice >/dev/null 2>&1; then exec ionice -c 3 -t nice -n 19 "$@"; fi; exec nice -n 19 "$@"' \
-    exec_low "$@"
+    exec_low "$@" </dev/null
 }
 
 # Copies the backups in the bot's data to backups/. docker cp also works while the container is
@@ -466,7 +469,7 @@ cmd_finish_update() {
 }
 
 playing_count() { # servers the running bot is playing in, from its heartbeat file
-  compose exec -T "$SERVICE" cat /app/data/health.json 2>/dev/null |
+  compose exec -T "$SERVICE" cat /app/data/health.json </dev/null 2>/dev/null |
     grep -oE '"activeStreams":[0-9]+' | cut -d: -f2 || true
 }
 
@@ -552,7 +555,7 @@ cmd_packs() {
   if [ "$state" = running ]; then
     exec_low node dist/scripts/packs.js "$@" || status=$?
   else
-    compose run --rm --no-deps -T "$SERVICE" node dist/scripts/packs.js "$@" || status=$?
+    compose run --rm --no-deps -T "$SERVICE" node dist/scripts/packs.js "$@" </dev/null || status=$?
   fi
   case "$sub" in
     add | update | remove)
@@ -573,7 +576,12 @@ cmd_packs() {
 # Offered once, at the end of a first install: a new bot has no stations until a pack is added.
 offer_packs() {
   local installed
-  installed=$(exec_low node dist/scripts/packs.js count 2>/dev/null | tr -cd '0-9')
+  # If the packs can't be counted, the install still finishes with the invite link.
+  installed=$(exec_low node dist/scripts/packs.js count 2>/dev/null) || {
+    warn "Couldn't check the bot's station packs just now. To add stations later, run: radio-bot packs browse"
+    return 0
+  }
+  installed=$(printf '%s' "$installed" | tr -cd '0-9')
   [ "${installed:-0}" = 0 ] || return 0
   step "Add some stations"
   say "Radio Bot's stations come in station packs, one per radio company. You can add or remove them any time."
@@ -643,7 +651,7 @@ cmd_restore() {
     d=/app/data/radio-bot.sqlite
     cp /restore.sqlite "$d.restoring" && rm -f "$d-wal" "$d-shm" && mv -f "$d.restoring" "$d" ||
       { rm -f "$d.restoring"; exit 1; }
-  ' || restore_failed "Couldn't copy the backup into the bot's data."
+  ' </dev/null || restore_failed "Couldn't copy the backup into the bot's data."
   trap - INT TERM
   compose up -d || die "Couldn't start Radio Bot again. Try: radio-bot start"
   wait_until_healthy || exit 1
