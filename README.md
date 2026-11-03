@@ -364,7 +364,7 @@ The module map and data flow are in [docs/architecture.md](docs/architecture.md)
 
 ## Project status
 
-Version **1.2.0** is the current release; 1.0.0 was the first public release. Lint, the strict typecheck and the full unit and integration suite pass, and CI runs them on every push and pull request. The integration tests use a local fixture radio server with synthetic audio, never real stations or Discord. The following have **not** been verified yet, so you can judge for yourself:
+Version **1.2.1** is the current release; 1.0.0 was the first public release. Lint, the strict typecheck and the full unit and integration suite pass, and CI runs them on every push and pull request. The integration tests use a local fixture radio server with synthetic audio, never real stations or Discord. The following have **not** been verified yet, so you can judge for yourself:
 
 - **Only one live Discord test so far.** On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played a station from the pack that then shipped with the bot, heard in the Discord client: the direct MP3 source at 128 kbps, one Opus encode at 128 kbps, with DAVE end-to-end encryption negotiated and the Discord-side figures in `/radio stats` shown live. Not yet tested on a live call: the owner, DJ and member permission scenarios, station switching, and kick, move and channel-delete handling.
 - **No 72-hour soak test** (a long unattended run) yet, so long-run memory growth and FFmpeg process clean-up over days are unmeasured.

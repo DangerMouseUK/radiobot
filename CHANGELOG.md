@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-03
+
 ### Fixed
 
 - The installer could stop at "Add some stations" and never finish, on systems where `sudo` runs Docker (such as Ubuntu). Docker was waiting to read the terminal while it wasn't allowed to, so the system paused it for good. `radio-bot` no longer lets Docker read the terminal for anything it runs in the bot's container.
@@ -317,7 +319,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.5...v1.1.0
 [1.0.5]: https://github.com/DangerMouseUK/radiobot/compare/v1.0.4...v1.0.5
