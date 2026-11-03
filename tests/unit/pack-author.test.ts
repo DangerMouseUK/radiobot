@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   AuthorError,
@@ -15,10 +15,12 @@ import {
   newPack,
   nextVersion,
   parseCsv,
+  publishedVersion,
   signedUrlReason,
   sourceId,
   stationSlug,
   strictProblems,
+  strictWarnings,
   TEMPLATE_DIR,
   writeCsv,
 } from '../../scripts/pack-author.ts';
@@ -152,6 +154,26 @@ describe('new', () => {
     expect(existsSync(join(r.dir, 'README.md'))).toBe(false);
     expect(existsSync(join(r.dir, 'evidence', 'probe-2026-11-03.json'))).toBe(false);
     expect(r.nextSteps.join('\n')).toMatch(/pack-ids\.json/);
+  });
+
+  it('prints commands that run from the current folder, as a pack library next to the bot runs them', () => {
+    const library = join(tempDir(), 'my library');
+    mkdirSync(library);
+    const saved = process.cwd();
+    process.chdir(library);
+    try {
+      const r = newPack('mypack', { root: 'packs', now: NOW });
+      const steps = r.nextSteps.join('\n');
+      const scripts = relative(library, join(projectRoot(), 'scripts')).replace(/\\/g, '/');
+      const q = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
+      expect(steps).toContain(`Run: node ${q(`${scripts}/pack-author.ts`)} generate packs/mypack`);
+      expect(steps).toContain(
+        `Check: node ${q(`${scripts}/validate-catalogue.ts`)} --pack packs/mypack --strict`,
+      );
+      expect(steps).toContain('--base origin/main');
+    } finally {
+      process.chdir(saved);
+    }
   });
 
   it('refuses a bad, reserved, existing or already registered ID', () => {
@@ -532,5 +554,158 @@ describe('strict checks', () => {
     const problems = strictProblems(loadPack(dir)).join('\n');
     for (const word of ['"version"', '"owner"', 'country', 'language', 'evidence/'])
       expect(problems).toContain(word);
+  });
+
+  /** Writes evidence/<name> with one probe per [source ID, failure code or null for success]. */
+  const writeReport = (dir: string, name: string, probes: Array<[string, string | null]>) =>
+    writeFileSync(
+      join(dir, 'evidence', name),
+      JSON.stringify({
+        generatedAt: '2027-01-15T12:00:00.000Z',
+        probes: probes.map(([sourceId, code]) => ({
+          stationId: 'template:x',
+          sourceId,
+          outcome: { success: code === null, failureCode: code },
+        })),
+        comparisons: [],
+      }),
+    );
+
+  it('needs the newest probe report to show a source of the pack playing', () => {
+    const dir = copyTemplate(tempDir());
+    const problems = () => strictProblems(loadPack(dir)).join('\n');
+
+    // Every probe failed: a report on its own is not enough.
+    writeReport(dir, 'probe-2027-01-15.json', [
+      ['template-example-hits-mp3', 'HTTP_TIMEOUT'],
+      ['template-example-news-aac', 'NOT_FOUND'],
+    ]);
+    expect(problems()).toMatch(/no source played in evidence\/probe-2027-01-15\.json/);
+
+    // FFmpeg could not run: the report says nothing about the streams, even with a success in it.
+    writeReport(dir, 'probe-2027-01-15.json', [
+      ['template-example-hits-mp3', null],
+      ['template-example-news-aac', 'FFMPEG_SPAWN'],
+    ]);
+    expect(problems()).toMatch(/records that FFmpeg could not run/);
+
+    // A report about another pack's sources.
+    writeReport(dir, 'probe-2027-01-15.json', [['other-pack-source', null]]);
+    expect(problems()).toMatch(
+      /holds no probe of this pack's sources\. Run the live check with --pack-id template/,
+    );
+
+    // Not a probe report at all.
+    writeFileSync(join(dir, 'evidence', 'probe-2027-01-15.json'), '{"notes": "listened, sounded fine"}');
+    expect(problems()).toMatch(/evidence\/probe-2027-01-15\.json is not a probe report/);
+
+    // The newest report counts, by the date in its name: an older bad one doesn't matter.
+    writeReport(dir, 'probe-2027-01-16.json', [['template-example-hits-mp3', null]]);
+    expect(strictProblems(loadPack(dir))).toEqual([]);
+  });
+
+  it('warns about an enabled source that failed the newest live check, but not a disabled one', () => {
+    const dir = copyTemplate(tempDir());
+    expect(strictWarnings(loadPack(TEMPLATE_DIR()))).toEqual([]);
+    writeReport(dir, 'probe-2027-01-15.json', [
+      ['template-example-hits-mp3', null],
+      ['template-example-hits-hls', 'ACCESS_DENIED'],
+      ['template-example-news-mp3-low', 'NOT_FOUND'],
+    ]);
+    const pack = loadPack(dir);
+    expect(strictProblems(pack)).toEqual([]);
+    expect(strictWarnings(pack)).toEqual([
+      'Pack "template": source "template-example-hits-hls" is enabled but failed the live check in evidence/probe-2027-01-15.json (ACCESS_DENIED). Disable it with a reason, or find out why and check it again.',
+    ]);
+  });
+
+  it('prints the warnings from the command line and still passes', () => {
+    const dir = copyTemplate(tempDir());
+    writeReport(dir, 'probe-2027-01-15.json', [
+      ['template-example-hits-mp3', null],
+      ['template-example-hits-hls', 'HTTP_TIMEOUT'],
+    ]);
+    const r = run('validate-catalogue.ts', ['--pack', dir, '--strict']);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(
+      /Warning: Pack "template": source "template-example-hits-hls" is enabled but failed/,
+    );
+    expect(r.out).toMatch(/Strict checks passed/);
+  });
+});
+
+describe('generate --base', () => {
+  const git = (cwd: string, ...args: string[]) => {
+    const r = spawnSync(
+      'git',
+      ['-c', 'user.name=Test', '-c', 'user.email=test@example.org', '-c', 'commit.gpgsign=false', ...args],
+      {
+        cwd,
+        encoding: 'utf8',
+      },
+    );
+    if (r.status !== 0) throw new Error(r.stderr);
+  };
+
+  /** Two edits in a row, as an author makes while working on one change. */
+  const editTwice = (dir: string, published: { version: string | null }) => {
+    writeFileSync(
+      join(dir, 'intake.csv'),
+      exportIntake(dir).csv.replace(/^Example Hits,example-hits,/gm, 'Example Hits Radio,example-hits,'),
+    );
+    const first = generatePack(dir, { now: NOW, published }).version;
+    writeFileSync(
+      join(dir, 'intake.csv'),
+      exportIntake(dir).csv + csvRow({ station: 'Example Jazz', tags: 'jazz' }),
+    );
+    const second = generatePack(dir, { now: NOW, published }).version;
+    return [first, second];
+  };
+
+  it('keeps a pack that was never published at the date it was started', () => {
+    const repo = tempDir();
+    git(repo, 'init', '-q');
+    writeFileSync(join(repo, 'README.md'), 'library\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'start');
+    const dir = copyTemplate(join(repo, 'packs'));
+    const published = publishedVersion(dir, 'HEAD');
+    expect(published).toEqual({ version: null });
+    expect(editTwice(dir, published)).toEqual(['2026.11.03', '2026.11.03']);
+  });
+
+  it('bumps a published pack once, however often generate runs', () => {
+    const repo = tempDir();
+    git(repo, 'init', '-q');
+    const dir = copyTemplate(join(repo, 'packs'));
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'publish');
+    const published = publishedVersion(dir, 'HEAD');
+    expect(published).toEqual({ version: '2026.11.03' });
+    expect(editTwice(dir, published)).toEqual(['2027.01.15', '2027.01.15']);
+    // The same day as the published version: .2, once.
+    expect(editTwice(copyTemplate(tempDir()), { version: '2027.01.15' })).toEqual([
+      '2027.01.15.2',
+      '2027.01.15.2',
+    ]);
+  });
+
+  it('works from the command line, and refuses a ref git does not know', () => {
+    const repo = tempDir();
+    git(repo, 'init', '-q');
+    writeFileSync(join(repo, 'README.md'), 'library\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'start');
+    const dir = copyTemplate(join(repo, 'packs'));
+    writeFileSync(join(dir, 'intake.csv'), exportIntake(dir).csv + csvRow({ station: 'Example Jazz' }));
+    const ok = run('pack-author.ts', ['generate', dir, '--base', 'HEAD']);
+    expect(ok.err).toBe('');
+    expect(ok.out).toMatch(/its version is now 2026\.11\.03\./);
+    expect(() => publishedVersion(dir, 'no-such-branch')).toThrow(
+      /Could not read the published pack from git/,
+    );
+    const bad = run('pack-author.ts', ['generate', dir, '--base', 'no-such-branch']);
+    expect(bad.code).toBe(1);
+    expect(bad.err).toMatch(/no-such-branch/);
   });
 });

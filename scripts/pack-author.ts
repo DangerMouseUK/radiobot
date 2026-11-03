@@ -4,7 +4,7 @@
  *
  *   node scripts/pack-author.ts new <pack-id> [--root <folder>] [--ids <pack-ids.json>]
  *   node scripts/pack-author.ts export <pack-dir>
- *   node scripts/pack-author.ts generate <pack-dir>
+ *   node scripts/pack-author.ts generate <pack-dir> [--base <git-ref>]
  *   node scripts/pack-author.ts build-library <packs-root> <out-dir> --base-url <url>
  *                                             [--collections <dir>] [--withdrawn <file>]
  *   node scripts/pack-author.ts diff-check <old-pack-dir> <new-pack-dir>
@@ -12,12 +12,15 @@
  * `new` starts a pack from catalog/packs/_template. `export` writes the pack's stations and
  * sources to intake.csv, one row per source; `generate` reads intake.csv back into stations.json,
  * sources.json and the sources table of SOURCE_PROVENANCE.md, never changing or removing an
- * existing station slug or source ID. `build-library` writes a library's index.json and one bundle
- * per pack. `diff-check` checks a library pull request: no ID removed, and a new version for any
- * change. `strictProblems()` holds the extra checks behind `validate-catalogue.ts --strict`.
+ * existing station slug or source ID; with `--base <git-ref>` it bumps the version once against the
+ * pack as published at that ref. `build-library` writes a library's index.json and one bundle per
+ * pack. `diff-check` checks a library pull request: no ID removed, and a new version for any
+ * change. `strictProblems()` and `strictWarnings()` hold the extra checks behind
+ * `validate-catalogue.ts --strict`.
  *
- * Nothing here touches the network.
+ * Nothing here touches the network (`--base` only reads the local git repository).
  */
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   cpSync,
@@ -29,7 +32,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
@@ -516,8 +519,15 @@ const FOUND_DETAIL = /Linked from (.+?) on (\d{4}-\d{2}-\d{2})/;
  * its intake.csv. The JSON is the source of truth for IDs: no existing slug or source ID is ever
  * changed or removed. An empty cell keeps an existing value (edit the JSON to clear one). The
  * result is checked with the pack loader's own rules first; on any problem nothing is written.
+ *
+ * A change bumps `version`. Given `published` (the version already published, or null for a pack
+ * that never was), the bump is made once against it, so running generate again while working on
+ * the same change keeps the version; a new pack keeps the date it was started with.
  */
-export function generatePack(dir: string, opts: { now?: Date } = {}): GenerateResult {
+export function generatePack(
+  dir: string,
+  opts: { now?: Date; published?: { version: string | null } } = {},
+): GenerateResult {
   const now = opts.now ?? new Date();
   const raw = readRawPack(dir);
   const packId = raw.pack.id as string;
@@ -791,7 +801,11 @@ export function generatePack(dir: string, opts: { now?: Date } = {}): GenerateRe
   result.changed = !sameJson(stations, raw.stations) || !sameJson(sources, raw.sources);
   let pack: Json = { ...raw.pack };
   if (result.changed) {
-    result.version = nextVersion(result.version, now);
+    const published = opts.published;
+    if (!published) result.version = nextVersion(result.version, now);
+    else if (published.version === null) result.version = result.version ?? todayVersion(now);
+    else if (!result.version || compareVersions(result.version, published.version) <= 0)
+      result.version = nextVersion(published.version, now);
     if ('version' in pack) pack.version = result.version;
     else {
       // Put a new version field straight after the name, where the template has it.
@@ -1018,16 +1032,22 @@ export function newPack(
     throw err;
   }
 
-  const script = 'node scripts/pack-author.ts';
+  // Commands as they run from the current folder: a pack library next to the bot gets
+  // `node ../radiobot/scripts/…`. Forward slashes and quotes work in Bash and PowerShell alike.
+  const arg = (p: string) => {
+    const s = (relative(process.cwd(), p) || '.').replace(/\\/g, '/');
+    return /\s/.test(s) ? `"${s}"` : s;
+  };
+  const script = (name: string) => `node ${arg(rootPath('scripts', name))}`;
   const nextSteps = [
     idsFile
       ? `Add "${id}" to ${idsFile}: every pack ID is recorded there, and is never reused (this tool doesn't edit that file).`
       : `Add "${id}" to the library's pack-ids.json: every pack ID is recorded there, and is never reused.`,
     `Fill in pack.json: name, description, owner, countries, regions, languages, categories and brandLabels. ${join(template, 'README.md')} explains every field.`,
     `Put one row per stream in ${join(dir, INTAKE_FILE)}, and one row with an empty url for a station that has no stream yet. The pack is not valid until it has at least one station.`,
-    `Run: ${script} generate ${dir}`,
-    `Describe how the sources were found in ${PROVENANCE_FILE}, and put a probe report in evidence/.`,
-    `Check: node scripts/validate-catalogue.ts --pack ${dir} --strict`,
+    `Run: ${script('pack-author.ts')} generate ${arg(dir)} (in a git checkout of a pack library, add --base origin/main so the version is bumped only once)`,
+    `Describe how the sources were found in ${PROVENANCE_FILE}, and put a probe report in evidence/ (validate-catalogue --probe --json).`,
+    `Check: ${script('validate-catalogue.ts')} --pack ${arg(dir)} --strict`,
   ];
   return { dir, idsFile, nextSteps };
 }
@@ -1102,12 +1122,72 @@ export function strictProblems(pack: StationPack): string[] {
   for (const file of walk(dir))
     if (IMAGE_EXTENSIONS.has(extname(file).toLowerCase()))
       p.push(`${at}: packs may not hold images or logos (${file}).`);
-  const evidence = join(dir, 'evidence');
-  const reports = existsSync(evidence)
-    ? readdirSync(evidence).filter((f) => f.toLowerCase().endsWith('.json'))
-    : [];
-  if (reports.length === 0) p.push(`${at}: evidence/ needs at least one .json probe report.`);
+  const report = readNewestReport(dir);
+  if (report === null) p.push(`${at}: evidence/ needs at least one .json probe report.`);
+  else if (typeof report.problem === 'string') p.push(`${at}: ${report.problem}`);
+  else {
+    const ids = new Set(pack.sources.map((s) => s.id));
+    const ours = report.probes.filter((r) => ids.has(r.sourceId));
+    const where = `evidence/${report.name}`;
+    if (report.probes.some((r) => r.outcome.failureCode === 'FFMPEG_SPAWN'))
+      p.push(
+        `${at}: ${where} records that FFmpeg could not run, so it says nothing about the streams. Fix the set-up and run the live check again.`,
+      );
+    else if (ours.length === 0)
+      p.push(
+        `${at}: ${where} holds no probe of this pack's sources. Run the live check with --pack-id ${meta.id}.`,
+      );
+    else if (!ours.some((r) => r.outcome.success))
+      p.push(
+        `${at}: no source played in ${where}. A pack needs at least one source that passed the live check.`,
+      );
+  }
   return p;
+}
+
+/** Things worth a look in a library pack that don't stop it being published. */
+export function strictWarnings(pack: StationPack): string[] {
+  const report = readNewestReport(pack.dir);
+  if (report === null || typeof report.problem === 'string') return [];
+  const enabled = new Set(pack.sources.filter((s) => s.enabled).map((s) => s.id));
+  return report.probes
+    .filter((r) => enabled.has(r.sourceId) && !r.outcome.success)
+    .map(
+      (r) =>
+        `Pack "${pack.meta.id}": source "${r.sourceId}" is enabled but failed the live check in evidence/${report.name} (${r.outcome.failureCode ?? 'no code'}). Disable it with a reason, or find out why and check it again.`,
+    );
+}
+
+const probeReportSchema = z.object({
+  probes: z.array(
+    z.object({
+      sourceId: z.string(),
+      outcome: z.object({ success: z.boolean(), failureCode: z.string().nullable().optional() }),
+    }),
+  ),
+});
+type ProbeReport = z.infer<typeof probeReportSchema>;
+
+/** A pack's newest evidence/*.json file (latest date in its name, then name), read as a probe report. */
+function readNewestReport(
+  dir: string,
+): ({ name: string; problem?: undefined } & ProbeReport) | { name: string; problem: string } | null {
+  const evidence = join(dir, 'evidence');
+  if (!existsSync(evidence)) return null;
+  const key = (f: string) => `${/(\d{4}-\d{2}-\d{2})/.exec(f)?.[1] ?? '0000-00-00'} ${f}`;
+  const name = readdirSync(evidence)
+    .filter((f) => f.toLowerCase().endsWith('.json'))
+    .sort((a, b) => key(a).localeCompare(key(b)))
+    .at(-1);
+  if (name === undefined) return null;
+  try {
+    return { name, ...probeReportSchema.parse(JSON.parse(readFileSync(join(evidence, name), 'utf8'))) };
+  } catch {
+    return {
+      name,
+      problem: `evidence/${name} is not a probe report: write one with validate-catalogue --probe --json.`,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1414,13 +1494,33 @@ export function diffCheck(oldDir: string, newDir: string): { problems: string[];
   return { problems, notes };
 }
 
+/**
+ * The version of the pack in `dir` as it is in git at `ref` (such as origin/main), or null when the
+ * pack isn't there: a pack that has never been published.
+ */
+export function publishedVersion(dir: string, ref: string): { version: string | null } {
+  const r = spawnSync('git', ['-C', dir, 'show', `${ref}:./pack.json`], { encoding: 'utf8' });
+  if (r.status === 0) {
+    try {
+      const v = (JSON.parse(r.stdout) as Json).version;
+      return { version: typeof v === 'string' ? v : null };
+    } catch {
+      throw new AuthorError(`pack.json at ${ref} could not be read.`);
+    }
+  }
+  if (/does not exist in|exists on disk, but not in/.test(r.stderr ?? '')) return { version: null };
+  throw new AuthorError(
+    `Could not read the published pack from git at "${ref}": ${(r.stderr || r.error?.message || 'git failed').trim()}`,
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // CLI
 
 const USAGE = `Usage:
   node scripts/pack-author.ts new <pack-id> [--root <folder>] [--ids <pack-ids.json>]
   node scripts/pack-author.ts export <pack-dir>
-  node scripts/pack-author.ts generate <pack-dir>
+  node scripts/pack-author.ts generate <pack-dir> [--base <git-ref>]
   node scripts/pack-author.ts build-library <packs-root> <out-dir> --base-url <url> [--collections <dir>] [--withdrawn <file>]
   node scripts/pack-author.ts diff-check <old-pack-dir> <new-pack-dir>
 `;
@@ -1467,8 +1567,10 @@ export function main(argv: readonly string[]): number {
         return 0;
       }
       case 'generate': {
-        const { pos } = parseArgs(rest, 1, []);
-        const r = generatePack(resolve(pos[0]!));
+        const { pos, opt } = parseArgs(rest, 1, ['--base']);
+        const dir = resolve(pos[0]!);
+        const base = opt.get('--base');
+        const r = generatePack(dir, { published: base ? publishedVersion(dir, base) : undefined });
         for (const w of r.warnings) out(`Warning: ${w}`);
         if (r.addedStations.length) out(`New stations: ${r.addedStations.join(', ')}`);
         if (r.addedSources.length) out(`New sources: ${r.addedSources.join(', ')}`);

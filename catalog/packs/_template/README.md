@@ -18,7 +18,7 @@ JSON files can't hold comments, so this file explains them instead.
 - **`stations.json`**: the stations: their names, and how they are grouped and sorted.
 - **`sources.json`**: the stream addresses for each station, and where each address came from.
 - **`SOURCE_PROVENANCE.md`**: a written record of where the station list and every stream address came from, what was checked and what wasn't. Every source ID must appear in it. The table between `<!-- sources:start -->` and `<!-- sources:end -->` is written by `pack-author.ts generate`; write everything else yourself.
-- **`evidence/`**: reports from checking the streams, written by `node scripts/validate-catalogue.ts --probe --json evidence/probe-YYYY-MM-DD.json`. The date in the file name tells people when the streams were last checked. The report here is a made-up example.
+- **`evidence/`**: reports from checking the streams, written by `node scripts/validate-catalogue.ts --probe --json evidence/probe-YYYY-MM-DD.json`. The newest one must show at least one source playing. The date in the file name tells people when the streams were last checked. The report here is a made-up example.
 - **`intake.csv`** (not in this folder): a spreadsheet of the stations and streams that `pack-author.ts export` writes and `pack-author.ts generate` reads back into the JSON files. One row per stream; a station with no stream yet gets one row with an empty `url`.
 
 Never put logos, artwork or other images in a pack.
@@ -82,4 +82,4 @@ Each source is one stream address for one station:
 node scripts/validate-catalogue.ts --pack catalog/packs/my-pack --strict
 ```
 
-`--strict` adds the rules for packs in the pack library: a version, an owner, at least one country and language, every source in `SOURCE_PROVENANCE.md`, a report in `evidence/`, no images and no signed addresses.
+`--strict` adds the rules for packs in the pack library: a version, an owner, at least one country and language, every source in `SOURCE_PROVENANCE.md`, a live-check report in `evidence/` in which at least one source played, no images and no signed addresses.

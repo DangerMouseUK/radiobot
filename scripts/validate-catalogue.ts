@@ -8,20 +8,24 @@
  *   add --compare to run a ~40 s audio comparison between sources of each probed station
  *   add --json <file> to write the evidence report
  *   add --strict to apply the extra rules for packs published in a pack library (see strictProblems()
- *   in scripts/pack-author.ts): version, owner, countries, languages, provenance, evidence, no signed URLs
- *   or images
+ *   in scripts/pack-author.ts): version, owner, countries, languages, provenance, a probe report with
+ *   a successful probe, no signed URLs or images
  *
- * Probes run one at a time per host (PRD §7.3 budgets). Audio samples stay in memory only.
+ * Probes run one at a time per host (PRD §7.3 budgets). Audio samples stay in memory only. Before
+ * the first probe, FFmpeg and FFprobe are checked: FFMPEG_PATH/FFPROBE_PATH if set, otherwise the
+ * ones on PATH, otherwise the ffmpeg-static/ffprobe-static dev dependencies. Without them nothing is
+ * contacted.
  */
 import { writeFileSync } from 'node:fs';
-import { ProcessRegistry } from '../src/audio/ffmpeg.ts';
+import { createRequire } from 'node:module';
+import { checkFfmpeg, type FfmpegPaths, ProcessRegistry } from '../src/audio/ffmpeg.ts';
 import { loadPack, PackRegistry, type StationPack } from '../src/catalogue/packs.ts';
 import { rootPath } from '../src/shared/paths.ts';
 import { compareSources, correlationEvidence } from '../src/streams/identity.ts';
 import { codecLabel, type ProbeOutcome, probeSource } from '../src/streams/probe.ts';
 import { SafeHttpClient } from '../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../src/streams/url-policy.ts';
-import { strictProblems } from './pack-author.ts';
+import { strictProblems, strictWarnings } from './pack-author.ts';
 
 const args = process.argv.slice(2);
 const flag = (f: string) => args.includes(f);
@@ -61,6 +65,8 @@ for (const p of packs) {
 }
 
 if (flag('--strict')) {
+  for (const warning of packs.flatMap((p) => strictWarnings(p)))
+    process.stdout.write(`Warning: ${warning}\n`);
   const problems = packs.flatMap((p) => strictProblems(p));
   for (const problem of problems) process.stderr.write(`${problem}\n`);
   if (problems.length) {
@@ -80,15 +86,58 @@ if (stationFilter.length === 0 && !packId) {
   process.exit(2);
 }
 
+/** The FFmpeg builds to try, in order. Paths set in the environment are the only choice. */
+function ffmpegCandidates(): FfmpegPaths[] {
+  const { FFMPEG_PATH, FFPROBE_PATH } = process.env;
+  if (FFMPEG_PATH || FFPROBE_PATH)
+    return [{ ffmpeg: FFMPEG_PATH || 'ffmpeg', ffprobe: FFPROBE_PATH || 'ffprobe' }];
+  const list: FfmpegPaths[] = [{ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }];
+  try {
+    // Dev dependencies: present in a clone after `pnpm install`, absent from the Docker image.
+    const require = createRequire(import.meta.url);
+    const ffmpeg = require('ffmpeg-static') as string | null;
+    const ffprobe = (require('ffprobe-static') as { path: string }).path;
+    if (ffmpeg) list.push({ ffmpeg, ffprobe });
+  } catch {
+    /* not installed */
+  }
+  return list;
+}
+
+const registry = new ProcessRegistry();
+let found: { paths: FfmpegPaths; info: Awaited<ReturnType<typeof checkFfmpeg>> } | null = null;
+for (const paths of ffmpegCandidates()) {
+  try {
+    found = { paths, info: await checkFfmpeg(registry, paths) };
+    break;
+  } catch {
+    /* try the next one */
+  }
+}
+if (!found) {
+  process.stderr.write(
+    'FFmpeg and FFprobe are needed for --probe, and none could be run. Install FFmpeg, run `pnpm install` ' +
+      'in the bot (it brings ffmpeg-static and ffprobe-static), or set FFMPEG_PATH and FFPROBE_PATH. ' +
+      'Nothing was contacted and no report was written.\n',
+  );
+  registry.killAll();
+  process.exit(2);
+}
+process.stdout.write(`Using ${found.info.ffprobeVersion} (${found.paths.ffprobe}).\n`);
+
 const sources = packs.flatMap((p) => p.sources);
 const policy = new UrlPolicy({ allowInsecureHttp: true });
-const client = new SafeHttpClient(policy, undefined, process.env.STREAM_USER_AGENT || undefined);
-const registry = new ProcessRegistry();
+// The same User-Agent the bot sends: Lavf/<version> of the FFmpeg in use (invariant 5).
+const client = new SafeHttpClient(
+  policy,
+  undefined,
+  process.env.STREAM_USER_AGENT || found.info.libavformat || undefined,
+);
 const deps = {
   client,
   registry,
-  ffmpegPath: process.env.FFMPEG_PATH ?? 'ffmpeg',
-  ffprobePath: process.env.FFPROBE_PATH ?? 'ffprobe',
+  ffmpegPath: found.paths.ffmpeg,
+  ffprobePath: found.paths.ffprobe,
 };
 const targets = sources.filter(
   (s) =>
