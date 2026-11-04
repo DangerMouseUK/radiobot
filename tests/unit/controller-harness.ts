@@ -369,6 +369,20 @@ export class FakeInteraction {
     const last = [...this.calls].reverse().find((c) => (c.payload.embeds ?? []).length > 0);
     return (last?.payload.embeds ?? []).map((e) => embedText(e.toJSON())).join('\n');
   }
+  /** The rows of the last payload that had components, as Discord receives them (style, label…). */
+  get componentRows(): Array<Array<{ custom_id?: string; style?: number; label?: string; type: number }>> {
+    const last = [...this.calls].reverse().find((c) => (c.payload.components ?? []).length > 0);
+    return (last?.payload.components ?? []).map(
+      (row) =>
+        (
+          row as {
+            toJSON(): {
+              components: Array<{ custom_id?: string; style?: number; label?: string; type: number }>;
+            };
+          }
+        ).toJSON().components ?? [],
+    );
+  }
   /** custom_id of every component in the last payload that had components. */
   get componentIds(): string[] {
     const last = [...this.calls].reverse().find((c) => (c.payload.components ?? []).length > 0);

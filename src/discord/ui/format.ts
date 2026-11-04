@@ -32,6 +32,16 @@ const streamText = (text: string) =>
  * ok: done, or playing · neutral: nothing changed, nothing playing, or still in progress ·
  * warn: done or running, but something needs a look (partial, retrying, recovering, a decision) ·
  * error: refused or failed · info: something you asked to see (lists, help, settings, reports).
+ *
+ * Buttons follow the same idea, one meaning per colour:
+ * - Blurple (Primary): the recommended next step, at most one per row (Discord: "Use only one
+ *   Primary button per group"). Also the current settings page's tab, shown dimmed.
+ * - Red (Danger): removes, overwrites or ends something for everyone, and takes more than one
+ *   click to get back (Leave, Remove, Apply import, Stop the check). At most one per message.
+ * - Green (Success): "on", and nothing else (a settings switch that is on, matching the green
+ *   embed strip for playing or done). Never an action, and never in a row with a red button.
+ * - Grey (Secondary): everything else, and the default.
+ * Every button has a text label, so colour is never the only cue (WCAG 1.4.1).
  */
 export const COLOR = {
   ok: 0x2e9e6a,

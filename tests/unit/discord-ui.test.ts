@@ -158,7 +158,7 @@ describe('control buttons', () => {
     ]);
   });
 
-  it('lays the buttons out in rows of two or three, one blurple button at most per row and nothing red', () => {
+  it('lays the buttons out in rows of two or three, one blurple button at most per row and Leave the only red', () => {
     const { ctx, ids, guilds } = context();
     guilds.enqueue(GUILD, 'demo:demo-chic', null);
     const rows = controlRows(ctx, GUILD, 'demo:demo-radio', true).map((r) => r.toJSON().components);
@@ -180,7 +180,12 @@ describe('control buttons', () => {
     expect(labels[0]).toEqual(['Previous', 'Next', 'Skip']);
     const styles = rows.map((r) => r.map((c) => (c as { style: ButtonStyle }).style));
     for (const r of styles) expect(r.filter((s) => s === ButtonStyle.Primary).length).toBeLessThanOrEqual(1);
-    expect(styles.flat()).not.toContain(ButtonStyle.Danger);
+    // Exactly one red: Leave, the last button of the last row. Stop stays grey (the bot stays).
+    expect(styles.flat().filter((s) => s === ButtonStyle.Danger)).toHaveLength(1);
+    expect(rows.at(-1)!.at(-1)).toMatchObject({ label: 'Leave', style: ButtonStyle.Danger });
+    expect(rows.at(-1)!.find((c) => (c as { label: string }).label === 'Stop')).toMatchObject({
+      style: ButtonStyle.Secondary,
+    });
     // Skip is blurple while something is queued ("Up next" lists it); an empty queue is grey.
     expect(styles[0]!.at(-1)).toBe(ButtonStyle.Primary);
     guilds.clearQueue(GUILD);
@@ -277,6 +282,35 @@ describe('browse and list views', () => {
     expect(view(null)).toMatchObject({ label: 'Show favourites (2)', disabled: false });
     expect(ids.parse(GUILD, String(view(null).custom_id))).toMatchObject({ action: 'bfav', arg: 'tok123' });
     expect(view('favourites')).toMatchObject({ label: 'Show all stations', disabled: false });
+    // A filter that is on is a state, not a next step: grey both ways.
+    expect(view('favourites')).toMatchObject({ style: ButtonStyle.Secondary });
+    expect(view(null)).toMatchObject({ style: ButtonStyle.Secondary });
+  });
+
+  it('never puts green and red in one row: green means "on", and only a settings switch is green', () => {
+    const { ctx, guilds } = context();
+    guilds.enqueue(GUILD, 'demo:demo-chic', null);
+    guilds.toggleFavourite(GUILD, 'demo:demo-radio');
+    const views = [
+      { components: controlRows(ctx, GUILD, 'demo:demo-radio', true) },
+      { components: controlRows(ctx, GUILD, null, false) },
+      browseView(ctx, GUILD, { pack: null, category: null, search: null }, 'tok123', 0),
+      browseView(ctx, GUILD, { pack: null, category: 'favourites', search: null }, 'tok123', 0),
+      ...(['access', 'playback', 'notify'] as const).map((page) =>
+        configView(ctx, GUILD, guilds.getSettings(GUILD), page),
+      ),
+    ];
+    let green = 0;
+    for (const v of views) {
+      for (const r of v.components ?? []) {
+        const styles = (r.toJSON().components as Array<{ style?: number }>).map((c) => c.style);
+        expect(styles.includes(ButtonStyle.Success) && styles.includes(ButtonStyle.Danger)).toBe(false);
+        expect(styles.filter((s) => s === ButtonStyle.Primary).length).toBeLessThanOrEqual(1);
+        green += styles.filter((s) => s === ButtonStyle.Success).length;
+      }
+    }
+    // The voice channel status switch is on by default: the one green button.
+    expect(green).toBe(1);
   });
 
   it('says "No favourites yet" only when there are none, not when a search leaves none', () => {

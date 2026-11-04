@@ -250,7 +250,8 @@ export function browseView(
               ? `Show favourites (${favourites})`
               : 'No favourites yet',
         )
-        .setStyle(onlyFavourites ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        // Grey either way: blurple marks a next step, never a state (the title says what's shown).
+        .setStyle(ButtonStyle.Secondary)
         .setDisabled(!onlyFavourites && favourites === 0),
     ),
     ...pageRow(ctx, guildId, 'browse', (n) => `${token}:p${n}`, p, pages),
@@ -533,9 +534,12 @@ export function controlRows(
       .setStyle(style);
   // Rows of two or three short buttons: a 375-wide phone has room for about 290 pixels of buttons,
   // so four in a row would wrap unevenly. Change station; pick or keep a station; look at its
-  // sources; then the card itself, with ending playback last. Blurple marks the main action of a
-  // row; nothing here deletes anything, so nothing is red. Skip shows no count: "Up next" lists
-  // the queue, and the count made the row too wide.
+  // sources; then the card itself, with ending playback last. Colours follow the rule in format.ts:
+  // Browse (and Skip while something is queued) is the recommended next step, so blurple. Leave is
+  // the one red: it ends playback for everyone in the channel and takes a new /radio join or play
+  // to undo, like Discord's own Disconnect. Stop stays grey: the bot stays in the channel, and any
+  // station button undoes it. Skip shows no count: "Up next" lists the queue, and the count made
+  // the row too wide.
   const tune: ButtonBuilder[] = [
     b('prev', 'Previous', ButtonStyle.Secondary),
     b('next', 'Next', ButtonStyle.Secondary),
@@ -564,7 +568,7 @@ export function controlRows(
     row(
       b('now', 'Refresh', ButtonStyle.Secondary),
       b('stop', 'Stop', ButtonStyle.Secondary),
-      b('leave', 'Leave', ButtonStyle.Secondary),
+      b('leave', 'Leave', ButtonStyle.Danger),
     ),
   );
   return rows;
@@ -670,7 +674,7 @@ export function configView(ctx: AppContext, guildId: string, s: GuildSettings, p
     description,
     default: value === current,
   });
-  // A setting that is on is green, so the row reads at a glance.
+  // A setting that is on is green, so the row reads at a glance: the only green button anywhere.
   const toggle = (field: string, label: string, on: boolean) =>
     new ButtonBuilder()
       .setCustomId(id(field))

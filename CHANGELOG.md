@@ -26,6 +26,7 @@ A performance and quality pass. The stream comes first: everything else the bot 
   - HLS playlist refreshes.
 - On Linux, the bot's worker threads for background work (pack checks, station-list parsing, database checkpoints) run at the lowest CPU priority, like stream checks already did.
 - The control panel's 5-minute refresh only edits a panel when something on it changed.
+- Buttons have some colour again, with one meaning per colour. **Leave** is red, like Discord's own Disconnect; **Stop** stays grey, because the bot stays in the channel. **Install** and **Update** on a pack card are blurple, so a green button never sits next to a red **Remove**. Green now only means a setting is on. **Show all stations** in a browse filtered to favourites is grey, like the other filter buttons. Every button still has its text label.
 - A server can keep up to 1000 favourites and source choices for up to 1000 stations, and `/radio import` accepts as many (it accepted 200). `/radio export` warns when its file is too large for `/radio import`.
 - Suggestions while typing a command option now follow the same access rules as the command. Nothing is suggested in a channel where the member can't use the bot, and `/radio source …` suggestions are for admins only.
 - `/radio help` describes the three quality modes correctly. An empty `/radio list pack:…` now says whether that pack isn't installed, is switched off, or has no stations. An empty catalogue says the bot's operator installs packs.
