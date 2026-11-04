@@ -21,7 +21,7 @@ You run your own Discord application with your own token. Radio Bot is unofficia
 ```bash
 sudo git clone https://github.com/DangerMouseUK/radiobot.git /opt/radio-bot
 cd /opt/radio-bot
-sudo git checkout v1.2.3     # the newest release; the default branch may hold unreleased changes
+sudo git checkout v1.2.4     # the newest release; the default branch may hold unreleased changes
 sudo corepack enable
 sudo pnpm install --frozen-lockfile --ignore-scripts
 sudo pnpm run build
