@@ -28,8 +28,32 @@ import {
   type ProbeOutcome,
   probeSource,
 } from './probe.ts';
-import { checkEligibility, type SelectionResult, selectSource } from './ranking.ts';
+import { isEligibleNow, type SelectionResult, selectSource } from './ranking.ts';
 import type { SafeHttpClient } from './safe-fetch.ts';
+
+/** `coverageByProvider()` counts are at most this old: eligibility depends on time (holds end). */
+export const COVERAGE_MAX_AGE_MS = 60_000;
+
+/** Why a background check was interrupted (the abort reason). */
+const STREAM_START = 'stream-start';
+const STOPPED = 'stopped';
+
+/**
+ * A background check that gave way to a stream starting somewhere. Nothing is recorded, and it is
+ * not the source's fault or its host's: a full re-check simply queues it again.
+ */
+class GaveWayToStart extends RadioError {
+  constructor() {
+    super('CANCELLED', 'The background check gave way to a stream that is starting.');
+  }
+}
+
+/** A check in progress, shared by everyone who asks for the same source meanwhile. */
+interface InflightProbe {
+  promise: Promise<ProbeReport>;
+  /** Set for a background check, which may be interrupted while nobody is waiting for it. */
+  abort: AbortController | null;
+}
 
 export const PROBE_STALE_MS = 24 * 60 * 60_000;
 /**
@@ -151,11 +175,20 @@ export class SourceService {
   readonly #background = new Semaphore(1);
   /** The background check running on each host, which a play's check may interrupt. */
   readonly #backgroundByHost = new Map<string, { sourceId: string; abort: AbortController }>();
-  readonly #inflight = new Map<string, Promise<ProbeReport>>();
+  readonly #inflight = new Map<string, InflightProbe>();
   /** Sources waiting for a background check, so a source is never queued twice. */
   readonly #queued = new Set<string>();
-  /** Background checks wait until this time while a stream is starting somewhere. */
+  /** Background work waits until this time while a stream is starting somewhere. */
   #holdUntil = 0;
+  /**
+   * Automatic background work (nobody waiting for it) also waits until this time: a stream's first
+   * minutes after its first audio, while the listener's client is still settling its buffer.
+   */
+  #settleUntil = 0;
+  /** One timer for all the work waiting out the settle period, so it resumes in the order it came. */
+  #settleGate: { until: number; done: Promise<void> } | null = null;
+  /** `coverageByProvider()` results, per provider. */
+  readonly #coverage = new Map<string, { key: string; at: number; counts: CoverageCounts }>();
   /** Per source with a playback failure streak: when the streak started and its last counted failure. */
   readonly #failureStreaks = new Map<string, { since: number; last: number }>();
   readonly #log: Logger;
@@ -197,16 +230,39 @@ export class SourceService {
     // Playback comes first: a check someone is waiting for interrupts any background check of
     // another source on the same host, instead of queuing behind it.
     this.#claimHost(sourceId);
-    let shared = this.#inflight.get(sourceId);
+    let shared = this.#joinable(sourceId);
     if (!shared) {
       // The probe itself is bounded by its own budget and is not tied to any caller's signal,
       // so one guild cancelling never records a failure or cancels another guild's wait.
-      shared = this.#probeNow(sourceId, { budget: opts.budget }).finally(() =>
-        this.#inflight.delete(sourceId),
-      );
-      this.#inflight.set(sourceId, shared);
+      shared = this.#track(sourceId, this.#probeNow(sourceId, { budget: opts.budget }), null);
     }
     return opts.signal ? raceSignal(shared, opts.signal) : shared;
+  }
+
+  /** Registers a check in progress, so that others asking for the same source share it. */
+  #track(
+    sourceId: string,
+    run: Promise<ProbeReport>,
+    abort: AbortController | null,
+    onSettled?: () => void,
+  ): Promise<ProbeReport> {
+    const entry: InflightProbe = { promise: run, abort };
+    entry.promise = run.finally(() => {
+      // A check that was interrupted may already have been replaced by a new one: leave that be.
+      if (this.#inflight.get(sourceId) === entry) this.#inflight.delete(sourceId);
+      onSettled?.();
+    });
+    this.#inflight.set(sourceId, entry);
+    return entry.promise;
+  }
+
+  /**
+   * The check of `sourceId` in progress, if it can still give a result. One that was interrupted
+   * ends CANCELLED, so whoever asks now starts a new check rather than sharing that.
+   */
+  #joinable(sourceId: string): Promise<ProbeReport> | null {
+    const entry = this.#inflight.get(sourceId);
+    return entry && !entry.abort?.signal.aborted ? entry.promise : null;
   }
 
   /**
@@ -229,23 +285,29 @@ export class SourceService {
 
   /**
    * A background check: shares an in-flight check, otherwise runs one that a play may interrupt.
-   * `signal` (a full re-check being stopped) interrupts it too; either way nothing is recorded.
+   * `signal` (a full re-check being stopped) stops the wait at once, and interrupts the check
+   * itself only while nobody else waits for it: a play that joined it still gets its result.
+   * An interrupted check records nothing.
    */
   #probeInBackground(sourceId: string, signal?: AbortSignal): Promise<ProbeReport> {
-    const existing = this.#inflight.get(sourceId);
+    const existing = this.#joinable(sourceId);
     if (existing) return signal ? raceSignal(existing, signal) : existing;
     const source = this.#d.stations.getSource(sourceId);
     if (!source) return Promise.reject(new RadioError('INTERNAL', 'Unknown source.'));
     const host = urlHost(source.url) || 'invalid';
     const abort = new AbortController();
-    this.#backgroundByHost.set(host, { sourceId, abort });
-    const stop = signal ? AbortSignal.any([abort.signal, signal]) : abort.signal;
-    const shared = this.#probeNow(sourceId, { signal: stop }).finally(() => {
-      this.#inflight.delete(sourceId);
-      if (this.#backgroundByHost.get(host)?.abort === abort) this.#backgroundByHost.delete(host);
+    const running = { sourceId, abort };
+    this.#backgroundByHost.set(host, running);
+    // Still in the map means unclaimed: a foreground check of this source removes it.
+    const onStop = () => {
+      if (this.#backgroundByHost.get(host) === running) abort.abort(STOPPED);
+    };
+    signal?.addEventListener('abort', onStop, { once: true });
+    const shared = this.#track(sourceId, this.#probeNow(sourceId, { signal: abort.signal }), abort, () => {
+      signal?.removeEventListener('abort', onStop);
+      if (this.#backgroundByHost.get(host) === running) this.#backgroundByHost.delete(host);
     });
-    this.#inflight.set(sourceId, shared);
-    return shared;
+    return signal ? raceSignal(shared, signal) : shared;
   }
 
   async #probeNow(
@@ -257,29 +319,35 @@ export class SourceService {
     const station = this.#d.stations.getStation(source.stationId);
     if (!station) throw new RadioError('INTERNAL', 'Unknown station.');
     const host = urlHost(source.url) || 'invalid';
-    const outcome = await this.#global.run(
-      () =>
-        this.#perHost.run(
-          host,
-          () =>
-            (this.#d.probeImpl ?? probeSource)(
-              {
-                client: this.#d.client,
-                registry: this.#d.registry,
-                ffmpegPath: this.#d.ffmpegPath,
-                ffprobePath: this.#d.ffprobePath,
-              },
-              source.url,
-              opts.budget ?? this.#d.probeBudget ?? DEFAULT_PROBE_BUDGET,
-              opts.signal,
-              `probe:${sourceId}`,
-            ),
-          opts.signal,
-        ),
-      opts.signal,
-    );
+    let outcome: ProbeOutcome;
+    try {
+      outcome = await this.#global.run(
+        () =>
+          this.#perHost.run(
+            host,
+            () =>
+              (this.#d.probeImpl ?? probeSource)(
+                {
+                  client: this.#d.client,
+                  registry: this.#d.registry,
+                  ffmpegPath: this.#d.ffmpegPath,
+                  ffprobePath: this.#d.ffprobePath,
+                },
+                source.url,
+                opts.budget ?? this.#d.probeBudget ?? DEFAULT_PROBE_BUDGET,
+                opts.signal,
+                `probe:${sourceId}`,
+              ),
+            opts.signal,
+          ),
+        opts.signal,
+      );
+    } catch (err) {
+      if (opts.signal?.aborted) throw interrupted(opts.signal);
+      throw err;
+    }
     // Interrupted to make way for playback: not a result, so nothing is recorded.
-    if (opts.signal?.aborted) throw new RadioError('CANCELLED', 'The background check gave way to playback.');
+    if (opts.signal?.aborted) throw interrupted(opts.signal);
     this.#d.metrics.inc(outcome.success ? 'probe.success' : 'probe.failure');
     const identity = this.#applyProbe(station, source, outcome);
     const updated = this.#d.stations.getSource(sourceId)!;
@@ -302,8 +370,14 @@ export class SourceService {
   }
 
   #applyProbe(station: Station, source: StationSource, o: ProbeOutcome): IdentityDecision {
-    const others = this.#d.stations.listBuiltinStations();
-    const meta = o.success ? metadataSignal(station, others, o.icyName, this.#brand(station.provider)) : null;
+    const meta = o.success
+      ? metadataSignal(
+          station,
+          this.#d.stations.listBuiltinStations(),
+          o.icyName,
+          this.#brand(station.provider),
+        )
+      : null;
     const priorCorrelation = latestCorrelation(source.identityEvidence);
     const decision = decideIdentity(source, meta, priorCorrelation);
     if (o.success && source.codec) {
@@ -520,8 +594,8 @@ export class SourceService {
   /**
    * Returns a playable selection, probing in the foreground only when no eligible source
    * exists (PRD §7.6): candidates are probed best-first until one becomes eligible. Nothing
-   * else is checked here: the session calls `refreshStation()` once its stream has played
-   * steadily, so background checks never compete with a stream that is starting up.
+   * else is checked here: the session calls `refreshStation()` once its stream's settle period
+   * is over, so background checks never compete with a stream that is starting up.
    */
   async prepareForPlayback(
     guildId: string,
@@ -557,7 +631,7 @@ export class SourceService {
   }
 
   /**
-   * Re-checks a station's due sources in the background (after its stream has played steadily).
+   * Re-checks a station's due sources in the background (once its stream's settle period is over).
    * The source that is playing is left alone: its steady playback is better evidence than a check,
    * which would open a second connection that some stations refuse.
    */
@@ -576,39 +650,76 @@ export class SourceService {
     for (const id of sourceIds) {
       if (this.#queued.has(id)) continue;
       this.#queued.add(id);
-      this.#background
-        .run(async () => {
-          await this.#waitForQuiet();
+      this.#queue(
+        async () => {
           this.#queued.delete(id);
           const s = this.#d.stations.getSource(id);
           if (!s || this.isStationDisabled(s.stationId) || !this.needsProbe(s)) return null;
           return this.#probeInBackground(id);
-        })
-        .catch((err: unknown) => {
-          this.#queued.delete(id);
-          this.#log.debug({ sourceId: id, code: errorCode(err) }, 'background probe failed');
-        });
+        },
+        { automatic: true },
+      ).catch((err: unknown) => {
+        this.#queued.delete(id);
+        this.#log.debug({ sourceId: id, code: errorCode(err) }, 'background probe failed');
+      });
     }
   }
 
   /**
    * Runs other background work (a scheduled catalogue sync, say) under the same rules as background
    * checks: it waits for its turn in the same one-at-a-time queue, and then until no stream is
-   * starting, so it never runs alongside a check or during a stream's first moments.
+   * starting, so it never runs alongside a check or during a stream's first moments. `automatic`
+   * work (nobody is waiting for it: a scheduled sync, the daily pack check) also waits out the
+   * settle period after a stream's first audio; work a user asked for (an install) does not.
    */
-  runInBackground<T>(fn: () => Promise<T>): Promise<T> {
-    return this.#background.run(async () => {
-      await this.#waitForQuiet();
-      return fn();
-    });
+  runInBackground<T>(fn: () => Promise<T>, opts: { automatic?: boolean } = {}): Promise<T> {
+    return this.#queue(fn, { automatic: opts.automatic ?? false });
   }
 
-  /** A stream is starting: background checks wait `ms` so they don't compete with its start-up. */
+  /**
+   * A stream is starting: background work waits `ms` so it doesn't compete with its start-up, and
+   * background checks running now that nobody is waiting for stop at once. They record nothing and
+   * run again later (a full re-check queues its own again; the station's next refresh queues others).
+   */
   holdBackground(ms: number): void {
     this.#holdUntil = Math.max(this.#holdUntil, Date.now() + ms);
+    for (const [host, running] of this.#backgroundByHost) {
+      this.#backgroundByHost.delete(host);
+      running.abort.abort(STREAM_START);
+      this.#log.debug({ host, interrupted: running.sourceId }, 'background check gave way to a stream start');
+    }
   }
 
-  async #waitForQuiet(signal?: AbortSignal): Promise<void> {
+  /**
+   * A stream has just started playing: automatic background work waits `ms` more, so nothing
+   * competes with it while the listener's client is still settling (interface: SessionTimings
+   * `backgroundSettleMs`). A shorter call never cuts a longer wait short.
+   */
+  settleBackground(ms: number): void {
+    this.#settleUntil = Math.max(this.#settleUntil, Date.now() + ms);
+  }
+
+  /**
+   * The one-at-a-time background queue. Automatic work waits out the settle period before taking
+   * its turn, and gives its turn up again if a stream started meanwhile, so work a user asked for
+   * never waits behind it for more than the hold.
+   */
+  async #queue<T>(fn: () => Promise<T>, opts: { automatic: boolean; signal?: AbortSignal }): Promise<T> {
+    for (;;) {
+      // Checked before awaiting, so that without a settle period the queue keeps its order.
+      if (opts.automatic && this.#settleUntil > Date.now()) await this.#settled(opts.signal);
+      const release = await this.#background.acquire(opts.signal);
+      try {
+        await this.#waitForHold(opts.signal);
+        if (opts.automatic && this.#settleUntil > Date.now()) continue;
+        return await fn();
+      } finally {
+        release();
+      }
+    }
+  }
+
+  async #waitForHold(signal?: AbortSignal): Promise<void> {
     for (let wait = this.#holdUntil - Date.now(); wait > 0; wait = this.#holdUntil - Date.now()) {
       try {
         await delay(wait, undefined, signal ? { signal } : undefined);
@@ -618,27 +729,57 @@ export class SourceService {
     }
   }
 
+  /** Waits out the settle period, on one shared timer (unreferenced: it never delays an exit). */
+  async #settled(signal?: AbortSignal): Promise<void> {
+    while (this.#settleUntil > Date.now()) {
+      let gate = this.#settleGate;
+      if (!gate || gate.until !== this.#settleUntil) {
+        const until = this.#settleUntil;
+        gate = { until, done: delay(until - Date.now(), undefined, { ref: false }) };
+        this.#settleGate = gate;
+      }
+      try {
+        await (signal ? raceSignal(gate.done, signal) : gate.done);
+      } catch {
+        throw new RadioError('CANCELLED', 'The background check was stopped.');
+      }
+      // The timer can fire a moment early by the wall clock: the next waiter then makes a new one.
+      if (this.#settleGate === gate) this.#settleGate = null;
+    }
+  }
+
   /**
    * One check for "Check all sources again": queued with the other background checks (one at a
    * time, at the lowest CPU priority, and waiting while any stream is starting), then run whatever
    * the source's back-off, hold or pause says. A source that passes can be used at once; one that
    * fails is recorded as usual, so its back-off and pause carry on. `want` is asked when its turn
    * comes, so a source switched off or removed meanwhile is skipped (null). A play's check of the
-   * same host interrupts it (CANCELLED, nothing recorded), as it does any background check.
+   * same host interrupts it (CANCELLED, nothing recorded), as it does any background check. It is
+   * automatic work, so it also waits out the settle period after a stream's first audio; a stream
+   * starting while it runs interrupts it, and it then simply queues again (that is no give-way).
+   * Stopping `signal` ends the wait at once; a play that joined the check still gets its result.
    */
-  checkInBackground(
+  async checkInBackground(
     sourceId: string,
     signal: AbortSignal,
     want: (source: StationSource) => boolean,
   ): Promise<{ before: StationSource; report: ProbeReport } | null> {
-    return this.#background.run(async () => {
-      await this.#waitForQuiet(signal);
-      if (signal.aborted) throw new RadioError('CANCELLED', 'The background check was stopped.');
-      const s = this.#d.stations.getSource(sourceId);
-      if (!s || !this.checkable(s) || !want(s)) return null;
-      const report = await this.#probeInBackground(sourceId, signal);
-      return { before: s, report };
-    }, signal);
+    for (;;) {
+      try {
+        return await this.#queue(
+          async () => {
+            if (signal.aborted) throw new RadioError('CANCELLED', 'The background check was stopped.');
+            const s = this.#d.stations.getSource(sourceId);
+            if (!s || !this.checkable(s) || !want(s)) return null;
+            const report = await this.#probeInBackground(sourceId, signal);
+            return { before: s, report };
+          },
+          { automatic: true, signal },
+        );
+      } catch (err) {
+        if (!(err instanceof GaveWayToStart) || signal.aborted) throw err;
+      }
+    }
   }
 
   /**
@@ -765,39 +906,88 @@ export class SourceService {
 
   // ---- availability ----
 
-  availability(station: Station): StationAvailability {
-    if (station.catalogueStatus === 'retired') return 'retired';
-    const sources = this.sourcesFor(station.id).filter((s) => s.enabled);
-    if (sources.length === 0) return this.isStationDisabled(station.id) ? 'unavailable' : 'no_source';
-    const now = Date.now();
-    const eligible = sources.filter((s) => checkEligibility(s, now).eligible);
-    if (eligible.length > 0) {
-      const best = Math.max(...eligible.map((s) => s.healthScore));
-      return best < 30 || eligible.every((s) => s.verificationState === 'degraded')
-        ? 'degraded'
-        : 'available';
-    }
-    if (
-      sources.some((s) => s.lastProbeAt === null || (s.identityStatus === 'unverified' && s.codec !== null))
-    ) {
-      return 'unverified';
-    }
-    return 'unavailable';
+  /** Whether a source is switched on, by its pack and by the bot owner (the station aside). */
+  #sourceOn(s: StationSource): boolean {
+    return s.enabled && !this.#d.disabledSourceIds?.has(s.id);
   }
 
-  coverage(stations: Station[]): CoverageCounts {
-    const now = Date.now();
+  /**
+   * How a station stands for listing it. Browse and lists ask this for every station they show,
+   * so it reads the cached sources as they are, with no copies and no reason strings.
+   */
+  availability(station: Station, now = Date.now()): StationAvailability {
+    if (station.catalogueStatus === 'retired') return 'retired';
+    const stationOff = this.isStationDisabled(station.id);
+    let enabled = 0;
+    let eligible = 0;
+    let best = Number.NEGATIVE_INFINITY;
+    let allDegraded = true;
+    let unverified = false;
+    if (!stationOff) {
+      for (const s of this.#d.stations.listSources(station.id)) {
+        if (!this.#sourceOn(s)) continue;
+        enabled++;
+        if (isEligibleNow(s, now)) {
+          eligible++;
+          if (s.healthScore > best) best = s.healthScore;
+          if (s.verificationState !== 'degraded') allDegraded = false;
+        }
+        if (s.lastProbeAt === null || (s.identityStatus === 'unverified' && s.codec !== null))
+          unverified = true;
+      }
+    }
+    if (enabled === 0) return stationOff ? 'unavailable' : 'no_source';
+    if (eligible > 0) return best < 30 || allDegraded ? 'degraded' : 'available';
+    return unverified ? 'unverified' : 'unavailable';
+  }
+
+  coverage(stations: readonly Station[], now = Date.now()): CoverageCounts {
     let withSources = 0;
     let usable = 0;
     let verifiedPlayable = 0;
     for (const st of stations) {
-      const sources = this.sourcesFor(st.id).filter((s) => s.enabled);
-      if (sources.length > 0) withSources++;
-      if (sources.some((s) => s.codec !== null && s.lastSuccessAt !== null)) usable++;
-      if (sources.some((s) => checkEligibility(s, now).eligible)) verifiedPlayable++;
+      if (this.isStationDisabled(st.id)) continue;
+      let any = false;
+      let working = false;
+      let eligible = false;
+      for (const s of this.#d.stations.listSources(st.id)) {
+        if (!this.#sourceOn(s)) continue;
+        any = true;
+        if (!working && s.codec !== null && s.lastSuccessAt !== null) working = true;
+        if (!eligible && isEligibleNow(s, now)) eligible = true;
+        if (working && eligible) break;
+      }
+      if (any) withSources++;
+      if (working) usable++;
+      if (eligible) verifiedPlayable++;
     }
     return { catalogued: stations.length, withSources, usable, verifiedPlayable };
   }
+
+  /**
+   * `coverage()` of every station of a pack that isn't retired (what browse and `/radio stats`
+   * list for it), cached: the same answer until a station or source changes, the bot owner's
+   * switches change, or a minute has passed (holds end with time). Not for custom stations.
+   */
+  coverageByProvider(provider: string, now = Date.now()): CoverageCounts {
+    const key = `${this.#d.stations.changeCount}/${this.#d.disabledSourceIds?.size ?? 0}/${this.#d.disabledStationIds?.size ?? 0}`;
+    const hit = this.#coverage.get(provider);
+    if (hit && hit.key === key && now >= hit.at && now - hit.at < COVERAGE_MAX_AGE_MS)
+      return { ...hit.counts };
+    const stations = this.#d.stations
+      .listProviderStations(provider)
+      .filter((st) => st.catalogueStatus !== 'retired');
+    const counts = this.coverage(stations, now);
+    this.#coverage.set(provider, { key, at: now, counts });
+    return { ...counts };
+  }
+}
+
+/** Why a check was interrupted, as the error its callers see (CANCELLED either way). */
+function interrupted(signal: AbortSignal): RadioError {
+  if (signal.reason === STREAM_START) return new GaveWayToStart();
+  if (signal.reason === STOPPED) return new RadioError('CANCELLED', 'The background check was stopped.');
+  return new RadioError('CANCELLED', 'The background check gave way to playback.');
 }
 
 function latestCorrelation(evidence: IdentityEvidence[]): IdentityEvidence | null {

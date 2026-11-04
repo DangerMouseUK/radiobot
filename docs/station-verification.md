@@ -176,12 +176,12 @@ While a station plays, anyone who can control the radio can switch it to another
 When someone plays a station (`prepareForPlayback`):
 
 - **If an eligible source exists, it plays straight away.** The station's other sources that are due a check (last checked more than 24 h ago, or failing and past their wait) are then checked in the background:
-  - only once the stream has played steadily for 30 s, and again about once a minute while it plays. That is how a source that failed earlier shows that it works again, so the bot can move back to it;
+  - only once the stream has played for 3 minutes, and again about once a minute while it plays. That is how a source that failed earlier shows that it works again, so the bot can move back to it. Discord's client is still settling its own buffer in a stream's first minutes, when a late packet is most audible, so no check of this kind starts sooner;
   - never the source that is playing: its steady playback is better evidence than a check, and 30 s of it clears a failed check.
 
   Background checks run one at a time, at the lowest CPU priority, so a live stream is never disturbed:
   - a source is queued once, and skipped if it was checked in the meantime;
-  - no background check starts while any stream on the installation is in its first 30 s;
+  - no background check starts while any stream on the installation is in its first 3 minutes, and a stream starting stops any background check nobody else is waiting for (it records nothing and runs again later);
   - a check someone is waiting for interrupts a background check on the same stream host; the interrupted check records nothing and runs again later.
 - **If none is eligible,** sources are checked while the person waits, one after another: the admin's preferred source first, then direct streams before others, then by `priority`. This stops as soon as one becomes eligible. Failing sources are checked again even if their wait isn't over, because nothing else can play, but no more than every 10 min within a day of last working, and hourly after that. Paused sources are skipped.
 
@@ -272,7 +272,7 @@ The script doesn't read the installed-packs folder by itself, so name an install
 
 ## Catalogue sync
 
-`CatalogueSync` (`src/catalogue/sync.ts`) keeps each **enabled pack that declares `sync`** in its `pack.json` in line with that pack's official station list. Each pack has its own schedule: once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, 6 to 720) plus a random delay of up to 15 minutes. A pack that has never synced is first synced about 10 minutes after the bot starts. A scheduled sync follows the rules for background work: it runs one at a time with the background source checks and waits while any stream is in its first 30 s. `CATALOG_SYNC_ENABLED=false` turns the schedule off. Admins can also run `/radio packs sync [pack]` (formerly `/radio sync`), which starts at once (after any sync already running). The list is read by the adapter the pack names, from `src/catalogue/sync-adapters.ts`:
+`CatalogueSync` (`src/catalogue/sync.ts`) keeps each **enabled pack that declares `sync`** in its `pack.json` in line with that pack's official station list. Each pack has its own schedule: once every `CATALOG_SYNC_INTERVAL_HOURS` (24 by default, 6 to 720) plus a random delay of up to 15 minutes. A pack that has never synced is first synced about 10 minutes after the bot starts. A scheduled sync follows the rules for background work: it runs one at a time with the background source checks and waits while any stream is in its first 3 minutes. `CATALOG_SYNC_ENABLED=false` turns the schedule off. Admins can also run `/radio packs sync [pack]` (formerly `/radio sync`), which starts at once (after any sync already running). The list is read by the adapter the pack names, from `src/catalogue/sync-adapters.ts`:
 
 - `webradio-apidata` reads a list of web radios embedded in a station website's page (a `webradios[]` array in the page's `var apidata` JSON);
 - `json-name-list` reads a plain JSON list of `{ id, name }`.

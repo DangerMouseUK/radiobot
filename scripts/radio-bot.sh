@@ -139,9 +139,10 @@ container_state() { # running | restarting | exited | missing
 # Runs a command in the bot's container at the lowest CPU priority and, where the image has ionice
 # (Debian's util-linux, which it does), the idle disk priority, so it can't hold up the stream.
 # ionice -t still runs the command if the host won't set the disk priority.
-# Input comes from /dev/null, here and in the other `compose exec` and `compose run` calls: none of them
-# needs any, and Compose reading the terminal could get it stopped by the kernel for good (sudo runs it
-# in a terminal of its own, which isn't always in front yet), hanging the command.
+# Input comes from /dev/null, here and in the other `compose exec` and `compose run` calls (restore's
+# comes from the backup file), never from the terminal: Compose reading the terminal could get it stopped
+# by the kernel for good (sudo runs it in a terminal of its own, which isn't always in front yet),
+# hanging the command.
 exec_low() {
   # shellcheck disable=SC2016 # "$@" is expanded by the container's shell
   compose exec -T "$SERVICE" sh -c \
@@ -290,14 +291,17 @@ healthy_since() {
   ' "$1" >/dev/null 2>&1
 }
 
-# Waits for the first healthy heartbeat, or explains why the bot stopped.
+# Waits for the first healthy heartbeat, or explains why the bot stopped. The wait is measured by the
+# clock, not by counting checks: each check runs a command in the container, which takes a second or
+# more on a one-core host. RADIO_BOT_START_WAIT (seconds) is for the lifecycle test.
 wait_until_healthy() {
   step "Waiting for Radio Bot to connect to Discord"
-  local _ started restarts
+  local started restarts state limit=${RADIO_BOT_START_WAIT:-90} end
+  case "$limit" in '' | *[!0-9]*) limit=90 ;; esac
+  end=$((SECONDS + limit))
   started=$("${DOCKER[@]}" inspect -f '{{.State.StartedAt}}' "$SERVICE" 2>/dev/null || echo '')
   restarts=$("${DOCKER[@]}" inspect -f '{{.RestartCount}}' "$SERVICE" 2>/dev/null || echo 0)
-  for _ in $(seq 1 45); do
-    local state
+  while :; do
     state=$(container_state)
     # A crash during start-up shows up as a restart, since Compose restarts the container.
     [ "$("${DOCKER[@]}" inspect -f '{{.RestartCount}}' "$SERVICE" 2>/dev/null || echo 0)" = "$restarts" ] ||
@@ -320,9 +324,10 @@ wait_until_healthy() {
         return 1
         ;;
     esac
+    [ "$SECONDS" -lt "$end" ] || break
     sleep 2
   done
-  warn "Radio Bot still isn't ready after 90 seconds. To see why, run: radio-bot logs"
+  warn "Radio Bot still isn't ready after $limit seconds. To see why, run: radio-bot logs"
   return 1
 }
 
@@ -557,9 +562,11 @@ cmd_backup() {
 cmd_packs() {
   ensure_docker
   [ $# -gt 0 ] || set -- list
-  local sub=$1 state status=0
-  # add and update exit 3 when every pack was already up to date: then there's nothing to load.
-  case "$sub" in add | update) set -- "$@" --unchanged-status ;; esac
+  local sub=$1 state status=0 changed=''
+  # With --unchanged-status, add, update and remove exit 0 when they changed something, 3 when there was
+  # nothing to change (every pack already up to date), 4 when they changed some packs but failed for
+  # others, and anything else when they failed and changed nothing. Only a change is worth loading.
+  case "$sub" in add | update | remove) set -- "$@" --unchanged-status ;; esac
   state=$(container_state)
   if [ "$state" = running ]; then
     exec_low node dist/scripts/packs.js "$@" || status=$?
@@ -568,8 +575,13 @@ cmd_packs() {
   fi
   case "$sub" in
     add | update | remove)
-      if [ "$status" = 3 ]; then
-        status=0
+      case "$status" in
+        0) changed=1 ;;
+        3) status=0 ;;
+        4) changed=1 status=1 ;;
+      esac
+      if [ -z "$changed" ]; then
+        :
       elif [ "$state" = running ]; then
         if compose kill -s HUP "$SERVICE" >/dev/null 2>&1; then
           ok "Radio Bot is loading the change now. Nothing that is playing is interrupted."
@@ -604,11 +616,15 @@ offer_packs() {
     warn "Couldn't reach the pack library just now. Try later with: radio-bot packs browse"
     return 0
   }
-  local wanted=''
+  local wanted='' packs
   ask wanted "Packs to add, separated by spaces (press Enter to skip):" ''
-  # Word splitting is wanted here: one argument per pack name.
-  # shellcheck disable=SC2086
-  [ -z "$wanted" ] || cmd_packs add $wanted || true
+  # Word splitting is wanted here (one argument per pack name), but not globbing: a * typed by
+  # mistake must not turn into the names of the files in this folder.
+  set -f
+  # shellcheck disable=SC2206
+  packs=($wanted)
+  set +f
+  [ -z "${packs[*]:-}" ] || cmd_packs add "${packs[@]}" || true
 }
 
 # Every SQLite database starts with these 16 bytes: "SQLite format 3" and a NUL.
@@ -657,12 +673,14 @@ cmd_restore() {
   trap 'restore_failed "Restoring was interrupted." interrupted' INT TERM
   compose stop "$SERVICE" >/dev/null || restore_failed "Couldn't stop Radio Bot."
   # Copied next to the database first, then swapped in, so a failed copy leaves the current data alone.
+  # The file is streamed in rather than mounted: a mounted backup (private to its owner) can't be read by
+  # the container's user unless their user IDs happen to match.
   # shellcheck disable=SC2016 # $d is expanded by the container's shell
-  compose run --rm --no-deps -T -v "$file:/restore.sqlite:ro" --entrypoint sh "$SERVICE" -c '
+  compose run --rm --no-deps -T --entrypoint sh "$SERVICE" -c '
     d=/app/data/radio-bot.sqlite
-    cp /restore.sqlite "$d.restoring" && rm -f "$d-wal" "$d-shm" && mv -f "$d.restoring" "$d" ||
+    cat >"$d.restoring" && rm -f "$d-wal" "$d-shm" && mv -f "$d.restoring" "$d" ||
       { rm -f "$d.restoring"; exit 1; }
-  ' </dev/null || restore_failed "Couldn't copy the backup into the bot's data."
+  ' <"$file" || restore_failed "Couldn't copy the backup into the bot's data."
   trap - INT TERM
   compose up -d || die "Couldn't start Radio Bot again. Try: radio-bot start"
   wait_until_healthy || exit 1
@@ -697,6 +715,8 @@ cmd_status() {
     exec_low node dist/scripts/healthcheck.js || true
   fi
   local latest
+  # New releases are tags on GitHub; without fetching them, a new one would hardly ever show here.
+  GIT_TERMINAL_PROMPT=0 git fetch --quiet --tags origin 2>/dev/null </dev/null || true
   latest=$(latest_release)
   if update_pending; then
     say "Update:   the last update to $(current_version) didn't finish (run: radio-bot update)"
@@ -706,15 +726,17 @@ cmd_status() {
 }
 
 cmd_uninstall() {
+  # Checked before anything is asked or changed: this folder is deleted at the end.
+  case "$DIR" in / | "$HOME" | "") die "Refusing to delete $DIR." ;; esac
   ensure_docker
   say "${BOLD}This removes Radio Bot from this computer.${RESET}"
   confirm "Continue?" n || die "Cancelled."
-  local keep=''
+  local keep='' unsaved="Couldn't save a copy of the bot's data, so nothing was removed."
   if [ "$(container_state)" = running ] && confirm "Save a copy of the bot's data to your home folder first?" y; then
-    exec_low node dist/scripts/backup.js >/dev/null
+    exec_low node dist/scripts/backup.js >/dev/null || die "$unsaved The lines above say why."
     keep="$HOME/radio-bot-backup-$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$keep"
-    compose cp "$SERVICE:/app/data/backups/." "$keep/" >/dev/null
+    mkdir -p "$keep" || die "$unsaved"
+    compose cp "$SERVICE:/app/data/backups/." "$keep/" >/dev/null || die "$unsaved"
     own_copies "$keep"
     ok "Saved to $keep"
   elif [ "$(container_state)" != running ]; then
@@ -723,8 +745,8 @@ cmd_uninstall() {
   # Backups made with `radio-bot backup` live inside the folder that is about to be deleted.
   if [ -n "$(ls -A backups 2>/dev/null)" ]; then
     keep=${keep:-"$HOME/radio-bot-backup-$(date +%Y%m%d-%H%M%S)"}
-    mkdir -p "$keep/earlier-backups"
-    cp -R backups/. "$keep/earlier-backups/"
+    { mkdir -p "$keep/earlier-backups" && cp -R backups/. "$keep/earlier-backups/"; } ||
+      die "Couldn't copy your earlier backups out of $DIR/backups, so nothing was removed."
     own_copies "$keep"
     ok "Moved your earlier backups to $keep/earlier-backups"
   fi
@@ -739,7 +761,6 @@ cmd_uninstall() {
   compose "${down[@]}"
   remove_shortcut
   step "Deleting $DIR"
-  case "$DIR" in / | "$HOME" | "") die "Refusing to delete $DIR." ;; esac
   cd /
   rm -rf "$DIR"
   ok "Radio Bot is uninstalled."

@@ -21,6 +21,7 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
   /** Audio the player has sent, ms; a lagging player reports less than has arrived. */
   sentMs = () => 0;
   packets = () => null as number | null;
+  silence = () => null as number | null;
   readonly channelId: string;
   constructor(channelId: string) {
     super();
@@ -46,7 +47,8 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
       wsPingMs: 20,
       endpoint: null,
       packetsPlayed: this.packets(),
-      packetTiming: { late: 0, worstGapMs: null },
+      packetTiming: { late: 0, worstGapMs: null, recent: [] },
+      silenceMs: this.silence(),
       encryptionMode: null,
       status: 'ready',
     };
@@ -450,5 +452,71 @@ describe('GuildSession: watchdog', () => {
     expect(t.session.liveStats().voice?.packetsPerSecond).toBeNull(); // not enough samples yet
     await vi.advanceTimersByTimeAsync(3_000);
     expect(t.session.liveStats().voice?.packetsPerSecond).toBe(50);
+  });
+
+  it('starts the packet rate again after a voice reconnect, never showing a wrong one', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const t = setup({ timings: { watchdogIntervalMs: 1_000 } });
+    const playing = t.session.play('mypack:my-station', 'voice-1', 'u1');
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await playing).ok).toBe(true);
+    const link = t.links[0]!;
+    let since = Date.now();
+    link.sentMs = () => Date.now() - since;
+    link.packets = () => 100_000 + Math.floor((Date.now() - since) / 20);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(t.session.liveStats().voice?.packetsPerSecond).toBe(50);
+    // A new voice connection counts its packets from zero.
+    since = Date.now();
+    link.packets = () => Math.floor((Date.now() - since) / 20);
+    link.emit('reconnected');
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(t.session.liveStats().voice?.packetsPerSecond).toBeNull();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(t.session.liveStats().voice?.packetsPerSecond).toBe(50);
+  });
+
+  it('never shows a rate across a packet counter that went down, even without a reconnect event', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const t = setup({ timings: { watchdogIntervalMs: 1_000 } });
+    const playing = t.session.play('mypack:my-station', 'voice-1', 'u1');
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await playing).ok).toBe(true);
+    const link = t.links[0]!;
+    let since = Date.now();
+    link.packets = () => 100_000 + Math.floor((Date.now() - since) / 20);
+    await vi.advanceTimersByTimeAsync(30_000);
+    since = Date.now();
+    link.packets = () => Math.floor((Date.now() - since) / 20);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(t.session.liveStats().voice?.packetsPerSecond).toBeNull();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(t.session.liveStats().voice?.packetsPerSecond).toBe(50);
+  });
+
+  it('reports the silence the voice player filled in, over the last minute of this stream', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const t = setup({ timings: { watchdogIntervalMs: 1_000 } });
+    const playing = t.session.play('mypack:my-station', 'voice-1', 'u1');
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await playing).ok).toBe(true);
+    const link = t.links[0]!;
+    const since = Date.now();
+    link.sentMs = () => Date.now() - since;
+    link.packets = () => 1;
+    expect(t.session.liveStats().voice).toMatchObject({ silenceMs: null, recentSilenceMs: null });
+    let silence = 500;
+    link.silence = () => silence;
+    await vi.advanceTimersByTimeAsync(2_000);
+    silence = 740;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(t.session.liveStats().voice).toMatchObject({ silenceMs: 740, recentSilenceMs: 240 });
+    // A minute later the old samples have gone: only what was filled in since counts.
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(t.session.liveStats().voice?.recentSilenceMs).toBe(0);
+    // Not playing: no figure.
+    link.silence = () => null;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(t.session.liveStats().voice).toMatchObject({ silenceMs: null, recentSilenceMs: null });
   });
 });

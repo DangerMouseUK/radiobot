@@ -106,6 +106,14 @@ export const SYNC_ADAPTERS: Record<string, SyncAdapter> = {
   'json-name-list': parseJsonNameList,
 };
 
+/**
+ * Whether `name` is one of the adapters above. Only their own keys count: a name such as
+ * `constructor` or `toString` is found on every object, but it isn't an adapter.
+ */
+export function isSyncAdapter(name: string): boolean {
+  return Object.hasOwn(SYNC_ADAPTERS, name);
+}
+
 export interface ParseRequest {
   adapter: string;
   bytes: Uint8Array;
@@ -121,7 +129,7 @@ export type ParseReply = { ok: true; entries: OfficialEntry[] } | { ok: false; e
  */
 export function parseOfficialList(req: ParseRequest): ParseReply {
   try {
-    const adapter = SYNC_ADAPTERS[req.adapter];
+    const adapter = isSyncAdapter(req.adapter) ? SYNC_ADAPTERS[req.adapter] : undefined;
     if (!adapter) throw new Error(`Unknown sync adapter "${req.adapter}".`);
     const text = Buffer.from(req.bytes.buffer, req.bytes.byteOffset, req.bytes.byteLength).toString('utf8');
     const entries = adapter(text).slice(0, req.maxEntries + 1);

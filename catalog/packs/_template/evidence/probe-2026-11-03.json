@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-11-03T10:00:00.000Z",
-  "note": "Example only: the shape that `node scripts/validate-catalogue.ts --probe --json <file>` writes. These figures are made up.",
+  "note": "Example only: the shape that `node scripts/validate-catalogue.ts --pack <pack-dir> --probe --pack-id <pack-id> --json <pack-dir>/evidence/probe-YYYY-MM-DD.json` writes. These figures are made up.",
   "probes": [
     {
       "stationId": "template:example-hits",

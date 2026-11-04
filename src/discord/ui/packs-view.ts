@@ -306,7 +306,8 @@ export function packCardView(
       new ButtonBuilder()
         .setCustomId(ctx.ids.make(guildId, 'pkinst', id))
         .setLabel(loaded ? `Update to ${entry.version}` : 'Install')
-        .setStyle(ButtonStyle.Success),
+        // The recommended next step, so blurple; green means "on" only, and never sits by a red Remove.
+        .setStyle(ButtonStyle.Primary),
     );
   }
   if (loaded?.origin === 'installed') {

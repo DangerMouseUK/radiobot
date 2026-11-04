@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { RadioError } from '../shared/errors.ts';
 import { compareText } from '../shared/text.ts';
 import { compareVersions } from '../shared/version.ts';
+import { ownBuffer } from '../shared/workers.ts';
 import type { SafeHttpClient } from '../streams/safe-fetch.ts';
 import {
   PACK_ID,
@@ -162,20 +163,33 @@ export interface CheckedBundle {
 /**
  * What installing a checked bundle needs: the files to write, and the pack's details and source
  * IDs for the clash check. The worker that checks a bundle sends back just this, because copying
- * every station and source of a big pack to the main thread holds it up for over 10 ms.
+ * every station and source of a big pack to the main thread holds it up for over 10 ms. The files
+ * come as UTF-8 bytes, each in a buffer of its own, so they are handed over rather than copied
+ * (see `installableTransfer`): megabytes of text would otherwise be copied on the main thread.
  */
 export interface InstallableBundle {
   pack: { meta: CheckedBundle['pack']['meta']; sources: ReadonlyArray<{ id: string }> };
-  files: CheckedBundle['files'];
+  files: { 'pack.json': Uint8Array; 'stations.json': Uint8Array; 'sources.json': Uint8Array | null };
   sha256: string;
 }
 
 export function installable(checked: CheckedBundle): InstallableBundle {
+  const encoder = new TextEncoder();
+  const f = checked.files;
   return {
     pack: { meta: checked.pack.meta, sources: checked.pack.sources.map((s) => ({ id: s.id })) },
-    files: checked.files,
+    files: {
+      'pack.json': encoder.encode(f['pack.json']),
+      'stations.json': encoder.encode(f['stations.json']),
+      'sources.json': f['sources.json'] === null ? null : encoder.encode(f['sources.json']),
+    },
     sha256: checked.sha256,
   };
+}
+
+/** The buffers of an installable bundle's files, for a worker's transfer list. */
+export function installableTransfer(bundle: InstallableBundle): ArrayBuffer[] {
+  return Object.values(bundle.files).flatMap((bytes) => (bytes ? ownBuffer(bytes) : []));
 }
 
 /**

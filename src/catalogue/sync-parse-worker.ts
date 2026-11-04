@@ -4,6 +4,8 @@
  * packets; only the short list of names and IDs comes back.
  */
 import { parentPort, workerData } from 'node:worker_threads';
+import { lowerThreadPriority } from '../shared/lower-thread-priority.ts';
 import { type ParseRequest, parseOfficialList } from './sync-adapters.ts';
 
+lowerThreadPriority();
 parentPort!.postMessage(parseOfficialList(workerData as ParseRequest));

@@ -49,8 +49,8 @@ vi.mock('discord.js', async (orig) => {
       mocks.tokens.push(token);
       return this;
     }
-    get(route: string) {
-      return mocks.restGet(route);
+    get(route: string, options?: unknown) {
+      return mocks.restGet(route, options);
     }
     put(route: string, body: unknown) {
       return mocks.restPut(route, body);
@@ -233,9 +233,9 @@ describe('validate-catalogue (in process)', () => {
     expect(r.out).toMatch(/^Pack "template" /m);
   });
 
-  it('validates the bundled packs and the template without EXTRA_PACKS_DIR, even when --pack has no value', async () => {
+  it('validates the bundled packs and the template without EXTRA_PACKS_DIR', async () => {
     vi.stubEnv('EXTRA_PACKS_DIR', '');
-    const r = await runScript('validate-catalogue.ts', ['--pack']);
+    const r = await runScript('validate-catalogue.ts');
     expect(r.code).toBe(0);
     expect(r.err).toBe('');
     // One line per built-in pack (there may be none) plus the template, each reported as OK.
@@ -243,6 +243,62 @@ describe('validate-catalogue (in process)', () => {
     expect(lines).toHaveLength(discoverPackDirs(BUILTIN_PACKS_DIR()).length + 1);
     for (const l of lines) expect(l).toMatch(/^Pack "[a-z0-9-]+" \(.+\) OK: \d+ stations/);
     expect(r.out).not.toContain('mypack');
+  });
+
+  it('exits 2, checking nothing, for a mistyped option or one without its value', async () => {
+    const dir = writePack(tempDir());
+    const typo = await runScript('validate-catalogue.ts', ['--pack', dir, '--stict']);
+    expect(typo).toEqual({ code: 2, out: '', err: 'Unknown option --stict.\n' });
+    const bare = await runScript('validate-catalogue.ts', ['--pack']);
+    expect(bare).toEqual({ code: 2, out: '', err: '--pack needs a value.\n' });
+    const swallowed = await runScript('validate-catalogue.ts', ['--pack', '--strict']);
+    expect(swallowed.err).toBe('--pack needs a value.\n');
+    const stray = await runScript('validate-catalogue.ts', ['--pack', dir, 'Station One']);
+    expect(stray.code).toBe(2);
+    expect(stray.err).toMatch(/"Station One" isn't a station ID/);
+    const noProbe = await runScript('validate-catalogue.ts', ['--pack', dir, '--json', join(dir, 'x.json')]);
+    expect(noProbe).toEqual({
+      code: 2,
+      out: '',
+      err: '--json writes the probe report, so it needs --probe.\n',
+    });
+  });
+
+  it('reports an EXTRA_PACKS_DIR pack that uses the template’s ID', async () => {
+    const extra = tempDir();
+    writePack(extra, 'template');
+    vi.stubEnv('EXTRA_PACKS_DIR', extra);
+    const r = await runScript('validate-catalogue.ts');
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/^Invalid pack: Two packs use the id "template"/);
+  });
+
+  it('exits 2 before looking for FFmpeg when nothing enabled matches, or the report has nowhere to go', async () => {
+    const root = tempDir();
+    const dir = writePack(root);
+    const none = await runScript('validate-catalogue.ts', ['--pack', dir, '--probe', 'mypack:three']);
+    expect(none.code).toBe(2);
+    expect(none.err).toMatch(/^No enabled sources match mypack:three\./);
+    const wrongPack = await runScript('validate-catalogue.ts', [
+      '--pack',
+      dir,
+      '--probe',
+      '--pack-id',
+      'other',
+    ]);
+    expect(wrongPack.err).toMatch(/^No enabled sources match --pack-id other\./);
+    const lost = await runScript('validate-catalogue.ts', [
+      '--pack',
+      dir,
+      '--probe',
+      'mypack:one',
+      '--json',
+      join(root, 'missing', 'probe.json'),
+    ]);
+    expect(lost.code).toBe(2);
+    expect(lost.err).toMatch(/The folder for --json \(.*missing\) doesn't exist/);
+    expect(mocks.checkFfmpeg).not.toHaveBeenCalled();
+    expect(mocks.probe).not.toHaveBeenCalled();
   });
 
   it('exits 1 with the reason when a pack folder is invalid or missing', async () => {
@@ -572,13 +628,22 @@ describe('register-commands (in process, Discord replaced by a recorder)', () =>
     for (const [k, v] of Object.entries(extra)) vi.stubEnv(k, v);
   };
 
-  it('registers in the guilds named on the command line, ignoring other arguments', async () => {
+  it('refuses an argument that is not a server ID, before contacting Discord', async () => {
+    env();
+    const r = await runScript('register-commands.ts', ['111111111111111111', 'nonsense', '--force']);
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/^Not a server ID: nonsense, --force\./);
+    expect(mocks.restGet).not.toHaveBeenCalled();
+    expect(mocks.restPut).not.toHaveBeenCalled();
+  });
+
+  it('registers in the guilds named on the command line, once each', async () => {
     env();
     mocks.restPut.mockResolvedValue([]);
     const r = await runScript('register-commands.ts', [
       '111111111111111111',
-      'nonsense',
       '222222222222222222',
+      '111111111111111111',
     ]);
     expect(r.code).toBeNull();
     expect(r.out).toBe('Registered /radio in 2 of 2 server(s).\n');
@@ -606,8 +671,37 @@ describe('register-commands (in process, Discord replaced by a recorder)', () =>
       return [];
     });
     const r = await runScript('register-commands.ts');
-    expect(mocks.restGet).toHaveBeenCalledWith('/users/@me/guilds');
+    expect(mocks.restGet).toHaveBeenCalledTimes(1);
+    expect(mocks.restGet.mock.calls[0]![0]).toBe('/users/@me/guilds');
+    expect(String(mocks.restGet.mock.calls[0]![1].query)).toBe('limit=200');
     expect(r.out).toBe('Registered /radio in 1 of 2 server(s).\n');
+    // A server that failed makes the command fail, so a script running it notices.
+    expect(r.code).toBe(1);
+  });
+
+  it('reads every page of the bot’s servers', async () => {
+    env();
+    const id = (n: number) => String(100000000000000000n + BigInt(n));
+    const first = Array.from({ length: 200 }, (_, i) => ({ id: id(i) }));
+    mocks.restGet.mockImplementation(async (_route: string, o: { query: URLSearchParams }) =>
+      o.query.get('after') === id(199) ? [{ id: id(200) }] : first,
+    );
+    mocks.restPut.mockResolvedValue([]);
+    const r = await runScript('register-commands.ts');
+    expect(mocks.restGet).toHaveBeenCalledTimes(2);
+    expect(String(mocks.restGet.mock.calls[1]![1].query)).toBe(`limit=200&after=${id(199)}`);
+    expect(r.out).toBe('Registered /radio in 201 of 201 server(s).\n');
+    expect(r.code).toBeNull();
+  });
+
+  it('stops paging when Discord repeats a page', async () => {
+    env();
+    const page = Array.from({ length: 200 }, (_, i) => ({ id: String(300000000000000000n + BigInt(i)) }));
+    mocks.restGet.mockResolvedValue(page);
+    mocks.restPut.mockResolvedValue([]);
+    const r = await runScript('register-commands.ts');
+    expect(mocks.restGet).toHaveBeenCalledTimes(2);
+    expect(r.out).toBe('Registered /radio in 200 of 200 server(s).\n');
   });
 
   it('stops on invalid configuration before contacting Discord', async () => {

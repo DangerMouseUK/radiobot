@@ -129,6 +129,8 @@ If you don't have a Linux machine to hand, Radio Bot can run inside WSL, the Lin
    bash ~/radio-bot/scripts/radio-bot.sh install
    ```
 
+   Two optional settings for the one-line installer: put `RADIO_BOT_DIR=/some/folder` before `bash` to install somewhere other than `~/radio-bot`, or `RADIO_BOT_VERSION=v1.2.3` to install that release instead of the newest. `RADIO_BOT_VERSION` only counts when the folder doesn't exist yet. For example: `curl -fsSL https://raw.githubusercontent.com/DangerMouseUK/radiobot/main/install.sh | RADIO_BOT_DIR=~/bots/radio bash`.
+
 2. **Only on Linux, if Docker isn't installed yet,** the installer asks `Install Docker now with Docker's official script (get.docker.com)?`. Type `y` and press **Enter**, then type your computer password if asked. If you just press **Enter**, the answer is no, and the installer stops and tells you where to get Docker.
 3. When it asks for the **Application ID**, paste the number you copied in step 1 and press **Enter**.
 4. When it asks for the **bot token**, paste the token and press **Enter**. Nothing appears on screen while you paste it; that's normal, and keeps it private. If either value doesn't look right, the installer says so and asks again.
@@ -203,7 +205,7 @@ Useful next steps:
 - Press **Favourite** under a playing station to add it to this server's favourites. Favourites come first when you type `/radio play`, and **Unfavourite** removes one.
 - The [README's command list](../README.md#commands) explains every command and who can use it.
 - While it plays, the bot's status in the member list says what it's playing, such as "Listening to My Station · Artist - Title". To show only the station, or nothing, change `PRESENCE_MODE` to `station` or `off` (see [Changing settings](#changing-settings)).
-- The voice channel shows it too, under the channel's name, for example "📻 My Station · Artist - Title". This uses the **Set Voice Channel Status** permission. To turn it off for your server, use `/radio config` → **Notifications**.
+- The voice channel shows it too, under the channel's name, for example "📻 My Station · Artist - Title". This uses the **Set Voice Channel Status** permission. To turn it off for your server, use `/radio config` → **Notices**.
 
 ## Looking after your bot
 
@@ -211,7 +213,7 @@ Type these commands in a terminal on the computer where you installed Radio Bot.
 
 | Command | What it does |
 |---|---|
-| `radio-bot status` | Shows the version, whether the bot is running and healthy, and whether an update is available. It also tells you if an update didn't finish |
+| `radio-bot status` | Shows the version, whether the bot is running and healthy, and whether an update is available (it asks GitHub, so it needs the internet for that part). It also tells you if an update didn't finish |
 | `radio-bot logs` | Shows the bot's last 200 log lines, then keeps showing new ones as they happen. Press **Ctrl+C** to stop watching; the bot keeps running |
 | `radio-bot stop` · `radio-bot start` · `radio-bot restart` | Stops, starts or restarts the bot. A restart also applies any changes to the settings file |
 | `radio-bot packs` | Lists the station packs you have installed, and says when one has an update. See [Adding and removing stations](#adding-and-removing-stations) |
@@ -228,7 +230,7 @@ Type these commands in a terminal on the computer where you installed Radio Bot.
 
 `~/radio-bot` means the `radio-bot` folder in your home folder. It holds Radio Bot itself, the settings file (`.env`), and the `backups` and `logs` folders.
 
-**The bot starts by itself** when the computer starts, as long as Docker does. On a Mac or Windows PC, turn on **Start Docker Desktop when you sign in to your computer** in Docker Desktop's settings. If the bot crashes, Docker restarts it.
+**The bot starts by itself** when the computer starts, as long as Docker does, unless you stopped it with `radio-bot stop`; then run `radio-bot start`. On a Mac or Windows PC, turn on **Start Docker Desktop when you sign in to your computer** in Docker Desktop's settings. If the bot crashes, Docker restarts it.
 
 **`radio-bot status`** prints something like this:
 
@@ -315,8 +317,10 @@ If an update goes wrong, you can go back to the version you had before:
 1. Run `radio-bot update` followed by that version, for example:
 
    ```bash
-   radio-bot update v1.0.4
+   radio-bot update v1.2.2
    ```
+
+   Going back to a version before 1.1.0 also gives you that version's older `radio-bot` command, without the later fixes to backups and restores.
 
 2. If you see `Radio Bot is online.`, you're done.
 3. If you see `Radio Bot stopped while starting`, and the lines above it mention `Database has migrations newer than this build`, the newer version had already changed the database, and the older version refuses to open it rather than risk your data. Put back a backup from before the update, as described in [Putting a backup back](#putting-a-backup-back). Choose the newest file whose name starts with `radio-bot-pre-`: the newer version made it just before it changed the database. If there isn't one, choose the newest `radio-bot-manual-…` file from before you updated.
@@ -357,7 +361,7 @@ Run `radio-bot uninstall`. It asks before each step:
 2. If the bot is running, `Save a copy of the bot's data to your home folder first?`: press **Enter** for yes. The copy goes into a `radio-bot-backup-…` folder in your home folder. Backups already in `~/radio-bot/backups` are moved there too.
 3. `Delete the bot's data …? This cannot be undone.`: type `y` to delete it, or press **Enter** to keep it. If you keep it, installing Radio Bot again picks it up.
 
-It then removes the bot, the `radio-bot` command and the `~/radio-bot` folder. To remove the bot from Discord too, kick it from your servers, or delete the application in the Developer Portal.
+If saving the copy fails, it stops with `Couldn't save a copy of the bot's data, so nothing was removed.` and removes nothing. Otherwise it then removes the bot, the `radio-bot` command and the `~/radio-bot` folder. To remove the bot from Discord too, kick it from your servers, or delete the application in the Developer Portal.
 
 ### Using less bandwidth
 

@@ -62,6 +62,8 @@ export class Db {
   #txDepth = 0;
   readonly #statements = new Map<string, StatementSync>();
   #rollbacks = 0;
+  /** For each open transaction level (outermost first): what to call if its work is undone. */
+  readonly #undo: Array<Set<() => void>> = [];
 
   constructor(path: string) {
     this.path = path;
@@ -69,6 +71,10 @@ export class Db {
     this.raw = new DatabaseSync(path);
     this.raw.exec('PRAGMA foreign_keys = ON;');
     this.raw.exec('PRAGMA busy_timeout = 5000;');
+    // An 8 MB page cache (SQLite's default is 2 MB), so reads of a large catalogue's tables stay in
+    // memory, and temporary b-trees (sorts, DISTINCT) in memory rather than in a file.
+    this.raw.exec('PRAGMA cache_size = -8192;');
+    this.raw.exec('PRAGMA temp_store = MEMORY;');
     if (path !== ':memory:') {
       this.raw.exec('PRAGMA journal_mode = WAL;');
       this.raw.exec('PRAGMA synchronous = NORMAL;');
@@ -106,26 +112,37 @@ export class Db {
     return { changes: Number(r.changes), lastInsertRowid: Number(r.lastInsertRowid) };
   }
 
-  /**
-   * Counts rollbacks. A repository that caches what it reads also counts its own writes; a
-   * rollback can undo those writes, so it reads again after one.
-   */
+  /** How many transactions and savepoints have rolled back. */
   get rollbacks(): number {
     return this.#rollbacks;
+  }
+
+  /**
+   * Calls `fn` if the work done so far in the current transaction (or savepoint) is undone: by a
+   * rollback of it or of a transaction around it. Once the outermost transaction commits, `fn` is
+   * forgotten. Outside a transaction it does nothing, since a write that has committed can't be
+   * undone. A repository that caches what it reads registers here when it patches its cache with
+   * rows written inside a transaction (or reads them into it), so a rollback anywhere else never
+   * throws its cache away. Registering the same function again costs nothing.
+   */
+  onRollback(fn: () => void): void {
+    if (this.#txDepth > 0) this.#undo[this.#txDepth - 1]!.add(fn);
   }
 
   /** Runs fn atomically; nested calls use savepoints. */
   transaction<T>(fn: () => T): T {
     const outer = this.#txDepth === 0;
-    const sp = `sp_${this.#txDepth}`;
+    const level = this.#txDepth;
+    const sp = `sp_${level}`;
     this.raw.exec(outer ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${sp}`);
+    this.#undo[level] = new Set();
     this.#txDepth++;
     let result: T;
     try {
       result = fn();
     } catch (err) {
       this.#txDepth--;
-      this.#rollback(outer, sp);
+      this.#rollback(outer, sp, level);
       throw err;
     }
     this.#txDepth--;
@@ -134,21 +151,30 @@ export class Db {
     } catch (err) {
       // A commit can fail (a full disk, an I/O error, a deferred constraint). Undo the rest, so
       // the connection isn't left inside an open transaction that every later write would join.
-      this.#rollback(outer, sp);
+      this.#rollback(outer, sp, level);
       throw err;
     }
+    // A released savepoint's work now belongs to the level around it, and is undone with it.
+    const kept = this.#undo[level]!;
+    this.#undo.length = level;
+    if (!outer) for (const f of kept) this.#undo[level - 1]!.add(f);
     return result;
   }
 
-  #rollback(outer: boolean, sp: string): void {
-    // Counted first: readers that cached rows written inside the transaction must read again
-    // even if SQLite already rolled back by itself and the ROLLBACK below fails.
+  #rollback(outer: boolean, sp: string, level: number): void {
     this.#rollbacks++;
     try {
       this.raw.exec(outer ? 'ROLLBACK' : `ROLLBACK TO ${sp}; RELEASE ${sp}`);
     } catch {
       /* SQLite already rolled the transaction back */
     }
+    // Told even if SQLite had already rolled back by itself and the statement above failed. If
+    // it gave up the whole transaction, the levels around this one lost their work too.
+    const from = this.raw.isTransaction ? level : 0;
+    const undone = new Set<() => void>();
+    for (let i = from; i < this.#undo.length; i++) for (const f of this.#undo[i]!) undone.add(f);
+    this.#undo.length = level;
+    for (const f of undone) f();
   }
 
   /**

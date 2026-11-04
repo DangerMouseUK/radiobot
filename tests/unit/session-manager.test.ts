@@ -145,7 +145,8 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
       wsPingMs: 20,
       endpoint: null,
       packetsPlayed: null,
-      packetTiming: { late: 0, worstGapMs: null },
+      packetTiming: { late: 0, worstGapMs: null, recent: [] },
+      silenceMs: null,
       encryptionMode: null,
       status: 'ready',
     };

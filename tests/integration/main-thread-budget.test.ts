@@ -3,8 +3,9 @@
  * real pipeline and the voice library's packet timer, the heaviest things a listener or a timer
  * can ask for must not hold up the event loop long enough to be heard. Runs /radio stats, browse,
  * source ranking across the whole catalogue, a sync of a large synthetic station list and a live
- * install of a second pack of the largest size from a local pack library and the bot owner's
- * "Check all sources again" over every source, with
+ * install of a second pack of the largest size from a local pack library, an update of it that
+ * drops thousands of sources, /radio list, station suggestions, the hourly clean-up of tens of
+ * thousands of old check results and the bot owner's "Check all sources again" over every source, with
  * a large synthetic pack loaded next to the bundled one, and measures the event-loop delay and the
  * longest stretch of synchronous work (between two turns of the event loop) in each step.
  *
@@ -44,7 +45,7 @@ import { selectSource } from '../../src/streams/ranking.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
 import { silentLogger } from '../helpers.ts';
-import { GUILD, setup, V1 } from '../unit/controller-harness.ts';
+import { GUILD, setup, suggest, V1 } from '../unit/controller-harness.ts';
 import { binaries, generateFixtures, startTestRadio, type TestRadio } from './fixture-server.ts';
 
 /** Longest event-loop stall allowed while the stream plays. A gap of about 55 ms is audible. */
@@ -55,16 +56,23 @@ const RESOLUTION_MS = 5;
 const STATIONS = 2000;
 /** Checks the full source check makes before it is stopped. */
 const FULL_CHECKS = 300;
+/** Old check results the hourly clean-up deletes: as after a whole catalogue was checked a month ago. */
+const AGED_RESULTS = 20_000;
 
 let radio: TestRadio;
 let root: string;
 /** A local pack library serving one index and one bundle: the second big pack. */
 let library: Server;
 let libraryUrl: string;
+/** Which version the library offers: 0, then 1 for the update. */
+let published = 0;
 const registry = new ProcessRegistry();
 
-/** A pack of STATIONS synthetic stations with two sources each and an official list to sync with. */
-function writeBigPack(dir: string, id = 'bigpack'): void {
+/**
+ * A pack of STATIONS synthetic stations with two sources each (only the main one when `mainOnly`,
+ * as in a newer version that drops every backup) and an official list to sync with.
+ */
+function writeBigPack(dir: string, id = 'bigpack', version = '2026.11.03', mainOnly = false): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'pack.json'),
@@ -72,7 +80,7 @@ function writeBigPack(dir: string, id = 'bigpack'): void {
       schemaVersion: 1,
       id,
       name: id === 'bigpack' ? 'Big Pack' : 'Second Big Pack',
-      version: '2026.11.03',
+      version,
       categories: [{ id: 'pop', name: 'Pop' }],
       sync: { adapter: 'json-name-list', url: 'https://lists.example.org/stations.json' },
     }),
@@ -85,7 +93,7 @@ function writeBigPack(dir: string, id = 'bigpack'): void {
   }));
   writeFileSync(join(dir, 'stations.json'), JSON.stringify({ schemaVersion: 1, stations }));
   const sources = stations.flatMap((s) =>
-    ['main', 'backup'].map((label) => ({
+    (mainOnly ? ['main'] : ['main', 'backup']).map((label) => ({
       id: `${id}-${s.slug}-${label}`,
       station: s.slug,
       url: `https://radio.example.org/${id}/${s.slug}/${label}.mp3`,
@@ -115,35 +123,44 @@ beforeAll(async () => {
   radio = await startTestRadio(generateFixtures());
   root = mkdtempSync(join(tmpdir(), 'radiobot-budget-'));
   writeBigPack(join(root, 'bigpack'));
-  const second = join(mkdtempSync(join(tmpdir(), 'radiobot-budget-lib-')), 'bigpack2');
-  writeBigPack(second, 'bigpack2');
-  const read = (name: string) => JSON.parse(readFileSync(join(second, name), 'utf8'));
-  const bundle = Buffer.from(
-    JSON.stringify({
+  /** The library's index and bundle for one version of the second pack. */
+  const publish = (version: string, mainOnly: boolean) => {
+    const second = join(mkdtempSync(join(tmpdir(), 'radiobot-budget-lib-')), 'bigpack2');
+    writeBigPack(second, 'bigpack2', version, mainOnly);
+    const read = (name: string) => JSON.parse(readFileSync(join(second, name), 'utf8'));
+    const bundle = Buffer.from(
+      JSON.stringify({
+        schemaVersion: 1,
+        pack: read('pack.json'),
+        stations: read('stations.json'),
+        sources: read('sources.json'),
+      }),
+    );
+    rmSync(second, { recursive: true, force: true });
+    const file = `bigpack2-${version}.json`;
+    const index = JSON.stringify({
       schemaVersion: 1,
-      pack: read('pack.json'),
-      stations: read('stations.json'),
-      sources: read('sources.json'),
-    }),
-  );
-  rmSync(second, { recursive: true, force: true });
-  const index = JSON.stringify({
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    packs: [
-      {
-        id: 'bigpack2',
-        name: 'Second Big Pack',
-        version: '2026.11.03',
-        stations: STATIONS,
-        sources: STATIONS * 2,
-        file: 'bigpack2.json',
-        sha256: createHash('sha256').update(bundle).digest('hex'),
-        bytes: bundle.length,
-      },
-    ],
-  });
+      generatedAt: new Date().toISOString(),
+      packs: [
+        {
+          id: 'bigpack2',
+          name: 'Second Big Pack',
+          version,
+          stations: STATIONS,
+          sources: mainOnly ? STATIONS : STATIONS * 2,
+          file,
+          sha256: createHash('sha256').update(bundle).digest('hex'),
+          bytes: bundle.length,
+        },
+      ],
+    });
+    return { index, file, bundle };
+  };
+  const versions = [publish('2026.11.03', false), publish('2026.11.04', true)];
   library = createServer((req, res) => {
+    const name = req.url?.slice(1);
+    const index = versions[published]!.index;
+    const bundle = versions.find((v) => v.file === name)?.bundle;
     res
       .writeHead(200, { 'content-type': 'application/json' })
       .end(req.url === '/index.json' ? index : bundle);
@@ -177,6 +194,18 @@ describe('main-thread budget while a stream plays', () => {
           codec: 'mp3',
           measuredBitrateKbps: 128,
         });
+      }
+    });
+    // A month-old check result for every source, twice over, for the hourly clean-up to delete.
+    const aged = new Date(Date.now() - 40 * 86_400_000).toISOString();
+    const sourceIds = t.stations.listAllSources().map((s) => s.id);
+    t.db.transaction(() => {
+      for (let i = 0; i < AGED_RESULTS; i++) {
+        t.db.run(
+          `INSERT INTO source_probe_results (source_id, started_at, duration_ms, kind, success, probe_version)
+           VALUES (?, ?, 10, 'basic', 1, 1)`,
+          [sourceIds[i % sourceIds.length]!, aged],
+        );
       }
     });
     const bundled = all.filter((s) => s.provider !== 'bigpack');
@@ -300,6 +329,15 @@ describe('main-thread budget while a stream plays', () => {
         await time('browse search', () =>
           t.command(t.people.member, { sub: 'browse', strings: { search: 'synthetic 19' } }),
         );
+        await time('list', () => t.command(t.people.member, { sub: 'list' }));
+        // Opening the station option with nothing typed, then the first letter: almost every
+        // station matches one letter.
+        await time('suggest: empty', async () => {
+          expect(await suggest(t, 'play', 'station', '')).toHaveLength(25);
+        });
+        await time('suggest: one letter', async () => {
+          expect(await suggest(t, 'play', 'station', 's')).toHaveLength(25);
+        });
         // Every source of every bundled station ranked in one stretch, with no break in between.
         await time('ranking', () => {
           for (const st of bundled) selectSource(t.ctx.sources.sourcesFor(st.id), null);
@@ -319,6 +357,25 @@ describe('main-thread budget while a stream plays', () => {
         expect(t.ctx.packs.isEnabled('bigpack2')).toBe(true);
       });
       await time('browse after install', () => t.command(t.people.member, { sub: 'browse' }));
+      // The bot's operator updates it to a version without its backup sources: thousands of
+      // sources switched off, in slices.
+      await time('pack update', async () => {
+        published = 1;
+        await packManager.index(true);
+        const r = await packManager.install('bigpack2');
+        expect(r.previousVersion).toBe('2026.11.03');
+        expect(t.ctx.stations.getSource('bigpack2-station-7-backup')?.enabled).toBe(false);
+      });
+      // The hourly clean-up of check results older than PROBE_HISTORY_DAYS.
+      await time('probe history clean-up', async () => {
+        const r = await t.stations.pruneProbeHistory({
+          keep: 30,
+          days: 30,
+          pause: yieldToEventLoop,
+          trimEverySource: true,
+        });
+        expect(r.deleted).toBeGreaterThanOrEqual(AGED_RESULTS);
+      });
       // The bot owner's "Check all sources again" across every source of all three packs: listing
       // them, then a few hundred checks recorded as real ones are (each check itself is replaced),
       // then Stop. Listing and checking are timed apart, since one grows with the catalogue.
@@ -343,7 +400,8 @@ describe('main-thread budget while a stream plays', () => {
       await time('full check: checks', async () => {
         while ((t.ctx.fullCheck.state?.done ?? 0) < FULL_CHECKS) await sleep(RESOLUTION_MS);
         await t.ctx.fullCheck.stop();
-        expect(t.ctx.fullCheck.state?.total).toBeGreaterThan(4 * STATIONS);
+        // Both big packs, less the backup sources the update switched off.
+        expect(t.ctx.fullCheck.state?.total).toBeGreaterThan(3 * STATIONS);
       });
       await sleep(4 * RESOLUTION_MS);
     } finally {

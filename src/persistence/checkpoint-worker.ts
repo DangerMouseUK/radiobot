@@ -3,8 +3,10 @@
  * `WalCheckpointer` in checkpoint.ts), so they never hold up the thread that sends voice packets.
  */
 import { parentPort, workerData } from 'node:worker_threads';
+import { lowerThreadPriority } from '../shared/lower-thread-priority.ts';
 import { type CheckpointMessage, type CheckpointRequest, openCheckpointConnection } from './checkpoint.ts';
 
+lowerThreadPriority();
 const port = parentPort!;
 const connection = openCheckpointConnection((workerData as { path: string }).path);
 port.on('message', (msg: CheckpointRequest) => {

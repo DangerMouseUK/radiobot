@@ -70,17 +70,17 @@ vi.mock('@discordjs/voice', async (importOriginal) => {
 // The reconnect loop waits between attempts; tests don't need the real delays.
 vi.mock('../../src/shared/async.ts', () => ({ delay: () => Promise.resolve() }));
 
-const { DiscordVoiceLink, MAX_MISSED_FRAMES, guardConnection, timePackets } = await import(
-  '../../src/voice/link.ts'
-);
+const { DiscordVoiceLink, MAX_MISSED_FRAMES, discordVoiceLinkFactory, guardConnection, timePackets } =
+  await import('../../src/voice/link.ts');
 const { DEFAULT_TIMINGS } = await import('../../src/voice/session.ts');
 
-const channel = { id: 'voice-1', guild: { id: 'g1', voiceAdapterCreator: () => ({}) } } as never;
+const adapterCreator = () => ({}) as never;
+const target = { guildId: 'g1', channelId: 'voice-1', adapterCreator };
 
 async function connect() {
   const connection = new FakeConnection();
   voice.connection = connection;
-  const link = await DiscordVoiceLink.connect(channel);
+  const link = await DiscordVoiceLink.connect(target);
   return { connection, link };
 }
 
@@ -164,7 +164,7 @@ describe('DiscordVoiceLink', () => {
       send(0);
       send(20);
       send(90); // 70 ms late
-      expect(link.stats().packetTiming).toEqual({ late: 1, worstGapMs: 70 });
+      expect(link.stats().packetTiming).toMatchObject({ late: 1, worstGapMs: 70 });
       // The player stops playing: the gap until it plays again is not lateness.
       link.player.emit('stateChange', { status: 'playing' }, { status: 'idle' });
       send(5_000);
@@ -173,7 +173,7 @@ describe('DiscordVoiceLink', () => {
       connection.setState({ status: 'ready', networking: { state: {} } });
       send(9_000);
       send(9_020);
-      expect(link.stats().packetTiming).toEqual({ late: 1, worstGapMs: 70 });
+      expect(link.stats().packetTiming).toMatchObject({ late: 1, worstGapMs: 70 });
       // A packet that wasn't sent isn't timed.
       connection.sends.push(false);
       send(9_500);
@@ -203,12 +203,28 @@ describe('DiscordVoiceLink: joining', () => {
     expect(link.channelId).toBe('voice-1');
   });
 
+  it('joins a discord.js channel through its guild adapter on the main thread', async () => {
+    const connection = new FakeConnection();
+    voice.connection = connection;
+    const voiceAdapterCreator = () => ({}) as never;
+    const link = await discordVoiceLinkFactory({
+      id: 'voice-3',
+      guild: { id: 'g2', voiceAdapterCreator },
+    } as never);
+    expect(voice.joinOptions).toMatchObject({
+      channelId: 'voice-3',
+      guildId: 'g2',
+      adapterCreator: voiceAdapterCreator,
+    });
+    expect(link).toBeInstanceOf(DiscordVoiceLink);
+  });
+
   it('gives up and releases the connection when it never becomes ready', async () => {
     vi.useFakeTimers();
     const connection = new FakeConnection();
     connection.state = { status: 'signalling' };
     voice.connection = connection;
-    const joining = DiscordVoiceLink.connect(channel, 20_000);
+    const joining = DiscordVoiceLink.connect(target, 20_000);
     const outcome = joining.then(
       () => null,
       (err: unknown) => err,
@@ -398,7 +414,8 @@ describe('DiscordVoiceLink: stats', () => {
       wsPingMs: 10,
       endpoint: 'c-test01.discord.media:443',
       packetsPlayed: 1_500,
-      packetTiming: { late: 0, worstGapMs: null },
+      packetTiming: { late: 0, worstGapMs: null, recent: [] },
+      silenceMs: null,
       encryptionMode: 'aead_aes256_gcm_rtpsize',
       status: 'ready',
     });
@@ -421,6 +438,28 @@ describe('DiscordVoiceLink: stats', () => {
       encryptionMode: null,
       status: 'connecting',
     });
+  });
+
+  it('reports the silence the player filled in for the current resource, only while playing', async () => {
+    const { link } = await connect();
+    const player = link.player as unknown as { state: object };
+    expect(link.stats().silenceMs).toBeNull();
+    // 5 s of frames sent, 4.2 s of them audio: 0.8 s of silence.
+    player.state = { status: 'playing', playbackDuration: 5_000, resource: { playbackDuration: 4_200 } };
+    expect(link.stats().silenceMs).toBe(800);
+    player.state = { status: 'playing', playbackDuration: 0, resource: { playbackDuration: 20 } };
+    expect(link.stats().silenceMs).toBe(0);
+    player.state = { status: 'buffering' };
+    expect(link.stats().silenceMs).toBeNull();
+  });
+
+  it('tells observers when the connection or the player changes state', async () => {
+    const { connection, link } = await connect();
+    let changes = 0;
+    link.on('changed', () => changes++);
+    link.player.emit('stateChange', { status: 'buffering' }, { status: 'playing' });
+    connection.setState({ status: 'connecting' });
+    expect(changes).toBe(2);
   });
 
   it('says whether DAVE end-to-end encryption was negotiated', async () => {

@@ -83,12 +83,17 @@ function rankTie(a: SearchHit, b: SearchHit): number {
   );
 }
 
-function score(station: Station, q: string, raw: string): SearchHit | null {
+/** Orders hits best first: by score, then `rankTie`. */
+function byRank(a: SearchHit, b: SearchHit): number {
+  return b.score - a.score || rankTie(a, b);
+}
+
+/** `qWords` is `q.split(' ')`, worked out once per search rather than once per station. */
+function score(station: Station, q: string, raw: string, qWords: readonly string[]): SearchHit | null {
   if (!q) return { station, score: 1, exact: false };
   const exact = exactScore(station, q, raw);
   if (exact) return exact;
   const p = prepare(station);
-  const qWords = q.split(' ');
   let score = 0;
   if (p.name.startsWith(q)) score = Math.max(score, 700 - (p.name.length - q.length));
   if (qWords.every((w) => p.nameWords.some((nw) => nw.startsWith(w))))
@@ -105,18 +110,49 @@ function score(station: Station, q: string, raw: string): SearchHit | null {
 }
 
 export function scoreStation(station: Station, query: string): SearchHit | null {
-  return score(station, normalizeName(query), query.trim().toLowerCase());
+  const q = normalizeName(query);
+  return score(station, q, query.trim().toLowerCase(), q.split(' '));
 }
 
-/** Ranked, partial/fuzzy station search (FR-001). Pack stations sort before custom ones on ties. */
-export function searchStations(stations: Station[], query: string, limit = 25): SearchHit[] {
+/** Up to this many results are kept in order as stations are scored, rather than all sorted at the end. */
+const TOP_K_MAX = 100;
+
+/**
+ * Ranked, partial/fuzzy station search (FR-001). Pack stations sort before custom ones on ties.
+ * For the usual short list (25 suggestions), only the best `limit` hits found so far are kept, in
+ * order, instead of sorting every hit of a short query across a big catalogue on each keystroke.
+ * The order is the same as a full sort's: hits that rank equal keep catalogue order either way.
+ */
+export function searchStations(stations: readonly Station[], query: string, limit = 25): SearchHit[] {
   const q = normalizeName(query);
   const raw = query.trim().toLowerCase();
-  return stations
-    .map((s) => score(s, q, raw))
-    .filter((h): h is SearchHit => h !== null)
-    .sort((a, b) => b.score - a.score || rankTie(a, b))
-    .slice(0, limit);
+  const qWords = q.split(' ');
+  if (limit > TOP_K_MAX) {
+    return stations
+      .map((s) => score(s, q, raw, qWords))
+      .filter((h): h is SearchHit => h !== null)
+      .sort(byRank)
+      .slice(0, limit);
+  }
+  const top: SearchHit[] = [];
+  if (limit <= 0) return top;
+  for (const s of stations) {
+    const hit = score(s, q, raw, qWords);
+    if (!hit) continue;
+    // Full, and no better than the last kept hit (ties included): a stable sort would put it after.
+    if (top.length === limit && byRank(hit, top[limit - 1]!) >= 0) continue;
+    // After every kept hit that ranks the same or better, as a stable sort would place it.
+    let lo = 0;
+    let hi = top.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (byRank(top[mid]!, hit) <= 0) lo = mid + 1;
+      else hi = mid;
+    }
+    top.splice(lo, 0, hit);
+    if (top.length > limit) top.pop();
+  }
+  return top;
 }
 
 export type Resolution =
@@ -129,7 +165,7 @@ export type Resolution =
  * silently (e.g. "jazz" does not pick Jazz FM over Jazz FM Classics): only exact identity
  * matches, or a single clearly dominant hit, are accepted.
  */
-export function resolveStation(stations: Station[], query: string): Resolution {
+export function resolveStation(stations: readonly Station[], query: string): Resolution {
   // A name typed or picked exactly is the common case: settle it without fuzzy-scoring every
   // station. Exact hits (900+) always outrank fuzzy ones (700 at most), so the outcome is the same.
   const q = normalizeName(query);
@@ -138,7 +174,7 @@ export function resolveStation(stations: Station[], query: string): Resolution {
     const exact = stations
       .map((s) => exactScore(s, q, raw))
       .filter((h): h is SearchHit => h !== null)
-      .sort((a, b) => b.score - a.score || rankTie(a, b));
+      .sort(byRank);
     if (exact.length >= 1) {
       const top = exact[0]!;
       if (exact.length === 1 || exact[1]!.score < top.score) return { kind: 'match', station: top.station };

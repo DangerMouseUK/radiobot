@@ -141,9 +141,11 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 - for HLS, how many segments were fetched, failed and skipped;
 - packets per second to Discord, which should be about 50 with 20 ms frames;
 - late packets: how many left more than 40 ms after the one before since the bot joined, and the longest gap (about 55 ms or more is enough to hear);
+- silence the voice player filled in because no audio was ready, for this stream and in the last minute;
 - the round trip to the stream's server, the voice connection's WebSocket ping and the gateway ping;
 - source failovers, voice reconnects, the encoder's process ID and the last FFmpeg warnings;
-- the main thread's event-loop delay, memory use and the number of FFmpeg processes.
+- the main thread's event-loop delay, with its garbage-collection pauses, CPU use and (on Linux) host steal over the same minute, memory use and the number of FFmpeg processes;
+- with `VOICE_THREAD=worker`, the voice worker's own event-loop delay, longest garbage-collection pause, heap and restarts. The worker's event loop is the one that sends the packets then, so its delay is the one that matters.
 
 ## Recovery and continuity
 

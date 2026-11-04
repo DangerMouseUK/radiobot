@@ -44,7 +44,7 @@ The invite link asks for two *scopes*: `bot`, which adds the bot to the server, 
 | Attach Files | 32768 | `/radio export` replies with a JSON file |
 | Connect | 1048576 | Join the voice channel |
 | Speak | 2097152 | Play audio |
-| Set Voice Channel Status | 281474976710656 | **Optional.** Shows the station and the song or show title as the status of the bot's voice channel. The status is cleared when playback stops or the bot leaves. Admins can switch it off in `/radio config` → Notifications. Without the permission the bot simply doesn't set a status |
+| Set Voice Channel Status | 281474976710656 | **Optional.** Shows the station and the song or show title as the status of the bot's voice channel. The status is cleared when playback stops or the bot leaves. Admins can switch it off in `/radio config` → Notices. Without the permission the bot simply doesn't set a status |
 
 1024 + 2048 + 16384 + 32768 + 1048576 + 2097152 + 281474976710656 = **281474979908608**.
 
@@ -150,7 +150,8 @@ A button posted in a public channel must not let anyone get round the rules abov
    - Expired controls answer "These buttons have expired. Run the command again." (an expired browse list says to run `/radio browse` again). Browse's search box is a form with a signed, expiring ID too; an expired one answers "This form has expired. Run the command again."
    - Control-panel buttons never expire, so the panel keeps working across restarts. They are still authorised on every click.
 4. **State kept by the bot.** Browse lists and import previews are referred to by a random token. The list or preview itself stays inside the bot. An import can be applied only by an admin of the same server, only before its preview expires, and only once. Each server has at most one import preview: a new `/radio import` replaces the previous one, whose buttons then say it has expired.
-5. **Newer requests win.** Each play or switch request gets a number. An older request that is still running can't overwrite a newer one; its reply says "Request replaced: A newer station request took over from this one."
+5. **Suggestions are authorised too.** The station, pack and category suggestions shown while someone types an option need *read*, so nothing is suggested outside the allowed command channels; suggestions for `/radio source …` need *admin*, like the commands.
+6. **Newer requests win.** Each play or switch request gets a number. An older request that is still running can't overwrite a newer one; its reply says "Request replaced: A newer station request took over from this one."
 
 ## Rate limits
 
@@ -175,6 +176,7 @@ Other limits that apply to the whole installation:
 - `MAX_CONCURRENT_PROBES` (default 2): stream checks at once, and never more than one at a time per stream host.
 - `MAX_CUSTOM_STATIONS_PER_GUILD` (default 25): custom stations per server. Going over it is refused with `CUSTOM_STATION_LIMIT`.
 - The queue holds at most 25 stations per server.
+- A server keeps at most 1000 favourites, and source choices (pin or prefer) for at most 1000 stations. Changing an existing choice is always allowed.
 - An import file must be a Discord attachment of at most 256 KB.
 
 The pack check runs once a day (first 15 to 30 minutes after start): it notes pack updates, removes packs the official library has withdrawn and puts back packs the installation already uses but is missing (never one removed on purpose). It never installs any other pack, and never updates one.

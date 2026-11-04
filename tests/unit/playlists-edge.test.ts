@@ -190,9 +190,48 @@ describe('HLS media playlists', () => {
       ['/live/seg100.m4s', 5.5, 100, '/live/init.mp4', false],
       ['/live/seg101.m4s', 0, 101, '/live/init.mp4', false],
       ['/live/seg102.m4s', 6, 102, null, true],
-      // The unusable segment is dropped, and its duration and flags don't carry over.
-      ['/live/seg104.m4s', 6, 103, null, false],
+      // The unusable segment is dropped, and its duration and flags don't carry over. It keeps its
+      // sequence number, so the rest aren't renumbered once it leaves the window.
+      ['/live/seg104.m4s', 6, 104, null, false],
     ]);
+    expect(m.segmentCount).toBe(5);
+  });
+
+  it('resolves only the segments from minSequence on, the same as a full parse gives', () => {
+    // A long DVR window, as near the line cap as a playlist with durations gets.
+    const n = 2490;
+    const lines = ['#EXTM3U', '#EXT-X-TARGETDURATION:6', '#EXT-X-MEDIA-SEQUENCE:7000'];
+    for (let i = 0; i < n; i++) {
+      if (i === 1000) lines.push('#EXT-X-DISCONTINUITY', '#EXT-X-MAP:URI="init2.mp4"');
+      lines.push(
+        `#EXTINF:${i % 2 ? 6 : 5.5},`,
+        i === 2000 ? 'ftp://radio.example.org/x.ts' : `seg${7000 + i}.ts`,
+      );
+    }
+    const text = lines.join('\n');
+    const full = parseHls(text, base) as HlsMedia;
+    expect(full.segmentCount).toBe(n);
+    expect(full.segments).toHaveLength(n - 1); // the ftp:// one can't be used
+    const shape = (m: HlsMedia) =>
+      m.segments.map((s) => [s.uri.href, s.duration, s.sequence, s.mapUri?.href ?? null, s.discontinuity]);
+    for (const min of [7000, 7999, 8000, 8001, 9000, 9001, 9485, 9489, 9490, 20_000]) {
+      const tail = parseHls(text, base, { minSequence: min }) as HlsMedia;
+      expect(shape(tail)).toEqual(
+        shape({ ...full, segments: full.segments.filter((s) => s.sequence >= min) }),
+      );
+      expect(tail).toMatchObject({ mediaSequence: 7000, segmentCount: n, targetDuration: 6, endList: false });
+    }
+  });
+
+  it('numbers segments the same whether or not an unusable one is still in the window', () => {
+    const at = (seq: number, entries: string[]) =>
+      (
+        parseHls(['#EXTM3U', `#EXT-X-MEDIA-SEQUENCE:${seq}`, ...entries].join('\n'), base) as HlsMedia
+      ).segments.map((s) => [s.uri.pathname, s.sequence]);
+    const before = at(1, ['a.ts', 'ftp://radio.example.org/b.ts', 'c.ts']);
+    const after = at(3, ['c.ts', 'd.ts']);
+    expect(before).toContainEqual(['/live/c.ts', 3]);
+    expect(after).toContainEqual(['/live/c.ts', 3]);
   });
 
   it('keeps the first encryption method it sees', () => {

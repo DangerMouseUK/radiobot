@@ -15,11 +15,17 @@
  * the first probe, FFmpeg and FFprobe are checked: FFMPEG_PATH/FFPROBE_PATH if set, otherwise the
  * ones on PATH, otherwise the ffmpeg-static/ffprobe-static dev dependencies. Without them nothing is
  * contacted.
+ *
+ * Exits 1 when a pack is invalid or fails --strict, and 2 when the command can't do what was asked:
+ * an unknown option, an option without its value, --json without --probe or into a missing folder,
+ * nothing named to probe, no enabled source matching what was named, or no FFmpeg for --probe.
  */
-import { writeFileSync } from 'node:fs';
+import { existsSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
 import { checkFfmpeg, type FfmpegPaths, ProcessRegistry } from '../src/audio/ffmpeg.ts';
 import { loadPack, PackRegistry, type StationPack } from '../src/catalogue/packs.ts';
+import { errorMessage } from '../src/shared/errors.ts';
 import { rootPath } from '../src/shared/paths.ts';
 import { compareSources, correlationEvidence } from '../src/streams/identity.ts';
 import { codecLabel, type ProbeOutcome, probeSource } from '../src/streams/probe.ts';
@@ -27,29 +33,54 @@ import { SafeHttpClient } from '../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../src/streams/url-policy.ts';
 import { strictProblems, strictWarnings } from './pack-author.ts';
 
-const args = process.argv.slice(2);
-const flag = (f: string) => args.includes(f);
-const optionValue = (f: string) => {
-  const i = args.indexOf(f);
-  return i >= 0 ? (args[i + 1] ?? null) : null;
-};
-const jsonOut = optionValue('--json');
-const packDir = optionValue('--pack');
-const packId = optionValue('--pack-id');
-const stationFilter = args.filter((a) => /^[a-z0-9][a-z0-9-]*:[a-z0-9-]+$/.test(a));
+const BOOLEAN_FLAGS = new Set(['--probe', '--compare', '--strict']);
+const VALUE_OPTIONS = new Set(['--json', '--pack', '--pack-id']);
+const STATION_ID = /^[a-z0-9][a-z0-9-]*:[a-z0-9-]+$/;
+
+/** Exits 2 with a message: the command line asked for something this script doesn't do. */
+function usage(message: string): never {
+  process.stderr.write(`${message}\n`);
+  process.exit(2);
+}
+
+// A mistyped option (--stict) or one missing its value must not pass quietly as a successful check.
+const flags = new Set<string>();
+const values = new Map<string, string>();
+const stationFilter: string[] = [];
+{
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (BOOLEAN_FLAGS.has(a)) flags.add(a);
+    else if (VALUE_OPTIONS.has(a)) {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith('--')) usage(`${a} needs a value.`);
+      values.set(a, v);
+      i++;
+    } else if (STATION_ID.test(a)) stationFilter.push(a);
+    else if (a.startsWith('-')) usage(`Unknown option ${a}.`);
+    else usage(`"${a}" isn't a station ID (for example mypack:my-station) or an option.`);
+  }
+}
+const flag = (f: string) => flags.has(f);
+const jsonOut = values.get('--json') ?? null;
+const packDir = values.get('--pack') ?? null;
+const packId = values.get('--pack-id') ?? null;
+if (jsonOut && !flag('--probe')) usage('--json writes the probe report, so it needs --probe.');
 
 let packs: readonly StationPack[];
 try {
   // Without --pack, the template pack is checked too: the bot ships no packs, and the template is
-  // what new packs start from (and what the smoke test seeds).
+  // what new packs start from (and what the smoke test seeds). It goes through the registry like the
+  // others, so an EXTRA_PACKS_DIR pack that clashes with it is reported.
   packs = packDir
     ? [loadPack(packDir)]
-    : [
+    : new PackRegistry([
         ...PackRegistry.load(process.env.EXTRA_PACKS_DIR || null).packs,
         loadPack(rootPath('catalog', 'packs', '_template')),
-      ];
+      ]).packs;
 } catch (err) {
-  process.stderr.write(`Invalid pack: ${(err as Error).message}\n`);
+  process.stderr.write(`Invalid pack: ${errorMessage(err)}\n`);
   process.exit(1);
 }
 for (const p of packs) {
@@ -84,6 +115,24 @@ if (stationFilter.length === 0 && !packId) {
     'Name stations to probe (e.g. mypack:my-station) or a whole pack with --pack-id <id>.\n',
   );
   process.exit(2);
+}
+
+// What to probe, and where the report goes, are settled before FFmpeg is looked for or anything
+// is contacted: a typo in either would otherwise "succeed" with nothing checked, or lose the report.
+const sources = packs.flatMap((p) => p.sources);
+const targets = sources.filter(
+  (s) =>
+    s.enabled &&
+    (stationFilter.includes(s.stationId) || (packId !== null && s.stationId.startsWith(`${packId}:`))),
+);
+if (targets.length === 0) {
+  const asked = [...stationFilter, ...(packId ? [`--pack-id ${packId}`] : [])].join(', ');
+  usage(`No enabled sources match ${asked}. Check the names against the pack's stations.json.`);
+}
+if (jsonOut) {
+  const folder = dirname(resolve(jsonOut));
+  if (!existsSync(folder) || !statSync(folder).isDirectory())
+    usage(`The folder for --json (${folder}) doesn't exist. Create it first; nothing was probed.`);
 }
 
 /** The FFmpeg builds to try, in order. Paths set in the environment are the only choice. */
@@ -125,7 +174,6 @@ if (!found) {
 }
 process.stdout.write(`Using ${found.info.ffprobeVersion} (${found.paths.ffprobe}).\n`);
 
-const sources = packs.flatMap((p) => p.sources);
 const policy = new UrlPolicy({ allowInsecureHttp: true });
 // The same User-Agent the bot sends: Lavf/<version> of the FFmpeg in use (invariant 5).
 const client = new SafeHttpClient(
@@ -139,12 +187,6 @@ const deps = {
   ffmpegPath: found.paths.ffmpeg,
   ffprobePath: found.paths.ffprobe,
 };
-const targets = sources.filter(
-  (s) =>
-    s.enabled &&
-    (stationFilter.includes(s.stationId) || (packId !== null && s.stationId.startsWith(`${packId}:`))),
-);
-
 interface Row {
   stationId: string;
   sourceId: string;

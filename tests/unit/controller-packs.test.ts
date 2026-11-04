@@ -1,3 +1,4 @@
+import { ButtonStyle } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import type { LibraryIndex } from '../../src/catalogue/pack-library.ts';
 import { loadPack } from '../../src/catalogue/packs.ts';
@@ -207,6 +208,13 @@ describe('/radio packs', () => {
     expect(card.lastText).toMatch(/Installed version: 2026\.11\.03 · installed from the library/);
     const buttons = card.componentIds.map((c) => decode(t.ids, c)?.action);
     expect(buttons).toEqual(['pkinst', 'pkrm']);
+    // Update is the next step (blurple) beside a red Remove: never green next to red.
+    expect(card.componentRows).toEqual([
+      [
+        expect.objectContaining({ label: 'Update to 2099.01.01', style: ButtonStyle.Primary }),
+        expect.objectContaining({ label: 'Remove', style: ButtonStyle.Danger }),
+      ],
+    ]);
   });
 
   it('names skipped packs in /radio stats', async () => {

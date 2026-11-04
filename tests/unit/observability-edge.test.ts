@@ -135,7 +135,7 @@ describe('EventLoopMonitor windows', () => {
     expect(h.enables).toBe(1);
     vi.advanceTimersByTime(1_000);
     expect(windows).toEqual([20]);
-    expect(m.lastWindow()).toEqual({ meanMs: 2, p99Ms: 10, maxMs: 20, windowSec: 1 });
+    expect(m.lastWindow()).toMatchObject({ meanMs: 2, p99Ms: 10, maxMs: 20, windowSec: 1 });
     // The histogram was reset, so the next window is empty and not reported.
     vi.advanceTimersByTime(1_000);
     expect(windows).toEqual([20]);

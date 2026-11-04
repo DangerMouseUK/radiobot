@@ -4,13 +4,14 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runPacksCli } from '../../scripts/packs.ts';
 import {
   bundleUrl,
   checkBundle,
   countryName,
   installable,
+  installableTransfer,
   type LibraryIndex,
   type LibraryPack,
   languageName,
@@ -18,9 +19,15 @@ import {
   searchLibrary,
   warmLocaleData,
 } from '../../src/catalogue/pack-library.ts';
-import { checkBundleInWorker, loadPackInWorker, PackManager } from '../../src/catalogue/pack-manager.ts';
+import {
+  checkBundleInWorker,
+  loadPackInWorker,
+  PackManager,
+  reloadPackInWorker,
+} from '../../src/catalogue/pack-manager.ts';
 import { installedPacksDir, PackStore } from '../../src/catalogue/pack-store.ts';
-import { loadPack, PackRegistry, seedPackInSlices } from '../../src/catalogue/packs.ts';
+import { runPackJob } from '../../src/catalogue/pack-worker-job.ts';
+import { loadPack, PackRegistry, packFolderHash, seedPackInSlices } from '../../src/catalogue/packs.ts';
 import { compareVersions } from '../../src/shared/version.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
@@ -238,6 +245,73 @@ describe('pack workers', () => {
     ]);
     expect(Object.keys(checked.pack)).toEqual(['meta', 'sources']);
   });
+
+  it('hands the checked files over as bytes, which install exactly as the text would', async () => {
+    const bytes = bundleBytes(packFiles('alpha', '2026.11.01', 40));
+    const checked = checkBundle(bytes, { id: 'alpha', sha256: null });
+    const fromWorker = await checkBundleInWorker(bytes, { id: 'alpha', sha256: null } as LibraryPack);
+    expect(fromWorker.files['stations.json']).toBeInstanceOf(Uint8Array);
+    const asText = new PackStore(join(temp(), 'installed-packs'));
+    const asBytes = new PackStore(join(temp(), 'installed-packs'));
+    await asText.install(checked, 'official');
+    await asBytes.install(fromWorker, 'official');
+    for (const name of ['pack.json', 'stations.json', 'sources.json']) {
+      const a = readFileSync(join(asText.packDir('alpha'), name));
+      expect(a.length).toBeGreaterThan(0);
+      expect(a.equals(readFileSync(join(asBytes.packDir('alpha'), name))), name).toBe(true);
+    }
+    // Each file has a buffer of its own, so all three can be handed over.
+    const bundle = installable(checked);
+    expect(installableTransfer(bundle)).toHaveLength(3);
+    expect(installableTransfer({ ...bundle, files: { ...bundle.files, 'sources.json': null } })).toHaveLength(
+      2,
+    );
+  });
+
+  it('answers a reload of an unchanged folder from its hash alone, without parsing it', async () => {
+    const store = new PackStore(join(temp(), 'installed-packs'));
+    await store.install(
+      checkBundle(bundleBytes(packFiles('alpha', '2026.11.01')), { id: 'alpha', sha256: null }),
+      'x',
+    );
+    const dir = store.packDir('alpha');
+    const hash = loadPack(dir, 'installed').contentHash;
+    expect(packFolderHash(dir)).toBe(hash);
+    const load = vi.fn(loadPack);
+    expect(runPackJob({ kind: 'dir', dir, unlessHash: hash }, load)).toEqual({
+      reply: { ok: true, result: { unchanged: true } },
+      transfer: [],
+    });
+    expect(load).not.toHaveBeenCalled();
+    // A changed file, or no hash to compare with, is loaded in full.
+    for (const unlessHash of ['0'.repeat(64), null]) {
+      const r = runPackJob({ kind: 'dir', dir, unlessHash }, load);
+      expect(r.reply.ok && (r.reply.result as { pack: { meta: { id: string } } }).pack.meta.id).toBe('alpha');
+    }
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(await reloadPackInWorker(dir, hash)).toBeNull();
+    expect((await reloadPackInWorker(dir, '0'.repeat(64)))?.contentHash).toBe(hash);
+    // Errors come back as a reply, never thrown.
+    expect(runPackJob({ kind: 'dir', dir: join(temp(), 'missing') }).reply).toMatchObject({ ok: false });
+    expect(
+      runPackJob({ kind: 'bundle', bytes: Buffer.from('nope'), id: 'alpha', sha256: null }).reply,
+    ).toEqual({
+      ok: false,
+      error: expect.stringMatching(/not a pack/),
+    });
+  });
+
+  it('hashes a folder as loading it would, with or without sources.json', () => {
+    const dir = join(temp(), 'nosources');
+    mkdirSync(dir);
+    const files = packFiles('alpha', '2026.11.01');
+    writeFileSync(join(dir, 'pack.json'), JSON.stringify(files.pack));
+    writeFileSync(join(dir, 'stations.json'), JSON.stringify(files.stations));
+    expect(packFolderHash(dir)).toBe(loadPack(dir).contentHash);
+    writeFileSync(join(dir, 'sources.json'), JSON.stringify(files.sources));
+    expect(packFolderHash(dir)).toBe(loadPack(dir).contentHash);
+    expect(packFolderHash(join(temp(), 'missing'))).toBeNull();
+  });
 });
 
 describe('PackStore', () => {
@@ -318,7 +392,7 @@ describe('PackRegistry with installed packs', () => {
 function manager(opts: { store?: PackStore | null; registry?: PackRegistry; now?: () => number } = {}) {
   const { db, stations } = memoryDb();
   const registry = opts.registry ?? new PackRegistry([]);
-  const events = { changes: 0, gone: [] as string[] };
+  const events = { changes: 0, gone: [] as string[], automatic: [] as boolean[] };
   const pm = new PackManager({
     registry,
     store: opts.store === undefined ? new PackStore(join(temp(), 'installed-packs')) : opts.store,
@@ -326,7 +400,10 @@ function manager(opts: { store?: PackStore | null; registry?: PackRegistry; now?
     transaction: (fn) => db.transaction(fn),
     http,
     logger: silentLogger(),
-    background: (fn) => fn(),
+    background: (fn, o) => {
+      events.automatic.push(o?.automatic === true);
+      return fn();
+    },
     onChange: () => events.changes++,
     onGone: (id) => events.gone.push(id),
     libraryUrl: `${baseUrl}/index.json`,
@@ -433,6 +510,8 @@ describe('PackManager', () => {
     await pm.install('alpha');
     lib.withdraw('alpha', 'at the owner’s request');
     await pm.check();
+    // The install was asked for; the daily check is automatic work that waits for streams to settle.
+    expect(events.automatic).toEqual([false, true]);
     expect(registry.get('alpha')).toBeNull();
     expect(events.gone).toEqual(['alpha']);
     expect(pm.notices[0]).toMatch(/withdrawn from the pack library \(at the owner’s request\)/);
@@ -448,6 +527,13 @@ describe('PackManager', () => {
     expect((await pm.reload()).loaded).toEqual(['alpha']);
     expect(registry.isEnabled('alpha')).toBe(true);
     expect((await pm.reload()).loaded).toEqual([]); // unchanged: nothing to do
+    expect(registry.isEnabled('alpha')).toBe(true);
+    await store.install(
+      checkBundle(bundleBytes(packFiles('alpha', '2026.11.02', 4)), { id: 'alpha', sha256: null }),
+      'official',
+    );
+    expect((await pm.reload()).loaded).toEqual(['alpha']);
+    expect(registry.get('alpha')?.stations).toHaveLength(4);
     await store.remove('alpha');
     expect((await pm.reload()).removed).toEqual(['alpha']);
     expect(registry.get('alpha')).toBeNull();

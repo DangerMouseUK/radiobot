@@ -404,12 +404,15 @@ describe('the control panel', () => {
     t.putInVoice(t.people.admin, V1);
     await t.command(t.people.admin, { sub: 'play', strings: { station: 'My Station' } });
     expect(panel.edits.map((e) => e.id)).toEqual(['500000000000000001']);
+    // The panel now shows something new (an unchanged panel isn't edited again).
+    t.sessions.get(GUILD)!.fullStatus = {};
 
     // Any other failure (missing access, say) keeps the panel for next time.
     panel.editError = 50013;
     await t.command(t.people.admin, { sub: 'stop' });
     expect(t.guilds.getSettings(GUILD).panelMessageId).toBe('500000000000000001');
 
+    // A failed edit is tried again, even though the panel would show the same.
     panel.editError = 10008;
     await t.command(t.people.admin, { sub: 'leave' });
     expect(t.guilds.getSettings(GUILD)).toMatchObject({ panelChannelId: null, panelMessageId: null });

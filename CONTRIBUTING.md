@@ -135,6 +135,7 @@ In particular:
 - **Identify truthfully.** Stream requests use FFmpeg's `Lavf/<version>` User-Agent. Don't add a browser User-Agent, a `Referer`, cookies or anything else meant to get past a host's access control; HTTP 401, 403 and 451 are reported as `ACCESS_DENIED`.
 - **Don't relax the identity or eligibility gates** without a discussion in an issue first. The correct station beats the best bitrate, and direct streams come before HLS whatever their bitrate. Bitrates of different codecs are never compared, except the one narrow case of measured AAC-LC (at least 96 kbps, and at least twice the rate) against HE-AAC; don't widen it without an issue first.
 - **No claim without evidence.** User-facing text says which kind of bitrate evidence it shows (`measured`, `codec-metadata`, `manifest`, `advertised` or `unknown`), and never claims "HD" or "lossless".
+- **No recording.** Probe samples are held in memory and then discarded. The bot is self-deafened and never receives voice audio.
 
 ### Tests and fixtures
 
@@ -154,7 +155,8 @@ In particular:
 - **Check permissions on the server side.** Every new command, component or form (modal) must call `authorize()` with the right capability (`read`, `control` or `admin`). Components and forms must use `ComponentIds`. Add a new action to `COMPONENT_ACTIONS` in `src/discord/components/custom-id.ts` (at most 7 characters); its argument can be at most 65 characters, which is the longest station ID, so every ID fits Discord's 100-character limit.
 - **Statistics stay private.** `/radio stats` and other diagnostics are ephemeral and admin-only; never post them publicly.
 - **`/radio` is full.** It uses all 25 top-level options Discord allows. A new command has to go into a subcommand group (as `queue`, `source` and `packs` do), or replace an existing subcommand.
-- **Admin means owner or Administrator.** Don't reintroduce admin roles or Manage Server checks without an issue first.
+- **Admin means owner or Administrator.** Don't reintroduce admin roles or Manage Server checks without an issue first. Installation-wide decisions (identity reviews of pack sources, installing or updating packs) also need the user to be an operator: in `OPERATOR_USER_IDS`, or the application owner or a member of its team. The admin check still applies first.
+- **No telemetry.** `TELEMETRY_ENABLED=true` is refused at start-up; keep it that way.
 
 ### Installer and release changes
 

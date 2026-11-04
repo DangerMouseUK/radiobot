@@ -8,7 +8,7 @@ import {
   type StationSource,
   type VerificationState,
 } from '../../catalogue/types.ts';
-import type { LoopDelaySummary } from '../../observability/event-loop.ts';
+import type { LoopDelaySummary, LoopWindowSummary } from '../../observability/event-loop.ts';
 import { redactUrl } from '../../shared/redact.ts';
 import { truncate } from '../../shared/text.ts';
 import { codecLabel, type ProbeOutcome } from '../../streams/probe.ts';
@@ -21,6 +21,7 @@ import {
 import { isPaused, nextAutomaticCheck } from '../../streams/source-service.ts';
 import type { SessionStatus } from '../../voice/session.ts';
 import { isAudioActive, type PlaybackState, STATE_LABEL } from '../../voice/state-machine.ts';
+import type { VoiceThreadStats } from '../../voice/voice-thread.ts';
 
 /** Stream metadata comes from the station, so it is shown as plain text, never as links or headings. */
 const streamText = (text: string) =>
@@ -31,6 +32,16 @@ const streamText = (text: string) =>
  * ok: done, or playing · neutral: nothing changed, nothing playing, or still in progress ·
  * warn: done or running, but something needs a look (partial, retrying, recovering, a decision) ·
  * error: refused or failed · info: something you asked to see (lists, help, settings, reports).
+ *
+ * Buttons follow the same idea, one meaning per colour:
+ * - Blurple (Primary): the recommended next step, at most one per row (Discord: "Use only one
+ *   Primary button per group"). Also the current settings page's tab, shown dimmed.
+ * - Red (Danger): removes, overwrites or ends something for everyone, and takes more than one
+ *   click to get back (Leave, Remove, Apply import, Stop the check). At most one per message.
+ * - Green (Success): "on", and nothing else (a settings switch that is on, matching the green
+ *   embed strip for playing or done). Never an action, and never in a row with a red button.
+ * - Grey (Secondary): everything else, and the default.
+ * Every button has a text label, so colour is never the only cue (WCAG 1.4.1).
  */
 export const COLOR = {
   ok: 0x2e9e6a,
@@ -469,10 +480,47 @@ export function infoEmbed(title: string, message: string, color: number = COLOR.
 }
 
 /** One stats line for the event-loop delay. Voice packets go out every 20 ms from that loop. */
-export function loopDelayLine(s: LoopDelaySummary | null): string {
-  if (!s) return 'Event-loop delay: not measured yet';
-  const verdict = s.maxMs >= 20 ? ' (high enough to send voice packets late)' : '';
-  return `Event-loop delay (last ${s.windowSec} s): typical ${s.meanMs} ms · 99% under ${s.p99Ms} ms · worst ${s.maxMs} ms${verdict}`;
+/** `sendsVoice`: false when voice packets leave from the voice worker, not from this event loop. */
+export function loopDelayLine(s: LoopDelaySummary | null, sendsVoice = true): string {
+  const label = sendsVoice ? 'Event-loop delay' : 'Main event-loop delay';
+  if (!s) return `${label}: not measured yet`;
+  const verdict = sendsVoice && s.maxMs >= 20 ? ' (high enough to send voice packets late)' : '';
+  return `${label} (last ${s.windowSec} s): typical ${s.meanMs} ms · 99% under ${s.p99Ms} ms · worst ${s.maxMs} ms${verdict}`;
+}
+
+/**
+ * One stats line for what can explain an event-loop delay in the same window: garbage collection
+ * (a long pause stops the loop), CPU used, how often the system took the core away, and on Linux
+ * the CPU time the host gave to other machines.
+ */
+export function processLoadLine(s: LoopWindowSummary | null): string {
+  if (!s) return 'Memory clean-up and CPU: not measured yet';
+  const gc = s.gc.count
+    ? `${s.gc.count} pauses, longest ${s.gc.maxMs} ms${s.gc.maxKind ? ` (${s.gc.maxKind})` : ''}`
+    : 'no pauses';
+  const pct = s.windowSec > 0 ? Math.round((s.cpu.userMs + s.cpu.systemMs) / (s.windowSec * 10)) : null;
+  const steal = s.cpu.stealPct !== null ? ` · host steal ${s.cpu.stealPct}%` : '';
+  return `Memory clean-up (last ${s.windowSec} s): ${gc} · CPU ${pct ?? '—'}% of one core, preempted ${s.cpu.involuntarySwitches}×${steal}`;
+}
+
+/** One stats line for the voice worker (`VOICE_THREAD=worker`), whose event loop sends the packets. */
+export function voiceThreadLine(s: VoiceThreadStats | null): string | null {
+  if (!s) return null;
+  const d = s.loopDelay.lastWindow ?? s.loopDelay.current;
+  const gc = s.gc.lastWindow ?? s.gc.current;
+  const delay = d
+    ? `delay worst ${d.maxMs} ms, 99% under ${d.p99Ms} ms (last ${d.windowSec} s)${d.maxMs >= 20 ? ' (high enough to send voice packets late)' : ''}`
+    : 'delay not measured yet';
+  const state = s.alive ? '' : ' · not running';
+  const restarts = s.restarts ? ` · restarted ${s.restarts}×` : '';
+  return `Voice thread: ${delay} · memory clean-up longest ${gc.maxMs} ms · heap ${s.heapUsedMb} MB${restarts}${state}`;
+}
+
+/** One stats line for silence the voice player filled in because no audio was ready (an underrun). */
+export function silenceLine(total: number | null | undefined, recent: number | null | undefined): string {
+  if (total == null) return 'Silence filled in: —';
+  const last = recent != null ? ` · ${recent} ms in the last minute` : '';
+  return `Silence filled in (no audio ready): ${total} ms this stream${last}`;
 }
 
 /** One stats line for voice packets that went out late (more than 40 ms after the one before). */

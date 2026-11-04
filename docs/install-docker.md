@@ -251,7 +251,7 @@ If you installed with the installer, run `radio-bot update`. It:
 
 1. warns you if the bot is playing anywhere, and asks whether to go ahead (playback only resumes by itself where **Resume after restart** is on, and the download in step 4 happens while the station still plays, which can cause small cuts on a small server);
 2. if the bot is running, backs up the database and copies the backups to `backups/` (if the backup fails, it stops and changes nothing);
-3. switches to the newest release (or the one you name, as in `radio-bot update v1.0.4`);
+3. switches to the newest release (or the one you name, as in `radio-bot update v1.2.2`);
 4. downloads that release's image, or builds it if none is published;
 5. saves the last 500 log lines of the old container to `logs/` (the newest 5 files are kept);
 6. restarts the bot and waits until it is healthy;
@@ -300,7 +300,7 @@ docker compose exec radio-bot nice -n 19 node dist/scripts/backup.js
 docker cp radio-bot:/app/data/backups ./radio-bot-backups
 ```
 
-With the installer, `radio-bot backup` does both (if the bot isn't running, it only copies the backups already there), and `radio-bot restore FILE` puts a backup back. `restore` checks that the file is a SQLite database before stopping anything, backs up the current database first if the bot is running, and starts the bot again on its current data if copying the file in fails or is interrupted.
+With the installer, `radio-bot backup` does both (if the bot isn't running, it only copies the backups already there), and `radio-bot restore FILE` puts a backup back. `restore` checks that the file is a SQLite database before stopping anything, backs up the current database first if the bot is running, copies the file into the bot's data by streaming it (so it works whatever your user ID is), and starts the bot again on its current data if copying the file in fails or is interrupted.
 
 `radio-bot` runs the backup and the health check at the lowest CPU priority, as the image's own healthcheck does, and at the lowest disk priority (`ionice -c 3`) where the disk supports it. `backup.js` also lowers its own CPU priority, so a backup is safe to run while the bot plays.
 

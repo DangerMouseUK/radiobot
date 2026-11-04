@@ -3,14 +3,15 @@
  * Node 24 (no build step), so a pack library's CI can check out this repository and use it.
  *
  *   node scripts/pack-author.ts new <pack-id> [--root <folder>] [--ids <pack-ids.json>]
- *   node scripts/pack-author.ts export <pack-dir>
+ *   node scripts/pack-author.ts export <pack-dir> [--force]
  *   node scripts/pack-author.ts generate <pack-dir> [--base <git-ref>]
  *   node scripts/pack-author.ts build-library <packs-root> <out-dir> --base-url <url>
  *                                             [--collections <dir>] [--withdrawn <file>]
  *   node scripts/pack-author.ts diff-check <old-pack-dir> <new-pack-dir>
  *
  * `new` starts a pack from catalog/packs/_template. `export` writes the pack's stations and
- * sources to intake.csv, one row per source; `generate` reads intake.csv back into stations.json,
+ * sources to intake.csv, one row per source (it won't replace an intake.csv whose rows say
+ * something else, which may be edits not yet generated, unless given --force); `generate` reads intake.csv back into stations.json,
  * sources.json and the sources table of SOURCE_PROVENANCE.md, never changing or removing an
  * existing station slug or source ID; with `--base <git-ref>` it bumps the version once against the
  * pack as published at that ref. `build-library` writes a library's index.json and one bundle per
@@ -28,6 +29,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -43,6 +45,7 @@ import {
   type LibraryPack,
   libraryIndexSchema,
   MAX_BUNDLE_BYTES,
+  MAX_INDEX_BYTES,
 } from '../src/catalogue/pack-library.ts';
 import {
   CUSTOM_PROVIDER,
@@ -386,6 +389,36 @@ export function exportIntake(dir: string): { csv: string; rows: number } {
     }
   }
   return { csv: writeCsv(rows), rows: rows.length - 1 };
+}
+
+/** Whether intake.csv holds rows beyond its header (or can't be read), which a new export would replace. */
+function intakeHasRows(text: string): boolean {
+  try {
+    return parseCsv(text).length > 1;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Writes `exportIntake`'s intake.csv into the pack folder. An intake.csv that already holds rows may
+ * have edits `generate` hasn't read yet, so it is replaced only when it says the same thing already,
+ * or with `force`. The file is written whole and then renamed into place, so it is never half-written.
+ */
+export function writeIntake(dir: string, opts: { force?: boolean } = {}): { path: string; rows: number } {
+  const r = exportIntake(dir);
+  const path = join(dir, INTAKE_FILE);
+  if (existsSync(path) && !opts.force) {
+    const current = readFileSync(path, 'utf8');
+    if (current !== r.csv && intakeHasRows(current))
+      throw new AuthorError(
+        `${path} already has rows, which may hold edits that generate hasn't read yet. Run generate first, or run export again with --force to replace them with what stations.json and sources.json hold.`,
+      );
+  }
+  const tmp = join(dir, `.${INTAKE_FILE}.${process.pid}.tmp`);
+  writeFileSync(tmp, r.csv);
+  renameSync(tmp, path);
+  return { path, rows: r.rows };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1032,13 +1065,6 @@ export function newPack(
     throw err;
   }
 
-  // Commands as they run from the current folder: a pack library next to the bot gets
-  // `node ../radiobot/scripts/…`. Forward slashes and quotes work in Bash and PowerShell alike.
-  const arg = (p: string) => {
-    const s = (relative(process.cwd(), p) || '.').replace(/\\/g, '/');
-    return /\s/.test(s) ? `"${s}"` : s;
-  };
-  const script = (name: string) => `node ${arg(rootPath('scripts', name))}`;
   const nextSteps = [
     idsFile
       ? `Add "${id}" to ${idsFile}: every pack ID is recorded there, and is never reused (this tool doesn't edit that file).`
@@ -1046,10 +1072,25 @@ export function newPack(
     `Fill in pack.json: name, description, owner, countries, regions, languages, categories and brandLabels. ${join(template, 'README.md')} explains every field.`,
     `Put one row per stream in ${join(dir, INTAKE_FILE)}, and one row with an empty url for a station that has no stream yet. The pack is not valid until it has at least one station.`,
     `Run: ${script('pack-author.ts')} generate ${arg(dir)} (in a git checkout of a pack library, add --base origin/main so the version is bumped only once)`,
-    `Describe how the sources were found in ${PROVENANCE_FILE}, and put a probe report in evidence/ (validate-catalogue --probe --json).`,
+    `Describe how the sources were found in ${PROVENANCE_FILE}, and put a probe report in evidence/: ${probeCommand(dir, id)}`,
     `Check: ${script('validate-catalogue.ts')} --pack ${arg(dir)} --strict`,
   ];
   return { dir, idsFile, nextSteps };
+}
+
+// Commands as they run from the current folder: a pack library next to the bot gets
+// `node ../radiobot/scripts/…`. Forward slashes and quotes work in Bash and PowerShell alike.
+function arg(p: string): string {
+  const s = (relative(process.cwd(), p) || '.').replace(/\\/g, '/');
+  return /\s/.test(s) ? `"${s}"` : s;
+}
+function script(name: string): string {
+  return `node ${arg(rootPath('scripts', name))}`;
+}
+
+/** The command that checks every enabled source of a pack and writes the probe report strict mode reads. */
+export function probeCommand(dir: string, id: string): string {
+  return `${script('validate-catalogue.ts')} --pack ${arg(dir)} --probe --pack-id ${id} --json ${arg(join(dir, 'evidence', 'probe-YYYY-MM-DD.json'))}`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1122,8 +1163,11 @@ export function strictProblems(pack: StationPack): string[] {
   for (const file of walk(dir))
     if (IMAGE_EXTENSIONS.has(extname(file).toLowerCase()))
       p.push(`${at}: packs may not hold images or logos (${file}).`);
-  const report = readNewestReport(dir);
-  if (report === null) p.push(`${at}: evidence/ needs at least one .json probe report.`);
+  const report = readNewestReport(dir, meta.id);
+  if (report === null)
+    p.push(
+      `${at}: evidence/ needs at least one .json probe report. Write one with: ${probeCommand(dir, meta.id)}`,
+    );
   else if (typeof report.problem === 'string') p.push(`${at}: ${report.problem}`);
   else {
     const ids = new Set(pack.sources.map((s) => s.id));
@@ -1135,7 +1179,7 @@ export function strictProblems(pack: StationPack): string[] {
       );
     else if (ours.length === 0)
       p.push(
-        `${at}: ${where} holds no probe of this pack's sources. Run the live check with --pack-id ${meta.id}.`,
+        `${at}: ${where} holds no probe of this pack's sources. Run the live check with --pack-id ${meta.id}: ${probeCommand(dir, meta.id)}`,
       );
     else if (!ours.some((r) => r.outcome.success))
       p.push(
@@ -1173,7 +1217,7 @@ export function failureAdvice(code: string | null | undefined, detail?: string |
 
 /** Things worth a look in a library pack that don't stop it being published. */
 export function strictWarnings(pack: StationPack): string[] {
-  const report = readNewestReport(pack.dir);
+  const report = readNewestReport(pack.dir, pack.meta.id);
   if (report === null || typeof report.problem === 'string') return [];
   const enabled = new Set(pack.sources.filter((s) => s.enabled).map((s) => s.id));
   return report.probes
@@ -1201,6 +1245,7 @@ type ProbeReport = z.infer<typeof probeReportSchema>;
 /** A pack's newest evidence/*.json file (latest date in its name, then name), read as a probe report. */
 function readNewestReport(
   dir: string,
+  id: string,
 ): ({ name: string; problem?: undefined } & ProbeReport) | { name: string; problem: string } | null {
   const evidence = join(dir, 'evidence');
   if (!existsSync(evidence)) return null;
@@ -1215,7 +1260,7 @@ function readNewestReport(
   } catch {
     return {
       name,
-      problem: `evidence/${name} is not a probe report: write one with validate-catalogue --probe --json.`,
+      problem: `evidence/${name} is not a probe report: write one with ${probeCommand(dir, id)}`,
     };
   }
 }
@@ -1269,6 +1314,8 @@ export interface BuildLibraryOptions {
   collectionsDir?: string | null;
   withdrawnFile?: string | null;
   now?: Date;
+  /** The largest index allowed (MAX_INDEX_BYTES, what a bot accepts); tests pass a smaller one. */
+  maxIndexBytes?: number;
 }
 
 /** The newest `YYYY-MM-DD` date in the names of a pack's evidence/*.json files, if any. */
@@ -1449,6 +1496,14 @@ export function buildLibrary(opts: BuildLibraryOptions): { index: LibraryIndex; 
   };
   const checked = libraryIndexSchema.safeParse(index);
   if (!checked.success) problems.push(zodProblem('The library index', checked.error));
+  // A bot refuses an index larger than this, so a library that outgrew it would install nothing.
+  const indexText = `${JSON.stringify(index, null, 2)}\n`;
+  const indexBytes = Buffer.byteLength(indexText, 'utf8');
+  const maxIndexBytes = opts.maxIndexBytes ?? MAX_INDEX_BYTES;
+  if (indexBytes > maxIndexBytes)
+    problems.push(
+      `The library index would be ${indexBytes} bytes, more than the ${maxIndexBytes} a bot accepts. Shorten descriptions, or split the library.`,
+    );
   if (problems.length) throw new AuthorError(problems.join('\n'));
 
   mkdirSync(outDir, { recursive: true });
@@ -1463,7 +1518,7 @@ export function buildLibrary(opts: BuildLibraryOptions): { index: LibraryIndex; 
     files.push(b.path);
   }
   const indexPath = join(outDir, 'index.json');
-  writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\n`);
+  writeFileSync(indexPath, indexText);
   files.push(indexPath);
   return { index: checked.data!, files };
 }
@@ -1549,7 +1604,7 @@ export function publishedVersion(dir: string, ref: string): { version: string | 
 
 const USAGE = `Usage:
   node scripts/pack-author.ts new <pack-id> [--root <folder>] [--ids <pack-ids.json>]
-  node scripts/pack-author.ts export <pack-dir>
+  node scripts/pack-author.ts export <pack-dir> [--force]
   node scripts/pack-author.ts generate <pack-dir> [--base <git-ref>]
   node scripts/pack-author.ts build-library <packs-root> <out-dir> --base-url <url> [--collections <dir>] [--withdrawn <file>]
   node scripts/pack-author.ts diff-check <old-pack-dir> <new-pack-dir>
@@ -1559,12 +1614,15 @@ function parseArgs(
   args: readonly string[],
   positionals: number,
   options: readonly string[],
-): { pos: string[]; opt: Map<string, string> } {
+  flags: readonly string[] = [],
+): { pos: string[]; opt: Map<string, string>; flag: Set<string> } {
   const pos: string[] = [];
   const opt = new Map<string, string>();
+  const flag = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
-    if (a.startsWith('--')) {
+    if (flags.includes(a)) flag.add(a);
+    else if (a.startsWith('--')) {
       if (!options.includes(a)) throw new AuthorError(`Unknown option ${a}.\n${USAGE}`);
       const v = args[i + 1];
       if (v === undefined || v.startsWith('--')) throw new AuthorError(`${a} needs a value.`);
@@ -1573,7 +1631,7 @@ function parseArgs(
     } else pos.push(a);
   }
   if (pos.length !== positionals) throw new AuthorError(USAGE);
-  return { pos, opt };
+  return { pos, opt, flag };
 }
 
 export function main(argv: readonly string[]): number {
@@ -1589,11 +1647,9 @@ export function main(argv: readonly string[]): number {
         return 0;
       }
       case 'export': {
-        const { pos } = parseArgs(rest, 1, []);
-        const dir = resolve(pos[0]!);
-        const r = exportIntake(dir);
-        writeFileSync(join(dir, INTAKE_FILE), r.csv);
-        out(`Wrote ${join(dir, INTAKE_FILE)}: ${r.rows} rows.`);
+        const { pos, flag } = parseArgs(rest, 1, [], ['--force']);
+        const r = writeIntake(resolve(pos[0]!), { force: flag.has('--force') });
+        out(`Wrote ${r.path}: ${r.rows} rows.`);
         return 0;
       }
       case 'generate': {

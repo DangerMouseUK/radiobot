@@ -17,7 +17,7 @@ import {
   tooNewFor,
 } from './pack-library.ts';
 import type { PackStore } from './pack-store.ts';
-import type { ChunkedPack, PackWorkerRequest } from './pack-worker.ts';
+import type { ChunkedPack, PackWorkerRequest, UnchangedPack } from './pack-worker-job.ts';
 import {
   discoverPackDirs,
   PACK_ID,
@@ -51,7 +51,26 @@ export const checkBundleInWorker = (bytes: Uint8Array, entry: LibraryPack, signa
  * chunks, each parsed here in a turn of its own (see `ChunkedPack`).
  */
 export async function loadPackInWorker(dir: string, signal?: AbortSignal): Promise<StationPack> {
-  const { pack, stations, sources } = await packWorker<ChunkedPack>({ kind: 'dir', dir }, signal);
+  return unchunk(await packWorker<ChunkedPack>({ kind: 'dir', dir }, signal));
+}
+
+/**
+ * Like `loadPackInWorker`, but null when the folder's files still have `contentHash` (the pack as
+ * loaded now): the worker then only reads and hashes them, and nothing crosses to this thread.
+ */
+export async function reloadPackInWorker(
+  dir: string,
+  contentHash: string | null,
+  signal?: AbortSignal,
+): Promise<StationPack | null> {
+  const r = await packWorker<ChunkedPack | UnchangedPack>(
+    { kind: 'dir', dir, unlessHash: contentHash },
+    signal,
+  );
+  return 'unchanged' in r ? null : unchunk(r);
+}
+
+async function unchunk({ pack, stations, sources }: ChunkedPack): Promise<StationPack> {
   for (const chunk of stations) {
     pack.stations.push(...(JSON.parse(chunk) as PackStation[]));
     await yieldToEventLoop();
@@ -79,8 +98,12 @@ export interface PackManagerDeps {
   transaction: <T>(fn: () => T) => T;
   http: SafeHttpClient;
   logger: Logger;
-  /** Runs a job with the bot's other background work: one at a time, never while a stream starts. */
-  background: <T>(fn: () => Promise<T>) => Promise<T>;
+  /**
+   * Runs a job with the bot's other background work: one at a time, never while a stream starts.
+   * `automatic` marks work nobody is waiting for (the daily check), which also waits for a stream
+   * that has just started to settle (`SourceService.runInBackground`).
+   */
+  background: <T>(fn: () => Promise<T>, opts?: { automatic?: boolean }) => Promise<T>;
   /** Called after packs were added, replaced or removed (re-plan syncs, refresh views). */
   onChange: () => void;
   /** Called when a pack is removed or withdrawn, so anything playing its stations stops. */
@@ -89,6 +112,8 @@ export interface PackManagerDeps {
   libraryUrl?: string;
   now?: () => number;
 }
+
+const AUTOMATIC = { automatic: true } as const;
 
 /** How long a downloaded index is reused before asking the library again. */
 const INDEX_TTL_MS = 10 * 60_000;
@@ -239,12 +264,18 @@ export class PackManager {
       const out = { loaded: [] as string[], removed: [] as string[], skipped: [] as string[] };
       const seen = new Set<string>();
       for (const dir of discoverPackDirs(store.dir)) {
-        let pack: StationPack;
+        // The pack loaded from this folder now: if its files haven't changed, nothing is parsed.
+        const loaded = this.#d.registry.packs.find((p) => p.dir === dir && p.origin === 'installed');
+        let pack: StationPack | null;
         try {
-          pack = await loadPackInWorker(dir, signal);
+          pack = await reloadPackInWorker(dir, loaded?.contentHash ?? null, signal);
         } catch (err) {
           this.#skip(dir, (err as Error).message);
           out.skipped.push(dir);
+          continue;
+        }
+        if (!pack) {
+          seen.add(loaded!.meta.id);
           continue;
         }
         seen.add(pack.meta.id);
@@ -320,8 +351,9 @@ export class PackManager {
   }
 
   /**
-   * The daily check: notes newer versions (an admin installs them), removes official packs the
-   * library has withdrawn, and retries restoring missing packs. Runs as a background job.
+   * The daily check: notes newer versions (the bot's operator installs them), removes official
+   * packs the library has withdrawn, and retries restoring missing packs. Runs as automatic
+   * background work: nobody is waiting for it, so it also waits for a new stream to settle.
    */
   check(signal?: AbortSignal): Promise<void> {
     return this.#d.background(async () => {
@@ -346,7 +378,7 @@ export class PackManager {
         );
       }
       await this.restoreMissing(signal);
-    });
+    }, AUTOMATIC);
   }
 
   #notice(text: string): void {

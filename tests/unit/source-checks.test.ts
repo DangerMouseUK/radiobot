@@ -289,6 +289,148 @@ describe('background checks stay out of the way', () => {
     expect(t.source('joined').lastFailureCode).toBe('HTTP_TIMEOUT');
   });
 
+  it('lets a stream that starts interrupt background checks nobody waits for, unrecorded', async () => {
+    const t = harness([{ id: 'bg', host: 'a.example.net' }], 300);
+    t.service.refreshInBackground(['bg']);
+    await until(() => t.peak() === 1);
+    t.service.holdBackground(10);
+    await until(() => t.log.length === 1);
+    expect(t.log[0]!.interrupted).toBe(true);
+    expect(t.source('bg').lastProbeAt).toBeNull();
+    expect(t.repos.stations.listProbeResults('bg', 10)).toEqual([]);
+  });
+
+  it('never interrupts a background check a play has joined when a stream starts', async () => {
+    const t = harness([{ id: 'joined', host: 'a.example.net' }], 120);
+    t.service.refreshInBackground(['joined']);
+    await until(() => t.peak() === 1);
+    const play = t.service.probe('joined');
+    t.service.holdBackground(10);
+    const report = await play;
+    expect(report.outcome.failureCode).toBe('HTTP_TIMEOUT');
+    expect(t.log.map((x) => x.interrupted)).toEqual([false]);
+  });
+
+  it('starts a new check for a play rather than sharing one a stream start interrupted', async () => {
+    const t = harness([{ id: 'x', host: 'a.example.net' }], 100);
+    t.service.refreshInBackground(['x']);
+    await until(() => t.peak() === 1);
+    // The session holds background work, then checks the station it is starting.
+    t.service.holdBackground(10);
+    const report = await t.service.probe('x');
+    expect(report.outcome.failureCode).toBe('HTTP_TIMEOUT');
+    expect(t.log.map((x) => x.interrupted)).toEqual([true, false]);
+    expect(t.repos.stations.listProbeResults('x', 10)).toHaveLength(1);
+  });
+
+  it('waits out the settle period for automatic work only', async () => {
+    const t = harness([{ id: 'a', host: 'a.example.net' }], 1);
+    const t0 = Date.now();
+    t.service.settleBackground(200);
+    t.service.settleBackground(10); // a shorter one never cuts it short
+    t.service.refreshInBackground(['a']);
+    let userAt = 0;
+    await t.service.runInBackground(async () => {
+      userAt = Date.now();
+    });
+    // Work a user asked for (an install, say) goes at once, ahead of the waiting check.
+    expect(userAt - t0).toBeLessThan(150);
+    expect(t.log).toEqual([]);
+    let autoAt = 0;
+    await t.service.runInBackground(
+      async () => {
+        autoAt = Date.now();
+      },
+      { automatic: true },
+    );
+    expect(autoAt - t0).toBeGreaterThanOrEqual(190);
+    // The check that was queued first ran first.
+    expect(t.log).toHaveLength(1);
+    expect(t.log[0]!.start - t0).toBeGreaterThanOrEqual(190);
+    expect(autoAt).toBeGreaterThanOrEqual(t.log[0]!.end);
+  });
+
+  it('lets user work go first when a stream starts while automatic work waits for its turn', async () => {
+    const t = harness([{ id: 'a', host: 'a.example.net' }], 1);
+    const t0 = Date.now();
+    t.service.holdBackground(60);
+    t.service.refreshInBackground(['a']); // takes its turn, then waits for the hold
+    t.service.settleBackground(250); // the stream has its first audio
+    let userAt = 0;
+    await t.service.runInBackground(async () => {
+      userAt = Date.now();
+    });
+    expect(userAt - t0).toBeGreaterThanOrEqual(50);
+    expect(userAt - t0).toBeLessThan(200);
+    expect(t.log).toEqual([]);
+    await until(() => t.log.length === 1);
+    expect(t.log[0]!.start - t0).toBeGreaterThanOrEqual(240);
+  });
+
+  it('stops waiting for the settle period when a full check is stopped', async () => {
+    const t = harness([{ id: 'a', host: 'a.example.net' }], 1);
+    t.service.settleBackground(10_000);
+    const stop = new AbortController();
+    const check = t.service.checkInBackground('a', stop.signal, () => true);
+    setTimeout(() => stop.abort(), 10);
+    await expect(check).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(t.log).toEqual([]);
+  });
+
+  it('queues a full-check item again when a stream start interrupts it', async () => {
+    const t = harness([{ id: 'x', host: 'a.example.net' }], 100);
+    const stop = new AbortController();
+    const check = t.service.checkInBackground('x', stop.signal, () => true);
+    await until(() => t.peak() === 1);
+    t.service.holdBackground(20);
+    const r = await check;
+    expect(r?.report.outcome.failureCode).toBe('HTTP_TIMEOUT');
+    expect(t.log.map((x) => x.interrupted)).toEqual([true, false]);
+    expect(t.log[1]!.start - t.log[0]!.end).toBeGreaterThanOrEqual(10);
+  });
+
+  it('stopping a full check never cancels a play that joined the same check (it gets the result)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const started: string[] = [];
+    const probeImpl: typeof probeSource = async (_deps, url, _budget, signal) => {
+      started.push(url);
+      await new Promise<void>((resolve) => {
+        void gate.then(resolve);
+        signal?.addEventListener('abort', () => resolve());
+      });
+      return { ...emptyOutcome(Date.now()), failureCode: signal?.aborted ? 'CANCELLED' : 'HTTP_TIMEOUT' };
+    };
+    const t = harness([{ id: 'x', host: 'a.example.net' }], 0, { probeImpl });
+    const stop = new AbortController();
+    const check = t.service.checkInBackground('x', stop.signal, () => true);
+    await until(() => started.length === 1);
+    const play = t.service.probe('x');
+    stop.abort();
+    // The full check stops waiting at once, before the check itself has finished…
+    await expect(check).rejects.toMatchObject({ code: 'CANCELLED' });
+    release();
+    // …and the play still gets the check's result, recorded once.
+    const report = await play;
+    expect(report.outcome.failureCode).toBe('HTTP_TIMEOUT');
+    expect(started).toHaveLength(1);
+    expect(t.repos.stations.listProbeResults('x', 10)).toHaveLength(1);
+  });
+
+  it('interrupts a full-check item nobody else waits for when the check is stopped', async () => {
+    const t = harness([{ id: 'x', host: 'a.example.net' }], 300);
+    const stop = new AbortController();
+    const check = t.service.checkInBackground('x', stop.signal, () => true);
+    await until(() => t.peak() === 1);
+    stop.abort();
+    await expect(check).rejects.toMatchObject({ code: 'CANCELLED' });
+    await until(() => t.log.length === 1);
+    expect(t.log[0]!.interrupted).toBe(true);
+    expect(t.repos.stations.listProbeResults('x', 10)).toEqual([]);
+  });
+
   it('respects the back-off when deciding what is due in the background', () => {
     const t = harness([]);
     expect(t.service.needsProbe(failing(1), T0 + 9 * MIN)).toBe(false);

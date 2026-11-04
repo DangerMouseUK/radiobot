@@ -89,28 +89,31 @@ export class CustomStationService {
       slug = `${baseSlug}-${n++}`;
     const stationId = newId('custom');
     const sourceId = newId('src').replace(':', '-');
-    this.#repo.insertCustomStation({
-      id: stationId,
-      guildId,
-      slug,
-      displayName: name,
-      description: cleanText(input.description, 300),
-      category: cleanText(input.category, 40),
-      websiteUrl: website,
-      language: cleanText(input.language, 20),
-      createdById: userId,
-    });
-    this.#repo.insertSource({
-      id: sourceId,
-      stationId,
-      url,
-      label: 'Custom stream',
-      priority: 10,
-      transportHint: null,
-      codecHint: null,
-      provenance: 'custom-user',
-      provenanceDetail: `Added by a server administrator on ${new Date().toISOString().slice(0, 10)}.`,
-      rightsStatus: 'unreviewed',
+    // Both or neither: a station without its stream would be left behind if the second write failed.
+    this.#repo.transaction(() => {
+      this.#repo.insertCustomStation({
+        id: stationId,
+        guildId,
+        slug,
+        displayName: name,
+        description: cleanText(input.description, 300),
+        category: cleanText(input.category, 40),
+        websiteUrl: website,
+        language: cleanText(input.language, 20),
+        createdById: userId,
+      });
+      this.#repo.insertSource({
+        id: sourceId,
+        stationId,
+        url,
+        label: 'Custom stream',
+        priority: 10,
+        transportHint: null,
+        codecHint: null,
+        provenance: 'custom-user',
+        provenanceDetail: `Added by a server administrator on ${new Date().toISOString().slice(0, 10)}.`,
+        rightsStatus: 'unreviewed',
+      });
     });
     let report: ProbeReport;
     try {

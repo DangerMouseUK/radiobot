@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+A performance and quality pass. The stream comes first: everything else the bot does now does less on the thread that sends voice packets, and does it later.
+
+### Added
+
+- **`VOICE_THREAD=worker`** (optional, off by default): the voice connections and the 20 ms timer that sends their packets run on a thread of their own. Commands, the database, the Discord gateway and the main thread's memory clean-up can then no longer hold the audio up. FFmpeg, fetching the station and everything else stay where they were, and the audio is unchanged: one encode, the same bitrate. If the worker can't start, the bot logs an error and uses the main thread. `/radio stats` shows the worker's own event-loop delay, memory clean-up and heap. It hasn't been tried on a live Discord call yet.
+- `/radio stats` shows two new lines. **Memory clean-up** gives the number of garbage-collection pauses in the last minute and the longest. It also shows how much CPU the bot used, how often the system took the CPU away from it, and on Linux the CPU time the host gave to other machines ("steal"). **Silence filled in** shows how much silence the voice player had to send because no audio was ready, for this stream and in the last minute. The log's "event loop was delayed" warning carries the same figures and lists the late voice packets of that minute with their times. It is also logged when a pause in memory clean-up alone reaches 50 ms. Gateway reconnects and resumes are logged too. Together these show what was behind a gap a listener heard.
+
+### Changed
+
+- **Background work waits for a stream to settle in.** Checks of a station's other sources, **Check all sources again**, scheduled syncs, the daily pack check and the hourly clean-up now wait until the newest stream has played for 3 minutes, not 30 seconds. Listeners' apps are still settling in during a stream's first minutes, which is when a late packet is easiest to hear. Installing, updating or removing a pack still waits only 30 seconds. A stream that starts also stops any background check nobody is waiting for; the check is simply done again later.
+- **The hourly clean-up of old check results** now deletes them a few hundred at a time with breaks in between, as background work. It used to delete them all in one go, which could hold up voice packets for tens of milliseconds a month after a large check. After a restart, every source's history is now trimmed to `PROBE_HISTORY_LIMIT` again only if that limit was lowered.
+- Less work on the thread that sends voice packets, with the same results:
+  - autocomplete with nothing typed, and with one or two letters;
+  - `/radio list` and its pages, `/radio browse` pages and `/radio stats`;
+  - Next and Previous;
+  - installing a pack or updating one that drops many sources;
+  - reloading packs, and a database rollback;
+  - HLS playlist refreshes.
+- On Linux, the bot's worker threads for background work (pack checks, station-list parsing, database checkpoints) run at the lowest CPU priority, like stream checks already did.
+- The control panel's 5-minute refresh only edits a panel when something on it changed.
+- Buttons have some colour again, with one meaning per colour. **Leave** is red, like Discord's own Disconnect; **Stop** stays grey, because the bot stays in the channel. **Install** and **Update** on a pack card are blurple, so a green button never sits next to a red **Remove**. Green now only means a setting is on. **Show all stations** in a browse filtered to favourites is grey, like the other filter buttons. Every button still has its text label.
+- A server can keep up to 1000 favourites and source choices for up to 1000 stations, and `/radio import` accepts as many (it accepted 200). `/radio export` warns when its file is too large for `/radio import`.
+- Suggestions while typing a command option now follow the same access rules as the command. Nothing is suggested in a channel where the member can't use the bot, and `/radio source …` suggestions are for admins only.
+- `/radio help` describes the three quality modes correctly. An empty `/radio list pack:…` now says whether that pack isn't installed, is switched off, or has no stations. An empty catalogue says the bot's operator installs packs.
+- SQLite keeps up to 8 MB of the database in memory and keeps temporary data in memory. A new migration (0005) adds an index for the last sync of each pack.
+- `radio-bot status` now fetches release tags from GitHub, so it reports a new release.
+- `radio-bot restore` streams the backup into the bot's data instead of mounting it, so it also works when your user ID isn't 1000.
+- `radio-bot`'s 90-second wait for the bot to come online now really lasts 90 seconds (it took 2–3 minutes on a slow host).
+- Pack tools:
+  - `validate-catalogue` refuses unknown options, options without a value, and `--probe` names that match no source (exit 2), instead of ignoring them. It also checks the template pack against `EXTRA_PACKS_DIR` packs for clashes.
+  - `pack-author export` won't overwrite an `intake.csv` that holds other rows unless you add `--force`.
+  - `build-library` refuses an index larger than the bot accepts (2 MiB).
+  - `register-commands` refuses arguments that aren't server IDs, reaches more than 200 servers, and exits 1 when a server failed.
+
+### Fixed
+
+- Pressing **Stop the check** on **Check all sources again** (or shutting down) while someone played a station whose source was being checked cancelled that play too. The play then showed "Replaced by a newer request" and stayed stuck. Now Stop only stops checks nobody else is waiting for.
+- After a voice reconnect, `/radio stats` could show a negative or wrong packets-per-second figure for about a minute.
+- A server's `/radio export` could fail its own `/radio import` once it had more than 200 favourites or source choices.
+- `radio-bot packs update <pack>` refused a pack that is installed but shown as **Not loaded**, although that is the documented fix. A plain `radio-bot packs update` failed whenever one pack wasn't loaded.
+- `radio-bot packs remove` with a mistyped or never-installed name recorded it as removed on purpose, which stopped the bot putting that pack back automatically.
+- `radio-bot packs` said a change was loading even when adding, updating or removing the pack had failed.
+- `radio-bot uninstall` stopped without a message if saving a copy of the data failed. It now says that nothing was removed.
+- A typed `*` at the installer's pack prompt was expanded to file names.
+- Adding a custom station could leave a station without its stream if writing the stream failed.
+- A pack naming a sync adapter such as `constructor` or `toString` passed validation and then failed at its first sync.
+- In an HLS playlist with an unusable segment address, later segments could be renumbered once that segment left the window, and a segment could be sent twice.
+
 ## [1.2.3] - 2026-11-04
 
 ### Added

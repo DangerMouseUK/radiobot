@@ -47,6 +47,13 @@ const recordSchema = z.object({
 export type InstalledRecord = z.infer<typeof recordSchema>;
 export type InstalledEntry = InstalledRecord['packs'][string];
 
+/** A checked bundle (`InstallableBundle` from a worker, or a `CheckedBundle`), ready to write. */
+export type BundleToInstall = {
+  pack: { meta: Pick<InstallableBundle['pack']['meta'], 'id' | 'version'> };
+  files: Readonly<Record<string, string | Uint8Array | null>>;
+  sha256: string;
+};
+
 export class PackStore {
   readonly dir: string;
 
@@ -81,8 +88,11 @@ export class PackStore {
     return existsSync(join(this.packDir(id), 'pack.json'));
   }
 
-  /** Writes a checked bundle as a pack folder, replacing any older copy, and records it. */
-  async install(bundle: InstallableBundle, source: string, now: Date = new Date()): Promise<string> {
+  /**
+   * Writes a checked bundle as a pack folder, replacing any older copy, and records it. Its files
+   * may be text or UTF-8 bytes (as the bot's worker sends them); either way the same bytes land.
+   */
+  async install(bundle: BundleToInstall, source: string, now: Date = new Date()): Promise<string> {
     const id = bundle.pack.meta.id;
     const target = this.packDir(id);
     const tag = randomBytes(4).toString('hex');

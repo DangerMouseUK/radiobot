@@ -29,6 +29,7 @@ import { Db, loadMigrations } from '../src/persistence/db.ts';
 import { StationRepository } from '../src/persistence/repositories/stations.ts';
 import { rootPath } from '../src/shared/paths.ts';
 import { siblingModule } from '../src/shared/workers.ts';
+import { VoiceThread } from '../src/voice/voice-thread.ts';
 
 const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
 const ffprobe = process.env.FFPROBE_PATH || 'ffprobe';
@@ -107,6 +108,18 @@ try {
     check(entries.length === list.length, `${entries.length} entries, expected ${list.length}`);
     check(entries[199]?.name === 'Smoke Station 199', 'the entries came back wrong');
     return `${entries.length} entries`;
+  });
+
+  await step('voice worker thread: the voice libraries and a DAVE session', async () => {
+    const voice = new VoiceThread({ logger });
+    try {
+      await voice.start();
+      const r = await voice.selfTest();
+      check(r.ok, `the self-test failed: ${r.error ?? 'no reason given'}`);
+      return `DAVE protocol ${r.daveProtocolVersion}, heap ${r.heapUsedMb} MB`;
+    } finally {
+      await voice.stop();
+    }
   });
 
   await step('FFmpeg with libopus', async () => {

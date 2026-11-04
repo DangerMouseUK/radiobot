@@ -196,7 +196,7 @@ describe('boot policy (§9.3)', () => {
 });
 
 describe('probe history retention', () => {
-  it('keeps only the newest N per source', () => {
+  it('keeps only the newest N per source', async () => {
     const { stations } = memoryDb();
     stations.upsertProviderStation({
       id: 'demo:x',
@@ -252,9 +252,10 @@ describe('probe history retention', () => {
       });
     }
     // Later hourly runs only age results out; the per-source limit is applied as results arrive.
-    stations.pruneProbeResults(30, 30, false);
+    const pause = async () => {};
+    await stations.pruneProbeHistory({ keep: 30, days: 30, pause, trimEverySource: false });
     expect(stations.listProbeResults('s', 100)).toHaveLength(40);
-    stations.pruneProbeResults(30, 30);
+    await stations.pruneProbeHistory({ keep: 30, days: 30, pause, trimEverySource: true });
     expect(stations.listProbeResults('s', 100)).toHaveLength(30);
     const newest = stations.listProbeResults('s', 1)[0]!.startedAt;
     expect(stations.pruneSourceHistory('s', 5)).toBe(25);

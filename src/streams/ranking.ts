@@ -65,6 +65,18 @@ export function checkEligibility(s: StationSource, now: number): EligibilityRepo
   return { sourceId: s.id, eligible: reasons.length === 0, reasons };
 }
 
+/**
+ * `checkEligibility(s, now).eligible`, without building the reasons: for counting and listing,
+ * which ask it for every source of a catalogue. The two must always agree (a test holds them to it).
+ */
+export function isEligibleNow(s: StationSource, now: number): boolean {
+  if (!s.enabled || s.rightsStatus === 'blocked' || s.identityStatus !== 'verified') return false;
+  const v = s.verificationState;
+  if (v === 'blocked_by_policy' || v === 'discovered' || v === 'resolved' || v === 'offline') return false;
+  if (s.lastProbeAt === null || !s.codec) return false;
+  return !(s.cooldownUntil && Date.parse(s.cooldownUntil) > now);
+}
+
 /** Best bitrate evidence available, with its strength. */
 export function effectiveBitrate(
   s: Pick<StationSource, 'measuredBitrateKbps' | 'codecBitrateKbps' | 'advertisedBitrateKbps'>,

@@ -3,10 +3,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import type { StationRepository } from '../persistence/repositories/stations.ts';
+import { yieldToEventLoop } from '../shared/async.ts';
 import { rootPath } from '../shared/paths.ts';
 import { compareText, normalizeName } from '../shared/text.ts';
 import { botVersion, compareVersions } from '../shared/version.ts';
-import { SYNC_ADAPTERS } from './sync-adapters.ts';
+import { isSyncAdapter } from './sync-adapters.ts';
 
 /**
  * Station packs (FR-001). A pack is a folder with three reviewable JSON files:
@@ -80,7 +81,7 @@ const packMetaSchema = z.object({
     .default([]),
   sync: z
     .object({
-      adapter: z.string().refine((a) => a in SYNC_ADAPTERS, 'unknown sync adapter'),
+      adapter: z.string().refine(isSyncAdapter, 'unknown sync adapter'),
       url: z.string().url(),
     })
     .nullable()
@@ -187,6 +188,24 @@ export function packContentHash(texts: ReadonlyArray<string | null>): string {
   const h = createHash('sha256');
   for (const t of texts) h.update(`${t?.length ?? -1}:`).update(t ?? '');
   return h.digest('hex');
+}
+
+/**
+ * The `contentHash` a pack folder's files have now (as `loadPack` would work it out), without
+ * parsing or checking them; null if one can't be read. Cheap next to a load, so a reload can skip
+ * a pack that hasn't changed.
+ */
+export function packFolderHash(dir: string): string | null {
+  try {
+    return packContentHash(
+      PACK_FILE_NAMES.map((name) => {
+        const path = join(dir, name);
+        return name !== 'sources.json' || existsSync(path) ? readFileSync(path, 'utf8') : null;
+      }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 /** Loads and cross-validates one pack folder. Throws with a precise message on any problem. */
@@ -324,7 +343,10 @@ export class PackRegistry {
   readonly #byId = new Map<string, StationPack>();
   readonly #enabled = new Set<string>();
   readonly #brand = new Map<string, Set<string>>();
+  /** Each pack's place in pack order, for `orderOf`. */
+  readonly #order = new Map<string, number>();
   readonly #selection: PackSelection;
+  #generation = 0;
   /** Installed packs that failed their checks at start-up or on a reload. */
   skipped: SkippedPack[] = [];
 
@@ -338,12 +360,24 @@ export class PackRegistry {
     this.#rebuild();
   }
 
+  /**
+   * Goes up whenever the set of packs, their order or which are switched on may have changed (a
+   * pack added, replaced, removed or reloaded). Never goes down: a cheap key for anything worked
+   * out from the packs, valid while it stays the same.
+   */
+  get generation(): number {
+    return this.#generation;
+  }
+
   #rebuild(): void {
+    this.#generation++;
     this.#packs.sort((a, b) => a.meta.order - b.meta.order || compareText(a.meta.id, b.meta.id));
     this.#byId.clear();
     this.#brand.clear();
     this.#enabled.clear();
-    for (const p of this.#packs) {
+    this.#order.clear();
+    for (const [i, p] of this.#packs.entries()) {
+      this.#order.set(p.meta.id, i);
       this.#byId.set(p.meta.id, p);
       this.#brand.set(p.meta.id, new Set(p.meta.brandLabels.map(normalizeName).filter(Boolean)));
       if (
@@ -426,8 +460,7 @@ export class PackRegistry {
   /** Sort key: enabled packs in pack order, custom stations after all packs. */
   orderOf(provider: string): number {
     if (provider === CUSTOM_PROVIDER) return Number.MAX_SAFE_INTEGER;
-    const idx = this.#packs.findIndex((p) => p.meta.id === provider);
-    return idx < 0 ? Number.MAX_SAFE_INTEGER - 1 : idx;
+    return this.#order.get(provider) ?? Number.MAX_SAFE_INTEGER - 1;
   }
 
   /** Normalised brand labels of a pack, used by identity checks. */
@@ -457,9 +490,9 @@ export interface SeedSummary {
 export function seedPacks(repo: StationRepository, registry: PackRegistry): SeedSummary {
   const summary = emptySeedSummary(registry.packs.length);
   for (const pack of registry.packs) {
-    seedStations(repo, pack, pack.stations, summary);
-    seedSources(repo, pack.sources, summary);
-    disableRemovedSources(repo, pack, summary);
+    for (const s of pack.stations) seedStation(repo, pack, s, summary);
+    for (const src of pack.sources) seedSource(repo, src, summary);
+    for (const id of removedSources(repo, pack)) disableRemovedSource(repo, id, summary);
   }
   return summary;
 }
@@ -475,95 +508,114 @@ function emptySeedSummary(packs: number): SeedSummary {
   };
 }
 
-/** Rows written per transaction by `seedPackInSlices`, with the event loop given back in between. */
-const SEED_SLICE = 50;
+/**
+ * Longest stretch of writes in one of `seedPackInSlices`'s transactions before it commits and gives
+ * the event loop a turn. A row can overrun it by one write plus the commit.
+ */
+const SEED_SLICE_MS = 4;
+/** Most rows in one such transaction, whatever the clock says. */
+const SEED_SLICE_ROWS = 500;
+
+export interface SeedSliceOptions {
+  /** The clock that ends a slice (default `performance.now`). */
+  now?: () => number;
+  sliceMs?: number;
+  maxRows?: number;
+}
 
 /**
- * Seeds one pack while the bot runs: the same writes as `seedPacks`, in small transactions with
- * the event loop given back between them, so a pack of 2000 stations never holds up voice packets.
+ * Seeds one pack while the bot runs: the same writes as `seedPacks`, in short transactions (a few
+ * milliseconds each) with the event loop given back between them, so a pack of 2000 stations, or
+ * an update that drops a thousand sources, never holds up voice packets.
  */
 export async function seedPackInSlices(
   repo: StationRepository,
   transaction: <T>(fn: () => T) => T,
   pack: StationPack,
+  opts: SeedSliceOptions = {},
 ): Promise<SeedSummary> {
   const summary = emptySeedSummary(1);
-  const pause = () => new Promise<void>((r) => setImmediate(r));
-  for (let i = 0; i < pack.stations.length; i += SEED_SLICE) {
-    transaction(() => seedStations(repo, pack, pack.stations.slice(i, i + SEED_SLICE), summary));
-    await pause();
-  }
-  for (let i = 0; i < pack.sources.length; i += SEED_SLICE) {
-    transaction(() => seedSources(repo, pack.sources.slice(i, i + SEED_SLICE), summary));
-    await pause();
-  }
-  transaction(() => disableRemovedSources(repo, pack, summary));
+  const now = opts.now ?? (() => performance.now());
+  const sliceMs = opts.sliceMs ?? SEED_SLICE_MS;
+  const maxRows = Math.max(1, opts.maxRows ?? SEED_SLICE_ROWS);
+  const inSlices = async <T>(items: readonly T[], write: (item: T) => void): Promise<void> => {
+    let i = 0;
+    while (i < items.length) {
+      const start = now();
+      transaction(() => {
+        const end = Math.min(items.length, i + maxRows);
+        do write(items[i++]!);
+        while (i < end && now() - start < sliceMs);
+      });
+      await yieldToEventLoop();
+    }
+  };
+  await inSlices(pack.stations, (s) => seedStation(repo, pack, s, summary));
+  await inSlices(pack.sources, (src) => seedSource(repo, src, summary));
+  // Collected first, then written in slices like the rest: an update can drop a thousand sources.
+  await inSlices(removedSources(repo, pack), (id) => disableRemovedSource(repo, id, summary));
   return summary;
 }
 
-function seedStations(
-  repo: StationRepository,
-  pack: StationPack,
-  stations: readonly PackStation[],
-  summary: SeedSummary,
-): void {
-  for (const s of stations) {
-    const r = repo.upsertProviderStation({
-      id: s.id,
-      provider: pack.meta.id,
-      slug: s.slug,
-      externalId: s.externalId,
-      displayName: s.displayName,
-      aliases: s.aliases,
-      tags: s.tags,
-      category: s.category,
-      sortOrder: s.order,
-      officialPageUrl: s.officialPage,
-      officialLastSeenAt: s.catalogueLastSeen,
-      catalogueStatus: s.catalogueStatus,
-      description: s.description,
-    });
-    if (r === 'inserted') summary.stationsInserted++;
-    if (r === 'updated') summary.stationsUpdated++;
+function seedStation(repo: StationRepository, pack: StationPack, s: PackStation, summary: SeedSummary): void {
+  const r = repo.upsertProviderStation({
+    id: s.id,
+    provider: pack.meta.id,
+    slug: s.slug,
+    externalId: s.externalId,
+    displayName: s.displayName,
+    aliases: s.aliases,
+    tags: s.tags,
+    category: s.category,
+    sortOrder: s.order,
+    officialPageUrl: s.officialPage,
+    officialLastSeenAt: s.catalogueLastSeen,
+    catalogueStatus: s.catalogueStatus,
+    description: s.description,
+  });
+  if (r === 'inserted') summary.stationsInserted++;
+  if (r === 'updated') summary.stationsUpdated++;
+}
+
+function seedSource(repo: StationRepository, src: PackSource, summary: SeedSummary): void {
+  const r = repo.upsertSeedSource({
+    id: src.id,
+    stationId: src.stationId,
+    url: src.url,
+    label: src.label,
+    priority: src.priority,
+    transportHint: src.transportHint,
+    codecHint: src.codecHint,
+    provenance: src.provenance,
+    provenanceDetail: src.provenanceDetail,
+    rightsStatus: 'unreviewed',
+  });
+  if (r === 'inserted') summary.sourcesInserted++;
+  if (r === 'updated') summary.sourcesUpdated++;
+  const current = repo.getSource(src.id);
+  const reason = src.enabled ? null : (src.disabledReason ?? 'disabled in the pack manifest');
+  if (current && (current.enabled !== src.enabled || current.disabledReason !== reason)) {
+    repo.setSourceEnabled(src.id, src.enabled, reason);
   }
 }
 
-function seedSources(repo: StationRepository, sources: readonly PackSource[], summary: SeedSummary): void {
-  for (const src of sources) {
-    const r = repo.upsertSeedSource({
-      id: src.id,
-      stationId: src.stationId,
-      url: src.url,
-      label: src.label,
-      priority: src.priority,
-      transportHint: src.transportHint,
-      codecHint: src.codecHint,
-      provenance: src.provenance,
-      provenanceDetail: src.provenanceDetail,
-      rightsStatus: 'unreviewed',
-    });
-    if (r === 'inserted') summary.sourcesInserted++;
-    if (r === 'updated') summary.sourcesUpdated++;
-    const current = repo.getSource(src.id);
-    const reason = src.enabled ? null : (src.disabledReason ?? 'disabled in the pack manifest');
-    if (current && (current.enabled !== src.enabled || current.disabledReason !== reason)) {
-      repo.setSourceEnabled(src.id, src.enabled, reason);
-    }
-  }
-}
+const isPackProvenance = (p: string) => p === 'official-player' || p === 'curated';
 
-function disableRemovedSources(repo: StationRepository, pack: StationPack, summary: SeedSummary): void {
+/** The pack's enabled sources that its manifest no longer lists (read only: nothing is written). */
+function removedSources(repo: StationRepository, pack: StationPack): string[] {
   const manifestIds = new Set(pack.sources.map((s) => s.id));
+  const ids: string[] = [];
   for (const station of repo.listProviderStations(pack.meta.id)) {
     for (const s of repo.listSources(station.id)) {
-      if (
-        (s.provenance === 'official-player' || s.provenance === 'curated') &&
-        !manifestIds.has(s.id) &&
-        s.enabled
-      ) {
-        repo.setSourceEnabled(s.id, false, 'removed from the pack manifest');
-        summary.sourcesDisabled++;
-      }
+      if (isPackProvenance(s.provenance) && !manifestIds.has(s.id) && s.enabled) ids.push(s.id);
     }
   }
+  return ids;
+}
+
+/** Disables a source removed from its pack's manifest, unless that already happened meanwhile. */
+function disableRemovedSource(repo: StationRepository, id: string, summary: SeedSummary): void {
+  if (!repo.getSource(id)?.enabled) return;
+  repo.setSourceEnabled(id, false, 'removed from the pack manifest');
+  summary.sourcesDisabled++;
 }

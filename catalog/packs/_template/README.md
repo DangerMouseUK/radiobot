@@ -2,13 +2,13 @@
 
 This folder is a complete, working example of a station pack. Every field is filled in, so you can see what each one looks like. All the names and addresses are made up (`example.org` addresses never lead anywhere).
 
-The bot never loads this folder by itself, because its name starts with `_`. To start a pack of your own, copy it with the pack tool rather than by hand:
+The bot never loads this folder by itself, because its name starts with `_`. Packs are made in the pack library ([DangerMouseUK/radiobot-packs](https://github.com/DangerMouseUK/radiobot-packs)), not in this repository. To start a pack of your own, copy this one with the pack tool rather than by hand. Run it from your checkout of the pack library, with this repository checked out next to it as `radiobot`:
 
 ```bash
-node scripts/pack-author.ts new my-pack --root catalog/packs
+node ../radiobot/scripts/pack-author.ts new my-pack --root packs
 ```
 
-That makes `catalog/packs/my-pack/` with the files below, emptied out and ready to fill in, and prints the next steps. The full rules for packs are in [catalog/README.md](../../README.md).
+That makes `packs/my-pack/` in the library with the files below, emptied out and ready to fill in, and prints the next steps (the library's playbook explains them too). The full rules for packs are in [catalog/README.md](../../README.md).
 
 JSON files can't hold comments, so this file explains them instead.
 
@@ -18,7 +18,7 @@ JSON files can't hold comments, so this file explains them instead.
 - **`stations.json`**: the stations: their names, and how they are grouped and sorted.
 - **`sources.json`**: the stream addresses for each station, and where each address came from.
 - **`SOURCE_PROVENANCE.md`**: a written record of where the station list and every stream address came from, what was checked and what wasn't. Every source ID must appear in it. The table between `<!-- sources:start -->` and `<!-- sources:end -->` is written by `pack-author.ts generate`; write everything else yourself.
-- **`evidence/`**: reports from checking the streams, written by `node scripts/validate-catalogue.ts --probe --json evidence/probe-YYYY-MM-DD.json`. The newest one must show at least one source playing. The date in the file name tells people when the streams were last checked. The report here is a made-up example.
+- **`evidence/`**: reports from checking the streams, written by `node scripts/validate-catalogue.ts --pack <pack-dir> --probe --pack-id <pack-id> --json <pack-dir>/evidence/probe-YYYY-MM-DD.json` (put today's date in the name). The newest one must show at least one source playing. The date in the file name tells people when the streams were last checked. The report here is a made-up example.
 - **`intake.csv`** (not in this folder): a spreadsheet of the stations and streams that `pack-author.ts export` writes and `pack-author.ts generate` reads back into the JSON files. One row per stream; a station with no stream yet gets one row with an empty `url`.
 
 Never put logos, artwork or other images in a pack.
@@ -34,7 +34,7 @@ Never put logos, artwork or other images in a pack.
 - `countries`: the countries the stations are in, as two-letter codes in capitals, such as `GB` or `FR`.
 - `regions`: areas within those countries, in plain words, such as a county or a city. Up to 60 characters each. May be empty.
 - `languages`: the languages the stations broadcast in, as language codes such as `en`, `fr` or `pt-BR`.
-- `minBotVersion`: the oldest Radio Bot that can use the pack, such as `1.1.0`, or `null`. Older bots skip the pack.
+- `minBotVersion`: the oldest Radio Bot that can use the pack, such as `1.1.0`, or `null`. An older bot won't load it.
 - `disclaimer`: an optional note shown with the station list, or `null`. Don't use it to name a broadcaster.
 - `order`: where the pack is listed among other packs, lowest first. `100` is fine.
 - `enabledByDefault`: `true` to switch the pack on for everyone who installs it; `false` to leave it off until an operator switches it on.
@@ -78,8 +78,10 @@ Each source is one stream address for one station:
 
 ## Checking your pack
 
+From your checkout of the pack library, as above:
+
 ```bash
-node scripts/validate-catalogue.ts --pack catalog/packs/my-pack --strict
+node ../radiobot/scripts/validate-catalogue.ts --pack packs/my-pack --strict
 ```
 
-`--strict` adds the rules for packs in the pack library: a version, an owner, at least one country and language, every source in `SOURCE_PROVENANCE.md`, a live-check report in `evidence/` in which at least one source played, no images and no signed addresses.
+`--strict` adds the rules for packs in the pack library: a version, an owner, at least one country and language, every source in `SOURCE_PROVENANCE.md`, every source ID starting with the pack ID or the station's slug, a live-check report in `evidence/` in which at least one source played, no images and no signed addresses.

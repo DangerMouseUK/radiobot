@@ -77,6 +77,14 @@ describe('HlsReader', () => {
     expect(await readAll(reader)).toBe('<seg102.aac><seg103.aac><seg104.aac><seg2.aac><seg3.aac><seg4.aac>');
   });
 
+  it('follows a long DVR-window playlist from the live edge, reading only what comes next', async () => {
+    const client = fakeClient([playlist(1, 2000), playlist(2, 2000), playlist(4, 2000, { end: true })]);
+    const reader = new HlsReader(client, BASE, newStats(), media(playlist(0, 2000)));
+    expect(await readAll(reader)).toBe(
+      '<seg1997.aac><seg1998.aac><seg1999.aac><seg2000.aac><seg2001.aac><seg2002.aac><seg2003.aac>',
+    );
+  });
+
   it('retries the init section once instead of ending the stream', async () => {
     const stats = newStats();
     const client = fakeClient([], ['init.mp4']);

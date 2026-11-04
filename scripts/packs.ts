@@ -13,8 +13,9 @@
  *
  * Packs are written to the installed-packs folder next to the database (DATABASE_PATH). A running
  * bot loads the change when it receives SIGHUP (`radio-bot packs` sends it), or at its next start.
- * Exits 0 on success and 1 on any failure; with --unchanged-status (radio-bot.sh), add and update
- * exit 3 when every pack was already up to date, so there is nothing to load.
+ * Exits 0 on success and 1 on any failure. With --unchanged-status (radio-bot.sh), add, update and
+ * remove say whether there is anything to load: 3 when every pack was already up to date, and 4 when
+ * some packs changed but others failed; 1 then means that nothing changed.
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -36,7 +37,7 @@ import {
   tooNewFor,
 } from '../src/catalogue/pack-library.ts';
 import { installedPacksDir, PackStore } from '../src/catalogue/pack-store.ts';
-import { PackRegistry, packConflict } from '../src/catalogue/packs.ts';
+import { PACK_ID, PackRegistry, packConflict } from '../src/catalogue/packs.ts';
 import { matchOwner } from '../src/persistence/db.ts';
 import { errorMessage, isRadioError } from '../src/shared/errors.ts';
 import { plural } from '../src/shared/text.ts';
@@ -57,7 +58,7 @@ const HELP = `Manage Radio Bot's station packs.
   list                       Show the installed packs, and any updates
   browse [words]             Show the packs in the library (--country GB, --language fr)
   info <pack>                Show one pack from the library
-  add <pack> [<pack> …]      Install packs (or --collection <name> for a whole collection)
+  add <pack> [<pack> …]      Install packs (or --collection <id> for a whole collection)
   update [<pack> …]          Update installed packs (all of them if none is named)
   remove <pack> [<pack> …]   Remove installed packs
 
@@ -70,15 +71,24 @@ interface Args {
   country: string | null;
   language: string | null;
   collection: string | null;
-  /** For radio-bot.sh: exit with UNCHANGED_STATUS when add or update had nothing to do. */
+  /** For radio-bot.sh: exit with UNCHANGED_STATUS or PARTIAL_STATUS, so it reloads the bot only for a change. */
   unchangedStatus: boolean;
 }
 
 /** add or update changed nothing (every pack was already up to date), so there's nothing to reload. */
 export const UNCHANGED_STATUS = 3;
+/** Some packs were added, updated or removed, but others failed: the change is worth loading. */
+export const PARTIAL_STATUS = 4;
 
-function unchanged(args: Args): number {
-  return args.unchangedStatus ? UNCHANGED_STATUS : 0;
+/** The exit status for a run of add, update or remove. */
+function outcome(args: Args, failed: number, changed: boolean): number {
+  if (failed) return changed && args.unchangedStatus ? PARTIAL_STATUS : 1;
+  return changed || !args.unchangedStatus ? 0 : UNCHANGED_STATUS;
+}
+
+/** A pack folder is here (whether or not the bot could load it). */
+function isInstalled(store: PackStore, id: string): boolean {
+  return PACK_ID.test(id) && store.has(id);
 }
 
 function parseArgs(argv: string[]): Args {
@@ -197,7 +207,7 @@ export async function runPacksCli(argv: string[], io: PacksCliIo): Promise<numbe
         const collections = lib.index.collections.filter((c) => c.packs.length > 0);
         if (collections.length) {
           io.out('');
-          io.out('Collections (install with --collection <name>):');
+          io.out('Collections (install with --collection <id>):');
           for (const c of collections)
             io.out(`  ${c.id.padEnd(20)} ${c.name} · ${plural(c.packs.length, 'pack')}`);
         }
@@ -238,10 +248,12 @@ export async function runPacksCli(argv: string[], io: PacksCliIo): Promise<numbe
         }
         if (args.command === 'update' && ids.length === 0) {
           const record = await store.readRecord();
-          ids = Object.keys(record.packs).filter((id) => record.packs[id]!.source === lib.source);
+          ids = Object.keys(record.packs).filter(
+            (id) => record.packs[id]!.source === lib.source && isInstalled(store, id),
+          );
           if (ids.length === 0) {
             io.out(`No packs from ${lib.label} are installed.`);
-            return 0;
+            return outcome(args, 0, false);
           }
         }
         if (ids.length === 0)
@@ -258,23 +270,33 @@ export async function runPacksCli(argv: string[], io: PacksCliIo): Promise<numbe
             io.err(`${id}: ${isRadioError(err) ? err.userMessage : errorMessage(err)}`);
           }
         }
-        return failed ? 1 : changed ? 0 : unchanged(args);
+        return outcome(args, failed, changed);
       }
       case 'remove': {
         if (args.rest.length === 0)
           throw new Error('Name at least one pack, for example: radio-bot packs remove mypack');
         let failed = 0;
-        for (const id of args.rest) {
-          const removed = await store.remove(id, true);
-          ownLikeData(store, null);
-          if (removed)
-            io.out(`Removed ${id}. Its stations are hidden; favourites come back if you add it again.`);
-          else {
+        let changed = false;
+        const record = await store.readRecord();
+        for (const id of [...new Set(args.rest)]) {
+          // Only a pack that is here, or that the bot is waiting to download again, is removed (and
+          // remembered as removed): any other name would only block a later automatic restore.
+          if (!PACK_ID.test(id)) {
             failed++;
-            io.err(`${id} isn't installed.`);
+            io.err(`"${id}" isn't a pack name. See the installed packs with: radio-bot packs`);
+            continue;
           }
+          if (!existsSync(store.packDir(id)) && !record.packs[id]) {
+            failed++;
+            io.err(`${id} isn't installed. See the installed packs with: radio-bot packs`);
+            continue;
+          }
+          await store.remove(id, true);
+          ownLikeData(store, null);
+          changed = true;
+          io.out(`Removed ${id}. Its stations are hidden; favourites come back if you add it again.`);
         }
-        return failed ? 1 : 0;
+        return outcome(args, failed, changed);
       }
       default:
         io.err(`Unknown command "${args.command}".\n\n${HELP}`);
@@ -359,7 +381,10 @@ async function install(
     throw new Error(
       `A pack called "${id}" is already loaded from ${current.origin === 'extra' ? 'EXTRA_PACKS_DIR' : 'the bot itself'}.`,
     );
-  if (updateOnly && !current)
+  // A pack folder the bot couldn't load (shown as "Not loaded") is installed too: installing the
+  // library's copy over it is how it gets fixed.
+  const unloadable = !current && isInstalled(store, id);
+  if (updateOnly && !current && !unloadable)
     throw new Error(`"${id}" isn't installed. Add it with: radio-bot packs add ${id}`);
   if (current?.meta.version && compareVersions(entry.version, current.meta.version) <= 0)
     return {
@@ -379,7 +404,9 @@ async function install(
     changed: true,
     message: current
       ? `Updated ${checked.pack.meta.name} (${id}) from version ${current.meta.version ?? 'unknown'} to ${checked.pack.meta.version}.`
-      : `Installed ${checked.pack.meta.name} (${id}): ${plural(checked.pack.stations.length, 'station')}.`,
+      : unloadable
+        ? `Replaced the copy of ${id} that couldn't be loaded with ${checked.pack.meta.name} version ${checked.pack.meta.version}.`
+        : `Installed ${checked.pack.meta.name} (${id}): ${plural(checked.pack.stations.length, 'station')}.`,
   };
 }
 
