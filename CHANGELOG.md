@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-11-04
+
 A performance and quality pass. The stream comes first: everything else the bot does now does less on the thread that sends voice packets, and does it later.
 
 ### Added
@@ -397,7 +399,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.0...v1.2.1
