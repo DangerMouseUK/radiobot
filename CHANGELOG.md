@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-11-04
+
 ### Added
 
 - **Check all sources again**, a button on `/radio packs installed` for the bot's operator. After a confirm step it checks every enabled source of every station pack again, for the whole installation, including sources resting after failures or paused after a week of failing; a source that works can be used again at once, and one that still fails keeps its usual back-off. It runs in the background, one check at a time behind playback, so music isn't interrupted. The reply shows "Checked N of M" and ends with how many sources work, how many are newly working and how many fail; `/radio packs installed` shows the same whenever it is opened. **Stop the check** ends it. It can start once every 6 hours. Sources a pack ships switched off, and custom stations, are left out.
@@ -347,7 +349,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.1.0...v1.2.0
