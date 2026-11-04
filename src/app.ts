@@ -35,6 +35,7 @@ import { WalCheckpointer } from './persistence/checkpoint.ts';
 import { Db } from './persistence/db.ts';
 import { GuildRepository, MetaRepository } from './persistence/repositories/guilds.ts';
 import { StationRepository } from './persistence/repositories/stations.ts';
+import { FullSourceCheck } from './streams/full-check.ts';
 import { SafeHttpClient } from './streams/safe-fetch.ts';
 import { SourceService } from './streams/source-service.ts';
 import { UrlPolicy } from './streams/url-policy.ts';
@@ -138,6 +139,13 @@ export function createApp(
     logger,
     metrics,
   });
+  const fullCheck = new FullSourceCheck({
+    stations,
+    sources,
+    packEnabled: (provider) => packs.isEnabled(provider),
+    playing: (sourceId) => sessions.all().some((s) => s.status().source?.id === sourceId),
+    logger,
+  });
   const catalogueSync = new CatalogueSync(stations, meta, http, packs, logger);
   let syncSchedule: { stop(): void } | null = null;
   let scheduleSync = (): void => {};
@@ -180,6 +188,7 @@ export function createApp(
     policy,
     registry,
     sources,
+    fullCheck,
     sessions,
     packs,
     catalogueSync,
@@ -433,6 +442,8 @@ export function createApp(
     for (const t of timers) clearTimeout(t);
     syncSchedule?.stop();
     shutdownSignal.abort();
+    // A full source check ends here, between or during checks; nothing half-done is recorded.
+    const fullCheckStopped = fullCheck.stop();
     // Clear channel statuses while the bot is still connected (bounded, so shutdown never hangs).
     await Promise.race([voiceStatus.clearAll(), new Promise((r) => setTimeout(r, 2_000))]);
     ctx.eventLoop.stop();
@@ -442,6 +453,8 @@ export function createApp(
     await client.destroy().catch(() => {});
     await heartbeat();
     registry.killAll();
+    // Bounded, so shutdown never hangs; it records nothing after being stopped anyway.
+    await Promise.race([fullCheckStopped, new Promise((r) => setTimeout(r, 2_000))]);
     await checkpointer.stop();
     // A final checkpoint while nothing plays leaves the whole database in its main file.
     try {

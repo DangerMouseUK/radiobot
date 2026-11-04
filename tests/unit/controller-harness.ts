@@ -23,6 +23,8 @@ import { RadioController } from '../../src/discord/controller.ts';
 import { EventLoopMonitor } from '../../src/observability/event-loop.ts';
 import { Metrics } from '../../src/observability/metrics.ts';
 import { RadioError } from '../../src/shared/errors.ts';
+import { FullSourceCheck } from '../../src/streams/full-check.ts';
+import type { probeSource } from '../../src/streams/probe.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { SourceService } from '../../src/streams/source-service.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
@@ -535,6 +537,11 @@ export function setup(opts: SetupOptions = {}) {
   });
   seedPacks(repos.stations, packs);
   const metrics = new Metrics();
+  const probe = {
+    impl: (async () => {
+      throw new Error('no probing in controller tests');
+    }) as typeof probeSource,
+  };
   const sources = new SourceService({
     stations: repos.stations,
     guilds: repos.guilds,
@@ -545,10 +552,9 @@ export function setup(opts: SetupOptions = {}) {
     maxConcurrentProbes: 1,
     logger: silentLogger(),
     metrics,
-    // A probe must never reach a stream host from a test, not even a made-up one.
-    probeImpl: async () => {
-      throw new Error('no probing in controller tests');
-    },
+    // A probe must never reach a stream host from a test, not even a made-up one. Tests that
+    // need a check's result (the full re-check) put a fake one in `probe.impl`.
+    probeImpl: (...args) => probe.impl(...args),
   });
   const probes: string[] = [];
   /** What a re-probe reports, and the progress it announces on the way. */
@@ -588,6 +594,13 @@ export function setup(opts: SetupOptions = {}) {
       lastRequestedAt: at,
     }),
   );
+  const fullCheck = new FullSourceCheck({
+    stations: repos.stations,
+    sources,
+    packEnabled: (provider) => packs.isEnabled(provider),
+    playing: (id) => [...sessions.map.values()].some((s) => s.playingSourceId === id),
+    logger: silentLogger(),
+  });
   const customAdds: string[] = [];
   const customEdits: Array<{ id: string; patch: Record<string, unknown> }> = [];
   const customRemoves: string[] = [];
@@ -700,6 +713,7 @@ export function setup(opts: SetupOptions = {}) {
     policy: new UrlPolicy({ allowInsecureHttp: true }),
     registry: new ProcessRegistry(),
     sources,
+    fullCheck,
     sessions,
     packs,
     packManager,
@@ -802,6 +816,8 @@ export function setup(opts: SetupOptions = {}) {
     ids,
     sessions,
     probes,
+    probe,
+    fullCheck,
     rescan,
     compare,
     sync,

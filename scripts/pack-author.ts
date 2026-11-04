@@ -1145,6 +1145,32 @@ export function strictProblems(pack: StationPack): string[] {
   return p;
 }
 
+/** Reason codes (src/shared/errors.ts) of a failure that usually passes: a timeout or a network fault. */
+const TEMPORARY_FAILURES: ReadonlySet<string> = new Set([
+  'HTTP_TIMEOUT',
+  'PROBE_TIMEOUT',
+  'HTTP_ERROR',
+  'DNS_FAILED',
+]);
+
+/**
+ * What to do about an enabled source that failed a live check, by how it failed. A refusal is the
+ * host's decision, so the source is switched off. A missing address may be a mount being moved,
+ * so it is switched off only if a check at least 7 days later finds it still gone. A timeout, a
+ * server error (HTTP 5xx) or a network fault usually passes, and the bot backs off and pauses a
+ * source that keeps failing by itself, so the source stays on and is checked again another day.
+ */
+export function failureAdvice(code: string | null | undefined, detail?: string | null): string {
+  const status = Number(/\bHTTP (\d{3})\b/.exec(detail ?? '')?.[1] ?? 0);
+  if (code === 'ACCESS_DENIED')
+    return 'The host refuses access (HTTP 401, 403 or 451): switch it off with that as the reason.';
+  if (code === 'NOT_FOUND')
+    return 'Nothing is at that address (HTTP 404 or 410): leave it on for now, and switch it off only if it is still gone in a check at least 7 days later.';
+  if (TEMPORARY_FAILURES.has(code ?? '') || (code === 'HTTP_STATUS' && status >= 500))
+    return 'This is usually temporary (a timeout, a server error or a network fault): leave it on and check it again another day. The bot backs off from a source that keeps failing by itself.';
+  return 'Find out why. If it can’t play, switch it off with the reason; otherwise check it again.';
+}
+
 /** Things worth a look in a library pack that don't stop it being published. */
 export function strictWarnings(pack: StationPack): string[] {
   const report = readNewestReport(pack.dir);
@@ -1154,7 +1180,7 @@ export function strictWarnings(pack: StationPack): string[] {
     .filter((r) => enabled.has(r.sourceId) && !r.outcome.success)
     .map(
       (r) =>
-        `Pack "${pack.meta.id}": source "${r.sourceId}" is enabled but failed the live check in evidence/${report.name} (${r.outcome.failureCode ?? 'no code'}). Disable it with a reason, or find out why and check it again.`,
+        `Pack "${pack.meta.id}": source "${r.sourceId}" is enabled but failed the live check in evidence/${report.name} (${r.outcome.failureCode ?? 'no code'}). ${failureAdvice(r.outcome.failureCode, r.outcome.failureDetail)}`,
     );
 }
 
@@ -1162,7 +1188,11 @@ const probeReportSchema = z.object({
   probes: z.array(
     z.object({
       sourceId: z.string(),
-      outcome: z.object({ success: z.boolean(), failureCode: z.string().nullable().optional() }),
+      outcome: z.object({
+        success: z.boolean(),
+        failureCode: z.string().nullable().optional(),
+        failureDetail: z.string().nullable().optional(),
+      }),
     }),
   ),
 });

@@ -615,8 +615,49 @@ describe('strict checks', () => {
     const pack = loadPack(dir);
     expect(strictProblems(pack)).toEqual([]);
     expect(strictWarnings(pack)).toEqual([
-      'Pack "template": source "template-example-hits-hls" is enabled but failed the live check in evidence/probe-2027-01-15.json (ACCESS_DENIED). Disable it with a reason, or find out why and check it again.',
+      'Pack "template": source "template-example-hits-hls" is enabled but failed the live check in evidence/probe-2027-01-15.json (ACCESS_DENIED). The host refuses access (HTTP 401, 403 or 451): switch it off with that as the reason.',
     ]);
+  });
+
+  it('advises by how the source failed: refused, gone, or a passing fault', () => {
+    const dir = copyTemplate(tempDir());
+    const advice = (code: string | null, detail: string | null = null) => {
+      writeFileSync(
+        join(dir, 'evidence', 'probe-2027-01-15.json'),
+        JSON.stringify({
+          generatedAt: '2027-01-15T12:00:00.000Z',
+          probes: [
+            { stationId: 'template:x', sourceId: 'template-example-hits-mp3', outcome: { success: true } },
+            {
+              stationId: 'template:x',
+              sourceId: 'template-example-hits-hls',
+              outcome: { success: false, failureCode: code, failureDetail: detail },
+            },
+          ],
+          comparisons: [],
+        }),
+      );
+      const pack = loadPack(dir);
+      // Advice only: strict still passes.
+      expect(strictProblems(pack)).toEqual([]);
+      const warnings = strictWarnings(pack);
+      expect(warnings).toHaveLength(1);
+      return warnings[0]!;
+    };
+    expect(advice('ACCESS_DENIED')).toMatch(/refuses access .*: switch it off with that as the reason\.$/);
+    const gone =
+      /leave it on for now, and switch it off only if it is still gone in a check at least 7 days later\.$/;
+    expect(advice('NOT_FOUND', 'Nothing is at that address any more (HTTP 410).')).toMatch(gone);
+    const temporary = /usually temporary .*: leave it on and check it again another day\./;
+    for (const code of ['HTTP_TIMEOUT', 'PROBE_TIMEOUT', 'HTTP_ERROR', 'DNS_FAILED'])
+      expect(advice(code)).toMatch(temporary);
+    expect(advice('HTTP_STATUS', 'The stream server returned an error (HTTP 503).')).toMatch(temporary);
+    // Not a server error, or not a network fault: find out why.
+    const other =
+      /\(\w+\)\. Find out why\. If it can’t play, switch it off with the reason; otherwise check it again\.$/;
+    expect(advice('HTTP_STATUS', 'The stream server returned an error (HTTP 400).')).toMatch(other);
+    expect(advice('NO_AUDIO_STREAM')).toMatch(other);
+    expect(advice(null)).toMatch(/\(no code\)\. Find out why\./);
   });
 
   it('prints the warnings from the command line and still passes', () => {

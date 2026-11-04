@@ -43,9 +43,19 @@ The type definitions also reserve `resolved`, `transport_healthy`, `codec_verifi
 
 ### Failed checks
 
-When a check fails, the next automatic check waits longer each time: about 10 min, 1 h, 6 h, 12 h, then once a day. When the address is gone (HTTP 404/410) the wait starts at 12 h. An admin's `/radio rescan` or **Check sources again** ignores the wait, and a successful check resets it. `/radio sources` and `/radio inspect` show how many checks failed in a row and when the next one is.
+When a check fails, the next automatic check waits longer each time: about 10 min, 1 h, 6 h, 12 h, then once a day. When the address is gone (HTTP 404/410) the wait starts at 12 h. An admin's `/radio rescan` or **Check sources again** ignores the wait, as does the bot owner's **Check all sources again** ([below](#checking-every-source-again)), and a successful check resets it. `/radio sources` and `/radio inspect` show how many checks failed in a row and when the next one is.
 
-A source with no successful check for 7 days, and at least 5 failed checks in a row, is **paused**. It is no longer checked automatically at all, neither in the background nor when someone plays the station, until an admin checks it again (or a pack update gives it a new address). Because this needs a full week, an outage of hours or days never pauses a source.
+A source with no successful check for 7 days, and at least 5 failed checks in a row, is **paused**. It is no longer checked automatically at all, neither in the background nor when someone plays the station, until an admin checks it again, the bot owner checks every source again, or a pack update gives it a new address. Because this needs a full week, an outage of hours or days never pauses a source.
+
+### Checking every source again
+
+`/radio rescan` checks one station's sources while the admin waits. The bot owner can also check **every source of every station pack** at once, with the **Check all sources again** button on `/radio packs installed` (after a confirm step). It is for the whole installation, so it needs an admin who is also an [operator](permissions.md#access-levels), and it can start once every 6 hours.
+
+- **What it checks:** every enabled source of every switched-on pack, ignoring each source's wait after failed checks, its cooldown and its pause. It leaves out sources a pack ships switched off (`enabled: false`: the pack's curators decided that), sources the owner switched off with `DISABLED_SOURCE_IDS` or `DISABLED_STATION_IDS`, sources blocked for rights, retired stations and custom stations. A source that is playing somewhere is left alone, since steady playback already shows it works and some stations refuse a second connection.
+- **What a result does:** a source that passes can be used at once (a cooldown ends, and the failure count resets, which ends a pause). One that fails is recorded as any failed check is, so its wait and its pause carry on.
+- **How it runs:** each check goes through the same background queue as the automatic checks: one at a time, at the lowest CPU priority, waiting while any stream is starting, and giving way to a check that someone playing a station is waiting for (that source is checked again later). It never uses the foreground checks of `/radio rescan`. Listing the sources is split into slices of about 2 ms, so a big catalogue never holds up the audio. On a big installation the whole run can take hours.
+- **Progress:** the reply says "Checked N of M" and, at the end, how many sources are working, how many are newly working and how many are failing. Discord lets the bot edit a reply for only 15 minutes, so after 14 minutes it stops following the run; `/radio packs installed` shows how the run stands (or how the last one ended) whenever it is opened. Nothing is posted in any channel.
+- **Stopping:** **Stop the check** (on the same message, or on `/radio packs installed`) ends it at once, as does shutting the bot down. The check it interrupts records nothing. Its progress and last summary are kept in memory, so a restart clears them.
 
 ### The eligibility gate
 
@@ -212,11 +222,11 @@ A refused pack in `EXTRA_PACKS_DIR` stops start-up. A refused installed pack is 
 
 ### The first library pack
 
-The pack that shipped with Radio Bot up to version 1.1.0 is now the first pack in the library, and an existing installation gets it back from there automatically when it updates. Its folder in the library holds its own provenance record and evidence. In short, as checked on 31 October 2026:
+The pack that shipped with Radio Bot up to version 1.1.0 is now the first pack in the library, and an existing installation gets it back from there automatically when it updates. Its folder in the library holds its own provenance record and evidence, and is where its current figures live: how many stations and sources it has, how many are enabled, and what its latest live check found. The pack is maintained there, so this page doesn't repeat those figures. How its sources were found, and what the first checks showed when it moved to the library (31 October 2026):
 
-- **63 stations**, from the broadcaster's official list, with **126 candidate sources** (122 enabled). Its sources came from the official web player: each station's short-lived signed play URL redirected once to a plain, unsigned stream address, and those plain addresses are the sources. No signed URL or token was stored.
-- **3 of the 63 stations confirmed by live checks:** direct MP3 at 128 kbps on all three, HLS AAC-LC at 128 kbps on all three, and a curated direct AAC-LC stream at 128 kbps on the flagship, all 44.1 kHz stereo. One HLS address redirected and then never answered. The other 60 stations use the same host and URL pattern, but have **not been checked yet**.
-- **Audio comparisons** supported identity for two of the three stations (scores of 0.58 to 0.90). The third matched in two earlier runs and was inconclusive (0.08) in the latest.
+- Its stations come from the broadcaster's official list. Its sources came from the official web player: each station's short-lived signed play URL redirected once to a plain, unsigned stream address, and those plain addresses are the sources. No signed URL or token was stored.
+- On 31 October 2026, live checks covered 3 of its stations: direct MP3 at 128 kbps on all three, HLS AAC-LC at 128 kbps on all three, and a curated direct AAC-LC stream at 128 kbps on the flagship, all 44.1 kHz stereo. One HLS address redirected and then never answered. The other stations, on the same host and URL pattern, were checked later in the library.
+- **Audio comparisons** on those dates supported identity for two of the three stations (scores of 0.58 to 0.90). The third matched in two earlier runs and was inconclusive (0.08) in the latest.
 
 **Why its earlier checks failed.** Before the bot identified itself as FFmpeg, every check of that pack's stream host was answered with **HTTP 401**. The host refuses clients it doesn't recognise, but serves standard media players. Tested without a `Referer`, Radio Bot's old User-Agent got 401, while FFmpeg's `Lavf/61.7.100` and VLC got 200.
 
