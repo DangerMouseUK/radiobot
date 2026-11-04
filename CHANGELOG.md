@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Check all sources again**, a button on `/radio packs installed` for the bot's operator. After a confirm step it checks every enabled source of every station pack again, for the whole installation, including sources resting after failures or paused after a week of failing; a source that works can be used again at once, and one that still fails keeps its usual back-off. It runs in the background, one check at a time behind playback, so music isn't interrupted. The reply shows "Checked N of M" and ends with how many sources work, how many are newly working and how many fail; `/radio packs installed` shows the same whenever it is opened. **Stop the check** ends it. It can start once every 6 hours. Sources a pack ships switched off, and custom stations, are left out.
+
+### Changed
+
+- Pack tools: `validate-catalogue --strict` now gives advice that fits how an enabled source failed the newest live check. Refused (`ACCESS_DENIED`): switch it off with the reason. Gone (`NOT_FOUND`): switch it off only if it is still gone in a check at least 7 days later. A timeout, a server error (HTTP 5xx) or a network fault: leave it on and check it again another day. These are still warnings, so `--strict` fails only where it did before.
+- Rate-limit replies give long waits in hours ("Try again in 6 h.") instead of hundreds of minutes.
+- The docs no longer repeat the first library pack's station and source counts, which change in the library; what they say about its first checks is dated.
+
 ## [1.2.2] - 2026-11-03
 
 ### Changed

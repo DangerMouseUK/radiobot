@@ -240,7 +240,14 @@ Live checks connect to real stream servers. Run them only when you are deliberat
 - the pack folder holds no images (logos and artwork are never allowed);
 - `evidence/` holds a check report, and the newest one (by the date in its file name) is a report from `--probe --json` that checks at least one of the pack's sources, in which at least one source played, and in which FFmpeg didn't fail to run (`FFMPEG_SPAWN`: such a report says nothing about the streams).
 
-It also prints a warning, without failing, for each enabled source that failed in the newest report: disable it with a reason, or find out why and check it again.
+It also prints a warning, without failing, for each enabled source that failed in the newest report (`strictWarnings()`). The advice depends on how it failed, because the bot already backs off from, and after a week pauses, a source that keeps failing, and switches to the station's next source meanwhile:
+
+- **Refused** (`ACCESS_DENIED`: HTTP 401, 403 or 451): switch it off (`enabled: false`) with that as the `disabledReason`. The host decided, and the bot never gets round a refusal.
+- **Gone** (`NOT_FOUND`: HTTP 404 or 410): leave it on for now. Switch it off only if a check at least 7 days later finds it still gone; a mount being moved or restarted can answer 404 for a while.
+- **Temporary** (`HTTP_TIMEOUT`, `PROBE_TIMEOUT`, `HTTP_ERROR`, `DNS_FAILED`, or `HTTP_STATUS` with a server error, HTTP 5xx): leave it on and check it again another day.
+- **Anything else** (it didn't decode, had no audio, another HTTP status, and so on): find out why. If it can't play, switch it off with the reason; otherwise check it again.
+
+Warnings never make `--strict` fail.
 
 ## Tools for writing packs
 

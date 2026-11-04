@@ -9,7 +9,7 @@
   - **Listeners** are everyone else. By default they can control the radio only from inside a voice channel, and only the one the bot is in (or any channel while the bot is idle).
 - **Everyone can look.** Browsing stations, seeing what is playing and checking audio quality are open to all, in any channel where radio commands are allowed.
 - **Only admins change settings,** add custom stations, import or export settings, see `/radio stats` and look at the station packs.
-- **Station packs are shared by every server,** so installing, updating or removing one also needs the bot's **operator**: the person running the bot.
+- **Station packs are shared by every server,** so installing, updating or removing one, or checking all their sources again, also needs the bot's **operator**: the person running the bot.
 - **Buttons are checked every time they are clicked,** exactly like the command they belong to. A Stop button in a public channel still needs the right to control the radio.
 - **What the channel sees, and what only you see.** Everything that changes the radio for everyone gets one short public line in the channel, with no pings: changing the station (by command, button or menu), `queue add`, `queue remove`, `queue clear`, Stop and Leave. Everything else is private: the now-playing card, lists, settings, `/radio stats`, errors and refusals. These lines are replies to the command or click, so they need no extra permission. If Discord refuses one, the private reply still says what happened.
 - **Admins can limit where the bot works:** which text channels accept radio commands, and which voice channels it may join.
@@ -71,7 +71,8 @@ Each person has one level in each server (worked out by `accessLevel()`):
 Separately, the bot **operator** is the person running the bot: a Discord user listed in `OPERATOR_USER_IDS`, or the owner of the bot's Discord application (or a member of its team). Only operators can do things that affect every server the bot is in:
 
 - record identity verdicts (whether a source really carries its station) for the sources of station packs;
-- install, update or remove station packs from Discord, with the buttons under `/radio packs library` and `/radio packs installed`. Discord installs only from the official pack library, whose address is fixed in the bot, so an operator can only install packs that the library has reviewed.
+- install, update or remove station packs from Discord, with the buttons under `/radio packs library` and `/radio packs installed`. Discord installs only from the official pack library, whose address is fixed in the bot, so an operator can only install packs that the library has reviewed;
+- check every source of every station pack again, with **Check all sources again** on `/radio packs installed`, and stop that check (see [station-verification.md](station-verification.md#checking-every-source-again)).
 
 They must also be an admin of the server where they run the command. Being an operator does not make you an admin of a server. Anyone with a shell on the bot's machine can also change packs with `radio-bot packs` (or `dist/scripts/packs.js`), which may use another library: that is outside Discord's permissions, because whoever controls the machine controls the bot anyway.
 
@@ -81,7 +82,7 @@ Each command, button and menu needs one of three kinds of access (*capabilities*
 
 - **read**: `/radio browse`, `list` (including `scope:favourites`), `now`, `quality`, `sources`, `inspect`, `status`, `help` and `queue list`. Also the buttons that browse, page through lists, refresh the now-playing card and open Sources or Inspect, including the Favourites filter and the **Search** box in a browse list, and the button that hides or shows custom stations in `/radio list`.
 - **control**: `/radio play`, `stop`, `join`, `leave`, `skip`, `queue add`, `queue remove` and `queue clear`. Also choosing a station from a browse list, a `/radio list` page or a "which station did you mean?" menu, the **Play now** button after `/radio add`, the Previous, Next, Skip, Stop and Leave buttons, and the **Favourite** and **Unfavourite** buttons. The source menu under `/radio sources` needs *control* too: it switches the source of the station that is playing, until the station changes. When an admin has pinned the station to one source, only admins can use that menu.
-- **admin**: `/radio stats` (and its Refresh button), `add`, `edit`, `remove`, `rescan` (and the **Check sources again** button), `packs installed`, `packs library` and `packs sync` (and the menu that opens a pack's card), `config` (and every settings control), `export`, `import` (and its Apply and Cancel buttons), `panel`, and `source pin`, `prefer`, `auto` and `verify`. Also the **Use this source first** and **Choose automatically** buttons under `/radio sources`. The **Install**, **Update**, **Remove** and **Remove it** buttons on a pack's card need *admin* and an operator, and the bot must have a data folder to install into. The Close button of `/radio stats` needs only *read*: it deletes the clicker's own private reply.
+- **admin**: `/radio stats` (and its Refresh button), `add`, `edit`, `remove`, `rescan` (and the **Check sources again** button), `packs installed`, `packs library` and `packs sync` (and the menu that opens a pack's card), `config` (and every settings control), `export`, `import` (and its Apply and Cancel buttons), `panel`, and `source pin`, `prefer`, `auto` and `verify`. Also the **Use this source first** and **Choose automatically** buttons under `/radio sources`. The **Install**, **Update**, **Remove** and **Remove it** buttons on a pack's card need *admin* and an operator, and the bot must have a data folder to install into. So do **Check all sources again**, its **Check them all** confirmation and **Stop the check** on `/radio packs installed`, which need no data folder. The Close button of `/radio stats` needs only *read*: it deletes the clicker's own private reply.
 
 ### Capability matrix
 
@@ -97,6 +98,7 @@ Each command, button and menu needs one of three kinds of access (*capabilities*
 | Record an identity verdict (`source verify`) for a **custom** station of this server | No | No | Yes |
 | Record an identity verdict for a source in a **station pack** | No | No | Operator only |
 | Install, update or remove a **station pack** | No | No | Operator only |
+| Check every source of every station pack again (**Check all sources again**), or stop it | No | No | Operator only |
 
 ### Listener control mode
 
@@ -141,7 +143,7 @@ A button posted in a public channel must not let anyone get round the rules abov
    - IDs in the older `rb1` format (Radio Bot 1.0.5 and earlier) are still checked, then treated as expired. The control panel is redrawn when the bot starts, so its own buttons are replaced automatically.
 3. **Expiry.** The expiry is stored in whole minutes, rounded up.
    - Now-playing card buttons (from `/radio play`, `/radio now`, `/radio join` and the buttons that play a station) expire after an hour. The bot keeps nothing for a card, so this costs nothing.
-   - Sources views, "which station?" menus, the **Play now** button after `/radio add`, `/radio list` pages and the menus and buttons of `/radio packs` expire after 15 minutes.
+   - Sources views, "which station?" menus, the **Play now** button after `/radio add`, `/radio list` pages and the menus and buttons of `/radio packs` expire after 15 minutes. (While **Check all sources again** runs, each update of its reply comes with fresh buttons, so **Stop the check** keeps working there; after that, open `/radio packs installed` again for a new one.)
    - A browse list stays open for 15 minutes after it was last used.
    - Settings pages and the `/radio stats` panel expire after 30 minutes.
    - Import previews expire after 10 minutes.
@@ -152,7 +154,7 @@ A button posted in a public channel must not let anyone get round the rules abov
 
 ## Rate limits
 
-These limits are kept in memory (`RateLimits` in `src/discord/context.ts`), so restarting the bot resets them. Each one lets you use the whole allowance at once; it then refills gradually over the stated time. When a limit runs out, the reply says "Too many … in a short time. Try again in N s." (or "N min" when the wait is longer than about a minute and a half; reason code `RATE_LIMITED`).
+These limits are kept in memory (`RateLimits` in `src/discord/context.ts`), so restarting the bot resets them. Each one lets you use the whole allowance at once; it then refills gradually over the stated time. When a limit runs out, the reply says "Too many … in a short time. Try again in N s." (or "N min" when the wait is longer than about a minute and a half, and "N h" when it is longer than about an hour and a half; reason code `RATE_LIMITED`).
 
 | Limit | Counted per | Allowance |
 |---|---|---|
@@ -163,6 +165,7 @@ These limits are kept in memory (`RateLimits` in `src/discord/context.ts`), so r
 | Catalogue sync (`/radio packs sync`, formerly `/radio sync`) | server | 2 per hour |
 | Catalogue sync (`/radio packs sync`) | whole installation | 1 per 10 min |
 | Installing, updating or removing a station pack (the **Install**, **Update** and **Remove it** buttons) | whole installation | 10 per hour |
+| Checking every source again (the **Check them all** button after **Check all sources again**). A start refused because a check is already running doesn't count | whole installation | 1 per 6 hours |
 | Button and menu clicks, and submitted forms | user | 20 per 20 s |
 | Settings import (`/radio import`) | server | 5 per 10 min |
 

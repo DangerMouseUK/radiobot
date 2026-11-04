@@ -3,6 +3,7 @@ import type { LibraryIndex } from '../../src/catalogue/pack-library.ts';
 import { loadPack } from '../../src/catalogue/packs.ts';
 import { RadioError } from '../../src/shared/errors.ts';
 import { rootPath } from '../../src/shared/paths.ts';
+import { emptyOutcome, type ProbeOutcome } from '../../src/streams/probe.ts';
 import { decode, type Harness, OWNER, setup } from './controller-harness.ts';
 
 /** A library with one pack that isn't installed and one that is (the demo fixture pack). */
@@ -247,5 +248,119 @@ describe('/radio packs', () => {
       strings: { country: 'Atlantis' },
     });
     expect(none.lastText).toMatch(/No packs match that/);
+  });
+});
+
+/** A passing check, as the probe reports it. */
+const passing = (): ProbeOutcome => ({
+  ...emptyOutcome(Date.now()),
+  success: true,
+  transport: 'http-continuous',
+  container: 'mp3',
+  codec: 'mp3',
+  sampleRateHz: 44_100,
+  channels: 2,
+  channelLayout: 'stereo',
+  measuredBitrateKbps: 128,
+  bitrateEvidence: 'measured',
+});
+
+const until = async (cond: () => boolean, ms = 2_000) => {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error('condition not met in time');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
+
+describe('Check all sources again', () => {
+  const G = '123456789012345678';
+
+  it('is a button on /radio packs installed, and only the bot owner may use it', async () => {
+    const t = setup({ operators: [OWNER] });
+    const list = await t.command(t.people.admin, { group: 'packs', sub: 'installed' });
+    expect(buttonsIn(list.calls.at(-1)!.payload)).toContainEqual({
+      label: 'Check all sources again',
+      disabled: false,
+    });
+    // An admin of this server who isn't the bot's operator: refused, nothing starts.
+    const admin = await t.click(t.people.admin, componentId(t, list.componentIds, 'pkchk'));
+    expect(admin.text).toMatch(/only the bot owner can start or stop it/);
+    const confirm = await t.click(t.people.admin, t.ids.make(G, 'pkchkok'));
+    expect(confirm.text).toMatch(/only the bot owner/);
+    const member = await t.click(t.people.member, t.ids.make(G, 'pkchkok'));
+    expect(member.text).not.toMatch(/Checked/);
+    const stop = await t.click(t.people.admin, t.ids.make(G, 'pkchkx'));
+    expect(stop.text).toMatch(/only the bot owner/);
+    expect(t.ctx.fullCheck.state).toBeNull();
+  });
+
+  it('asks first, then checks every pack source in the background and reports the result', async () => {
+    const t = setup({ operators: [OWNER] });
+    t.probe.impl = async () => passing();
+    const ask = await t.click(t.people.owner, t.ids.make(G, 'pkchk'));
+    expect(ask.lastText).toMatch(/Check every source again\?/);
+    expect(ask.lastText).toMatch(/sources paused after a week of failing/);
+    expect(ask.componentIds.map((c) => decode(t.ids, c)?.action)).toEqual(['pkchkok', 'close']);
+    expect(t.ctx.fullCheck.state).toBeNull();
+
+    const go = await t.click(t.people.owner, componentId(t, ask.componentIds, 'pkchkok'));
+    expect(go.violations).toEqual([]);
+    expect(go.calls[0]!.method).toBe('update');
+    await until(() => t.ctx.fullCheck.state?.status === 'finished');
+    const total = t.stations
+      .listAllSources()
+      .filter((s) => s.stationId.startsWith('demo:') && s.enabled).length;
+    expect(t.ctx.fullCheck.state).toMatchObject({ total, done: total, usable: total, failed: 0 });
+    // The reply follows the run to its end, then shows the summary.
+    await until(() => /Finished/.test(go.lastText));
+    expect(go.lastText).toContain(`checked ${total} of ${total}.`);
+    expect(go.lastText).toContain(`${total} working (${total} newly working) · 0 failing.`);
+    // Reopened later, the list shows the last run, and the button is back.
+    const again = await t.command(t.people.admin, { group: 'packs', sub: 'installed' });
+    expect(again.lastText).toMatch(/Check of every source/);
+    expect(again.lastText).toMatch(/Finished <t:\d+:R>/);
+    expect(buttonsIn(again.calls.at(-1)!.payload).map((b) => b.label)).toContain('Check all sources again');
+  });
+
+  it('can start only once every 6 hours', async () => {
+    const t = setup({ operators: [OWNER] });
+    t.probe.impl = async () => passing();
+    await t.click(t.people.owner, t.ids.make(G, 'pkchkok'));
+    await until(() => t.ctx.fullCheck.state?.status === 'finished');
+    const second = await t.click(t.people.owner, t.ids.make(G, 'pkchkok'));
+    expect(second.text).toMatch(/Too many checks of every source in a short time\. Try again in 6 h\./);
+    expect(t.ctx.fullCheck.running).toBe(false);
+  });
+
+  it('runs one at a time, shows its progress when reopened, and stops on Stop', async () => {
+    const t = setup({ operators: [OWNER] });
+    let checks = 0;
+    // Each check waits until it is stopped.
+    t.probe.impl = (_deps, _url, _budget, signal) => {
+      checks++;
+      return new Promise((resolve) =>
+        signal?.addEventListener('abort', () =>
+          resolve({ ...emptyOutcome(Date.now()), failureCode: 'CANCELLED' }),
+        ),
+      );
+    };
+    const go = await t.click(t.people.owner, t.ids.make(G, 'pkchkok'));
+    await until(() => checks === 1);
+    expect(buttonsIn(go.calls.at(-1)!.payload).map((b) => b.label)).toContain('Stop the check');
+    const open = await t.command(t.people.admin, { group: 'packs', sub: 'installed' });
+    expect(open.lastText).toMatch(/Checked 0 of \d+\*\*, one at a time in the background/);
+    // A second start while it runs: said plainly, and it doesn't use up the 6-hour allowance.
+    const twice = await t.click(t.people.owner, t.ids.make(G, 'pkchkok'));
+    expect(twice.lastText).toMatch(/already running/);
+    expect(t.ctx.limits.fullCheckGlobal.take('global')).toBeGreaterThan(0);
+
+    const stop = await t.click(t.people.owner, componentId(t, open.componentIds, 'pkchkx'));
+    expect(stop.violations).toEqual([]);
+    expect(t.ctx.fullCheck.running).toBe(false);
+    expect(t.ctx.fullCheck.state?.status).toBe('stopped');
+    expect(stop.lastText).toMatch(/Stopped <t:\d+:R> after checking 0 of \d+\./);
+    expect(buttonsIn(stop.calls.at(-1)!.payload).map((b) => b.label)).toContain('Check all sources again');
+    expect(checks).toBe(1);
   });
 });

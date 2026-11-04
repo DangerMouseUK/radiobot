@@ -13,6 +13,7 @@ import type { Db } from '../persistence/db.ts';
 import type { GuildRepository, GuildSettings, MetaRepository } from '../persistence/repositories/guilds.ts';
 import type { StationRepository } from '../persistence/repositories/stations.ts';
 import { RateLimiter } from '../shared/rate-limit.ts';
+import type { FullSourceCheck } from '../streams/full-check.ts';
 import type { SafeHttpClient } from '../streams/safe-fetch.ts';
 import type { SourceService } from '../streams/source-service.ts';
 import type { UrlPolicy } from '../streams/url-policy.ts';
@@ -34,6 +35,8 @@ export interface AppContext {
   policy: UrlPolicy;
   registry: ProcessRegistry;
   sources: SourceService;
+  /** The bot owner's "Check all sources again", for every pack source at once. */
+  fullCheck: FullSourceCheck;
   sessions: SessionManager;
   packs: PackRegistry;
   catalogueSync: CatalogueSync;
@@ -66,6 +69,8 @@ export class RateLimits {
   readonly importGuild = RateLimiter.perWindow(5, 10 * 60_000);
   /** Installing, updating or removing a station pack (installation-wide). */
   readonly packGlobal = RateLimiter.perWindow(10, 60 * 60_000);
+  /** "Check all sources again" (installation-wide): one start every 6 hours. */
+  readonly fullCheckGlobal = RateLimiter.perWindow(1, 6 * 60 * 60_000);
 
   sweep(): void {
     for (const l of [
@@ -78,6 +83,7 @@ export class RateLimits {
       this.componentUser,
       this.importGuild,
       this.packGlobal,
+      this.fullCheckGlobal,
     ]) {
       l.sweep();
     }

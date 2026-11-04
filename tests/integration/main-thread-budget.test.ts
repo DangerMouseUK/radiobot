@@ -3,7 +3,8 @@
  * real pipeline and the voice library's packet timer, the heaviest things a listener or a timer
  * can ask for must not hold up the event loop long enough to be heard. Runs /radio stats, browse,
  * source ranking across the whole catalogue, a sync of a large synthetic station list and a live
- * install of a second pack of the largest size from a local pack library, with
+ * install of a second pack of the largest size from a local pack library and the bot owner's
+ * "Check all sources again" over every source, with
  * a large synthetic pack loaded next to the bundled one, and measures the event-loop delay and the
  * longest stretch of synchronous work (between two turns of the event loop) in each step.
  *
@@ -38,6 +39,7 @@ import { CatalogueSync } from '../../src/catalogue/sync.ts';
 import { visibleStations } from '../../src/discord/context.ts';
 import { yieldToEventLoop } from '../../src/shared/async.ts';
 import { openSourceInput } from '../../src/streams/input.ts';
+import { emptyOutcome } from '../../src/streams/probe.ts';
 import { selectSource } from '../../src/streams/ranking.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
@@ -51,6 +53,8 @@ const MAX_DELAY_MS = 50;
 const RESOLUTION_MS = 5;
 /** The schema's limit for one pack: the largest catalogue a single pack can bring. */
 const STATIONS = 2000;
+/** Checks the full source check makes before it is stopped. */
+const FULL_CHECKS = 300;
 
 let radio: TestRadio;
 let root: string;
@@ -315,6 +319,32 @@ describe('main-thread budget while a stream plays', () => {
         expect(t.ctx.packs.isEnabled('bigpack2')).toBe(true);
       });
       await time('browse after install', () => t.command(t.people.member, { sub: 'browse' }));
+      // The bot owner's "Check all sources again" across every source of all three packs: listing
+      // them, then a few hundred checks recorded as real ones are (each check itself is replaced),
+      // then Stop. Listing and checking are timed apart, since one grows with the catalogue.
+      await time('full check: listing', async () => {
+        t.probe.impl = async () => {
+          await yieldToEventLoop();
+          return {
+            ...emptyOutcome(Date.now()),
+            success: true,
+            transport: 'http-continuous',
+            container: 'mp3',
+            codec: 'mp3',
+            sampleRateHz: 44_100,
+            channels: 2,
+            measuredBitrateKbps: 128,
+            bitrateEvidence: 'measured',
+          };
+        };
+        expect(t.ctx.fullCheck.start()).not.toBeNull();
+        while (t.ctx.fullCheck.state?.total === 0) await yieldToEventLoop();
+      });
+      await time('full check: checks', async () => {
+        while ((t.ctx.fullCheck.state?.done ?? 0) < FULL_CHECKS) await sleep(RESOLUTION_MS);
+        await t.ctx.fullCheck.stop();
+        expect(t.ctx.fullCheck.state?.total).toBeGreaterThan(4 * STATIONS);
+      });
       await sleep(4 * RESOLUTION_MS);
     } finally {
       delay.disable();

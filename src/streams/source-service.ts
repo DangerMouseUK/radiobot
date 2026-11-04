@@ -72,7 +72,8 @@ const DAY_MS = 24 * 3_600_000;
 /**
  * True when a failing source is paused: no successful check for 7 days and 5+ failures in a row.
  * A paused source is never checked automatically, in the background or for a play; only an
- * admin's "Check sources again" (or a new address from a pack update) brings it back. Measuring
+ * admin's "Check sources again", the bot owner's "Check all sources again" (`FullSourceCheck`)
+ * or a new address from a pack update brings it back. Measuring
  * time, not just failures, means a temporary outage of hours or days never pauses a source,
  * however many checks fail during it.
  */
@@ -226,16 +227,20 @@ export class SourceService {
     }
   }
 
-  /** A background check: shares an in-flight check, otherwise runs one that a play may interrupt. */
-  #probeInBackground(sourceId: string): Promise<ProbeReport> {
+  /**
+   * A background check: shares an in-flight check, otherwise runs one that a play may interrupt.
+   * `signal` (a full re-check being stopped) interrupts it too; either way nothing is recorded.
+   */
+  #probeInBackground(sourceId: string, signal?: AbortSignal): Promise<ProbeReport> {
     const existing = this.#inflight.get(sourceId);
-    if (existing) return existing;
+    if (existing) return signal ? raceSignal(existing, signal) : existing;
     const source = this.#d.stations.getSource(sourceId);
     if (!source) return Promise.reject(new RadioError('INTERNAL', 'Unknown source.'));
     const host = urlHost(source.url) || 'invalid';
     const abort = new AbortController();
     this.#backgroundByHost.set(host, { sourceId, abort });
-    const shared = this.#probeNow(sourceId, { signal: abort.signal }).finally(() => {
+    const stop = signal ? AbortSignal.any([abort.signal, signal]) : abort.signal;
+    const shared = this.#probeNow(sourceId, { signal: stop }).finally(() => {
       this.#inflight.delete(sourceId);
       if (this.#backgroundByHost.get(host)?.abort === abort) this.#backgroundByHost.delete(host);
     });
@@ -603,10 +608,50 @@ export class SourceService {
     this.#holdUntil = Math.max(this.#holdUntil, Date.now() + ms);
   }
 
-  async #waitForQuiet(): Promise<void> {
+  async #waitForQuiet(signal?: AbortSignal): Promise<void> {
     for (let wait = this.#holdUntil - Date.now(); wait > 0; wait = this.#holdUntil - Date.now()) {
-      await delay(wait);
+      try {
+        await delay(wait, undefined, signal ? { signal } : undefined);
+      } catch {
+        throw new RadioError('CANCELLED', 'The background check was stopped.');
+      }
     }
+  }
+
+  /**
+   * One check for "Check all sources again": queued with the other background checks (one at a
+   * time, at the lowest CPU priority, and waiting while any stream is starting), then run whatever
+   * the source's back-off, hold or pause says. A source that passes can be used at once; one that
+   * fails is recorded as usual, so its back-off and pause carry on. `want` is asked when its turn
+   * comes, so a source switched off or removed meanwhile is skipped (null). A play's check of the
+   * same host interrupts it (CANCELLED, nothing recorded), as it does any background check.
+   */
+  checkInBackground(
+    sourceId: string,
+    signal: AbortSignal,
+    want: (source: StationSource) => boolean,
+  ): Promise<{ before: StationSource; report: ProbeReport } | null> {
+    return this.#background.run(async () => {
+      await this.#waitForQuiet(signal);
+      if (signal.aborted) throw new RadioError('CANCELLED', 'The background check was stopped.');
+      const s = this.#d.stations.getSource(sourceId);
+      if (!s || !this.checkable(s) || !want(s)) return null;
+      const report = await this.#probeInBackground(sourceId, signal);
+      return { before: s, report };
+    }, signal);
+  }
+
+  /**
+   * Whether a source is one a check could make usable: enabled by its pack, not switched off by
+   * the bot owner (DISABLED_SOURCE_IDS, DISABLED_STATION_IDS) and not blocked for rights.
+   */
+  checkable(s: StationSource): boolean {
+    return (
+      s.enabled &&
+      s.rightsStatus !== 'blocked' &&
+      !this.isStationDisabled(s.stationId) &&
+      !this.#d.disabledSourceIds?.has(s.id)
+    );
   }
 
   /**

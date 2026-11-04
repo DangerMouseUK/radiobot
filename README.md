@@ -167,7 +167,7 @@ Everything is under `/radio`, and it only works in servers, not in DMs.
 - **Read:** anyone, in a channel where radio commands are allowed.
 - **Control:** admins and members with a DJ role. Other listeners depend on the server's listener-control setting: `same_channel` (the default: listeners in a voice channel, and only in the bot's channel while it plays there), `none` or `any`.
 - **Admin:** the server owner, or members with Discord's **Administrator** permission. Nothing else grants admin: not Manage Server, and there is no admin-role setting.
-- **Operator:** an admin who may also make changes that affect every server the bot is in (installing, updating or removing packs, and reviewing pack sources). That means a user listed in `OPERATOR_USER_IDS`, or the owner of the bot's Discord application (or a member of its team).
+- **Operator:** an admin who may also make changes that affect every server the bot is in (installing, updating or removing packs, checking all their sources again, and reviewing pack sources). That means a user listed in `OPERATOR_USER_IDS`, or the owner of the bot's Discord application (or a member of its team).
 
 Replies that only concern you are private (ephemeral): the now-playing card, lists, settings, errors and refusals. Anything that changes the radio for everyone (changing station, the queue, Stop and Leave) is announced in the channel in one short line, with no pings. The full capability matrix is in [docs/permissions.md](docs/permissions.md).
 
@@ -217,7 +217,7 @@ Radio never ends, so the queue moves only when you skip.
 
 | Command | Level | What it does |
 |---|---|---|
-| `/radio packs installed` | Admin | Every pack the bot has: version, station count, where it came from (the library, your `EXTRA_PACKS_DIR`, or the bot itself), available updates, packs that couldn't be loaded and why, and notices such as a withdrawn pack. A menu opens a pack's card, with **Update** and **Remove** (Operator) |
+| `/radio packs installed` | Admin | Every pack the bot has: version, station count, where it came from (the library, your `EXTRA_PACKS_DIR`, or the bot itself), available updates, packs that couldn't be loaded and why, and notices such as a withdrawn pack. A menu opens a pack's card, with **Update** and **Remove** (Operator). **Check all sources again** (Operator, after a confirm step, once every 6 hours) checks every enabled source of every pack again in the background, one at a time behind playback, including sources resting or paused after failures; the list shows "Checked N of M" while it runs, then how many work, how many are newly working and how many fail, and **Stop the check** ends it |
 | `/radio packs library [search] [country]` | Admin | The official library's packs, filtered by words (company, brand, city or pack name) and country (a name or a code such as `GB`). A pack's card shows its company, stations, countries, languages and when its streams were last checked, with **Install** (Operator). Installs run in the background without interrupting what's playing; the card shows **Installing…** until it's done |
 | `/radio packs sync [pack]` | Admin | Checks station names against each pack's official station list (or one `pack`), and reports stations added, renamed or missing, and stations whose sources all failed their last check. (This used to be `/radio sync`) |
 

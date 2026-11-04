@@ -78,7 +78,8 @@ src/
   streams/              THE SOURCE-VALIDATION BOUNDARY: url-policy, safe-fetch (SSRF-safe client),
                         playlists (PLS/M3U/HLS), input (ICY demux, HLS reader), probe (ffprobe + decode),
                         identity (metadata + audio correlation), ranking (eligibility + selection),
-                        source-service (orchestrates all of it)
+                        source-service (orchestrates all of it), full-check (the owner's
+                        "Check all sources again", through the background queue)
   audio/                ffmpeg.ts (process registry, version checks), encoder.ts (bitrate plan, args),
                         pipeline.ts (stdin → FFmpeg → Ogg Opus, rate meters)
   voice/                link.ts (@discordjs/voice wrapper + stats), packet-timing.ts (late-packet count),

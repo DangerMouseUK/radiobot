@@ -15,6 +15,7 @@ import {
 } from '../../catalogue/pack-library.ts';
 import type { StationPack } from '../../catalogue/packs.ts';
 import { plural, truncate } from '../../shared/text.ts';
+import type { FullCheckState } from '../../streams/full-check.ts';
 import type { AppContext } from '../context.ts';
 import { COLOR, DISCLAIMER } from './format.ts';
 import type { View } from './views.ts';
@@ -36,8 +37,44 @@ function ownerText(owner: LibraryPack['owner'] | StationPack['meta']['owner']): 
   return owner.brand ? `${owner.brand} (${owner.name})` : owner.name;
 }
 
-/** `/radio packs installed`: every loaded pack, updates, skipped packs and notices. */
-export function packsInstalledView(ctx: AppContext, guildId: string): View {
+const when = (ms: number) => `<t:${Math.floor(ms / 1000)}:R>`;
+
+/** What "Check all sources again" is doing, or how its last run ended, in a few lines. */
+export function fullCheckText(s: FullCheckState): string {
+  const results = [
+    `${s.usable} working${s.newlyUsable ? ` (${s.newlyUsable} newly working)` : ''}`,
+    `${s.failed} failing`,
+    s.unconfirmed
+      ? `${s.unconfirmed} played but can’t be used yet (not confirmed as the right station)`
+      : null,
+    s.playing ? `${s.playing} playing now, so left alone` : null,
+    s.skipped ? `${s.skipped} not checked (switched off, removed or busy)` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  if (s.status === 'running') {
+    if (s.total === 0 && s.done === 0) return `Started ${when(s.startedAt)}. Listing the sources…`;
+    return [
+      `**Checked ${s.done} of ${s.total}**, one at a time in the background (started ${when(s.startedAt)}).`,
+      s.done ? `So far: ${results}.` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+  const ended = s.finishedAt ?? s.startedAt;
+  return [
+    s.status === 'stopped'
+      ? `Stopped ${when(ended)} after checking ${s.done} of ${s.total}.`
+      : `Finished ${when(ended)}: checked ${s.done} of ${s.total}.`,
+    `${results}.`,
+  ].join('\n');
+}
+
+/**
+ * `/radio packs installed`: every loaded pack, updates, skipped packs and notices, with the bot
+ * owner's "Check all sources again" (or Stop while it runs). `note` adds a line at the end.
+ */
+export function packsInstalledView(ctx: AppContext, guildId: string, note: string | null = null): View {
   const packs = ctx.packs.packs;
   const updates = ctx.packManager.updates;
   const lines = packs.map((p) => {
@@ -70,9 +107,12 @@ export function packsInstalledView(ctx: AppContext, guildId: string): View {
   if (ctx.packManager.notices.length) {
     embed.addFields({ name: 'Notices', value: truncate(ctx.packManager.notices.join('\n'), 1024) });
   }
+  const check = ctx.fullCheck.state;
+  if (check) embed.addFields({ name: 'Check of every source', value: truncate(fullCheckText(check), 1024) });
+  if (note) embed.addFields({ name: 'Note', value: truncate(note, 1024) });
   embed.setFooter({ text: DISCLAIMER });
   const installed = packs.filter((p) => p.origin === 'installed').slice(0, MAX_LISTED);
-  const components = installed.length
+  const components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = installed.length
     ? [
         row(
           new StringSelectMenuBuilder()
@@ -91,7 +131,52 @@ export function packsInstalledView(ctx: AppContext, guildId: string): View {
         ),
       ]
     : [];
+  if (packs.length) {
+    components.push(
+      row(
+        ctx.fullCheck.running
+          ? new ButtonBuilder()
+              .setCustomId(ctx.ids.make(guildId, 'pkchkx'))
+              .setLabel('Stop the check')
+              .setStyle(ButtonStyle.Danger)
+          : new ButtonBuilder()
+              .setCustomId(ctx.ids.make(guildId, 'pkchk'))
+              .setLabel('Check all sources again')
+              .setStyle(ButtonStyle.Secondary),
+      ),
+    );
+  }
   return { embeds: [embed], components };
+}
+
+/** Asks before checking every source of every pack again. */
+export function fullCheckConfirmView(ctx: AppContext, guildId: string): View {
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setTitle('Check every source again?')
+        .setColor(COLOR.warn)
+        .setDescription(
+          [
+            'Every source of every station pack is checked again, for every server this bot is in. That includes sources resting after failures and sources paused after a week of failing. A source that works can be used again at once.',
+            'Sources a pack ships switched off, and custom stations, are left out.',
+            'Music keeps playing: the checks run one at a time in the background and wait while any stream starts, so a big installation can take hours. You can stop it at any time, and start it again once every 6 hours.',
+          ].join('\n\n'),
+        ),
+    ],
+    components: [
+      row(
+        new ButtonBuilder()
+          .setCustomId(ctx.ids.make(guildId, 'pkchkok'))
+          .setLabel('Check them all')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(ctx.ids.make(guildId, 'close'))
+          .setLabel('Cancel')
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  };
 }
 
 export interface LibraryFilter {

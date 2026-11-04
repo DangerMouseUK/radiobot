@@ -73,6 +73,7 @@ import {
   stationLine,
 } from './ui/format.ts';
 import {
+  fullCheckConfirmView,
   packCardView,
   packRemoveConfirmView,
   packsInstalledView,
@@ -134,6 +135,10 @@ const EPHEMERAL = MessageFlags.Ephemeral;
 const REENCODE_NOTE = 'The station restarts for a moment to use the new quality.';
 /** Shown when a button or menu names a station that has since gone (removed, or its pack switched off). */
 const GONE = 'That station is no longer available. Pick another with `/radio browse`.';
+/** How long the reply to "Check them all" follows the run: an interaction token lasts 15 min. */
+export const FULL_CHECK_FOLLOW_MS = 14 * 60_000;
+/** …editing it at most this often while it runs (and once at the end). */
+export const FULL_CHECK_EDIT_MS = 15_000;
 
 /** What an interaction was, for the debug log: "command stats", "autocomplete play", "button stop". */
 export function describeInteraction(i: Interaction): string {
@@ -261,7 +266,7 @@ export class RadioController {
       const s = Math.ceil(wait / 1000);
       throw new RadioError(
         'RATE_LIMITED',
-        `Too many ${what} in a short time. Try again in ${s < 90 ? `${s} s` : `${Math.ceil(s / 60)} min`}.`,
+        `Too many ${what} in a short time. Try again in ${s < 90 ? `${s} s` : s < 90 * 60 ? `${Math.ceil(s / 60)} min` : `${Math.ceil(s / 3600)} h`}.`,
       );
     }
   }
@@ -1520,15 +1525,91 @@ export class RadioController {
     );
   }
 
-  /** Changing packs affects every server this bot is in, so it also needs an operator. */
-  #packChangeDenied(i: Comp): string | null {
+  /** Something that affects every server this bot is in: an admin here, and an operator too. */
+  #operatorDenied(i: Comp, why: string): string | null {
     const a = this.#auth(i, 'admin');
     if (!a.ok) return a.reason;
-    if (!isOperator(this.#ctx, i.user.id))
-      return 'Station packs are shared by every server this bot is in, so only the bot owner can install, update or remove them.';
+    return isOperator(this.#ctx, i.user.id) ? null : why;
+  }
+
+  /** Changing packs affects every server this bot is in, so it also needs an operator. */
+  #packChangeDenied(i: Comp): string | null {
+    const denied = this.#operatorDenied(
+      i,
+      'Station packs are shared by every server this bot is in, so only the bot owner can install, update or remove them.',
+    );
+    if (denied) return denied;
     if (!this.#ctx.packManager.canInstall)
       return 'This bot has no data folder, so it can’t install station packs.';
     return null;
+  }
+
+  /**
+   * "Check all sources again" on `/radio packs installed`: asks first, then checks every pack
+   * source in the background queue (see FullSourceCheck). It affects every server, so it is for
+   * the bot owner. The reply follows it for up to 14 minutes (interaction tokens last 15); after
+   * that, `/radio packs installed` shows how it stands. Nothing is posted in any channel.
+   */
+  async #fullCheckComponent(i: Comp, action: 'pkchk' | 'pkchkok' | 'pkchkx'): Promise<void> {
+    const denied = this.#operatorDenied(
+      i,
+      'Checking every source again affects every server this bot is in, so only the bot owner can start or stop it.',
+    );
+    if (denied) return this.#deny(i, denied);
+    const ctx = this.#ctx;
+    const fc = ctx.fullCheck;
+    if (action === 'pkchkx') {
+      await i.deferUpdate();
+      await fc.stop();
+      await i.editReply(packsInstalledView(ctx, i.guildId));
+      return;
+    }
+    if (fc.running) {
+      await i.update(packsInstalledView(ctx, i.guildId, 'A check of every source is already running.'));
+      return;
+    }
+    if (action === 'pkchk') {
+      await i.update(fullCheckConfirmView(ctx, i.guildId));
+      return;
+    }
+    this.#rate(ctx.limits.fullCheckGlobal, 'global', 'checks of every source');
+    let ready = false;
+    let closed = false;
+    let lastEdit = 0;
+    const edit = (note: string | null = null) =>
+      void i.editReply(packsInstalledView(ctx, i.guildId, note)).catch(() => {});
+    const timer = setTimeout(() => {
+      if (closed) return;
+      closed = true;
+      edit(
+        'This message has stopped updating. Open `/radio packs installed` again to see how the check is going.',
+      );
+    }, FULL_CHECK_FOLLOW_MS);
+    timer.unref?.();
+    const started = fc.start((s) => {
+      if (!ready || closed) return;
+      const end = s.status !== 'running';
+      const now = Date.now();
+      if (!end && now - lastEdit < FULL_CHECK_EDIT_MS) return;
+      lastEdit = now;
+      if (end) {
+        closed = true;
+        clearTimeout(timer);
+      }
+      edit();
+    });
+    if (!started) clearTimeout(timer);
+    await i.update(
+      packsInstalledView(ctx, i.guildId, started ? null : 'A check of every source is already running.'),
+    );
+    ready = true;
+    lastEdit = Date.now();
+    // A short run may have ended before the reply was first shown: show how it ended.
+    if (started && !closed && !fc.running) {
+      closed = true;
+      clearTimeout(timer);
+      edit();
+    }
   }
 
   async #packComponent(i: Comp, action: 'pksel' | 'pkinst' | 'pkrm' | 'pkrmok', arg: string): Promise<void> {
@@ -1905,7 +1986,7 @@ export class RadioController {
                 'Custom stations: `/radio add` · `/radio edit` · `/radio remove`',
                 'Sources: `/radio source pin|prefer|auto|verify` · `/radio rescan`',
                 '-# `/radio source`: `prefer` tries a source first · `pin` also lets only admins switch it · `auto` lets the bot choose · `verify` records if a source is the right station',
-                'Station packs: `/radio packs library` finds and installs them · `/radio packs installed` updates or removes them · `/radio packs sync` checks them against their official lists',
+                'Station packs: `/radio packs library` finds and installs them · `/radio packs installed` updates or removes them, and has **Check all sources again** (bot owner) · `/radio packs sync` checks them against their official lists',
                 'Settings file: `/radio export` · `/radio import`',
                 '`/radio stats`: live stream and connection figures, shown only to you',
               ),
@@ -2156,6 +2237,10 @@ export class RadioController {
           await i.editReply(await this.#statsView(i.guildId));
           return;
         }
+        case 'pkchk':
+        case 'pkchkok':
+        case 'pkchkx':
+          return await this.#fullCheckComponent(i, action);
         case 'pksel':
         case 'pkinst':
         case 'pkrm':
