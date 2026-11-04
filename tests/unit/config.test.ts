@@ -122,6 +122,12 @@ describe('configuration parsing', () => {
     expect(() => load({ PRESENCE_MODE: 'song' })).toThrow(/PRESENCE_MODE/);
   });
 
+  it('sends voice from the main thread unless VOICE_THREAD=worker', () => {
+    expect(load({}).voiceThread).toBe('main');
+    expect(load({ VOICE_THREAD: 'worker' }).voiceThread).toBe('worker');
+    expect(() => load({ VOICE_THREAD: 'thread' })).toThrow(/VOICE_THREAD/);
+  });
+
   it('splits lists on commas and whitespace', () => {
     const c = load({
       DISABLED_PACKS: 'demo, other',

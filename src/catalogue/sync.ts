@@ -8,7 +8,7 @@ import { normalizedSimilarity, normalizeName, slugify } from '../shared/text.ts'
 import { ownBuffer, runWorker, siblingModule } from '../shared/workers.ts';
 import type { SafeHttpClient } from '../streams/safe-fetch.ts';
 import type { PackRegistry, StationPack } from './packs.ts';
-import { type OfficialEntry, type ParseReply, type ParseRequest, SYNC_ADAPTERS } from './sync-adapters.ts';
+import { isSyncAdapter, type OfficialEntry, type ParseReply, type ParseRequest } from './sync-adapters.ts';
 import type { Station } from './types.ts';
 
 export interface SyncReport {
@@ -137,7 +137,7 @@ export class CatalogueSync {
 
   lastSync(packId: string): { at: string | null; ok: boolean } {
     const at = this.#repo.lastSuccessfulSync(packId);
-    const last = this.#repo.lastSyncReport(packId);
+    const last = this.#repo.lastSyncOutcome(packId);
     return { at, ok: last?.success ?? false };
   }
 
@@ -187,7 +187,7 @@ export class CatalogueSync {
     };
     try {
       if (!pack?.meta.sync) throw new RadioError('INTERNAL', 'This pack has no official list to sync with.');
-      if (!SYNC_ADAPTERS[pack.meta.sync.adapter])
+      if (!isSyncAdapter(pack.meta.sync.adapter))
         throw new RadioError('INTERNAL', `Unknown sync adapter "${pack.meta.sync.adapter}".`);
       const { bytes } = await this.#http.fetchBytes(pack.meta.sync.url, {
         maxBytes: MAX_LIST_BYTES,

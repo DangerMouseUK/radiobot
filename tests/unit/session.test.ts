@@ -46,7 +46,8 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
       wsPingMs: 20,
       endpoint: 'c-lhr05-test.discord.media:443',
       packetsPlayed: 0,
-      packetTiming: { late: 2, worstGapMs: 57 },
+      packetTiming: { late: 2, worstGapMs: 57, recent: [{ at: 1_700_000_000_000, gapMs: 57 }] },
+      silenceMs: 40,
       encryptionMode: 'aead',
       status: 'ready',
     };
@@ -174,6 +175,7 @@ function setup(
   let prepares = 0;
   const refreshed: Array<{ stationId: string; at: number }> = [];
   const holds: number[] = [];
+  const settles: number[] = [];
   const session = new GuildSession({
     guildId: 'g1',
     sources: {
@@ -189,6 +191,7 @@ function setup(
       refreshStation: (stationId) => refreshed.push({ stationId, at: Date.now() }),
       select: () => selectSource(sources, null),
       holdBackground: (ms) => holds.push(ms),
+      settleBackground: (ms) => settles.push(ms),
       recordPlaybackFailure: (id) => {
         const n = (failures.get(id) ?? 0) + 1;
         failures.set(id, n);
@@ -260,6 +263,7 @@ function setup(
     connects: () => connects,
     prepares: () => prepares,
     holds,
+    settles,
   };
 }
 
@@ -413,14 +417,31 @@ describe('GuildSession', () => {
     expect(CIRCUIT_BREAK_FAILURES).toBe(DEFAULT_TIMINGS.backoff.length + 1);
   });
 
-  it('starts background re-checks only once the stream has played steadily', async () => {
-    const t = setup();
+  it('starts background re-checks only once the settle period after first audio is over', async () => {
+    const t = setup({ timings: { backgroundSettleMs: 200, upgradeCheckMs: 30 } });
     const started = Date.now();
     await t.session.play('demo:demo-radio', 'voice-1', null);
+    // Automatic background work waits out the settle period from the first audio.
+    expect(t.settles).toEqual([200]);
     expect(t.refreshed).toEqual([]); // nothing competes with a stream that is starting up
+    // Not when it has played steadily (stableMs, 50 ms here), nor at the first looks for a better source…
+    await wait(120);
+    expect(t.session.state).toBe('PLAYING');
+    expect(t.refreshed).toEqual([]);
+    // …but at the first look after the settle period.
     await until(() => t.refreshed.length === 1);
     expect(t.refreshed[0]!.stationId).toBe('demo:demo-radio');
-    expect(t.refreshed[0]!.at - started).toBeGreaterThanOrEqual(FAST.stableMs!);
+    expect(t.refreshed[0]!.at - started).toBeGreaterThanOrEqual(200);
+  });
+
+  it('asks for the settle period at each first audio, with the default of three minutes', async () => {
+    expect(DEFAULT_TIMINGS.backgroundSettleMs).toBe(180_000);
+    const t = setup();
+    await t.session.play('demo:demo-radio', 'voice-1', null);
+    expect(t.settles).toEqual([DEFAULT_TIMINGS.backgroundSettleMs]);
+    t.pipelines[0]!.fail();
+    await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
+    expect(t.settles).toHaveLength(2);
   });
 
   it('fails over at once when the station refuses access (no retries on the same source)', async () => {
@@ -611,6 +632,12 @@ describe('GuildSession', () => {
     expect(live.connectedSince).not.toBeNull();
     expect(live.input?.finalHost).toBe('n01-eu1.example.com');
     expect(live.input?.remoteAddress).toBe('203.0.113.10');
+    expect(live.voice).toMatchObject({
+      latePackets: 2,
+      worstPacketGapMs: 57,
+      recentLatePackets: [{ at: 1_700_000_000_000, gapMs: 57 }],
+      silenceMs: 40,
+    });
     await wait(60);
     expect(t.session.liveStats().voice?.ws?.samples).toBeGreaterThan(0);
     t.session.leave();

@@ -13,6 +13,7 @@ import { errorCode, isRadioError, type RadioError, type ReasonCode } from '../sh
 import type { NowPlayingMeta, SourceInput } from '../streams/input.ts';
 import { compareFidelity, type SelectionResult, transportTier } from '../streams/ranking.ts';
 import type { VoiceLink } from './link.ts';
+import type { PacketTimingSummary } from './packet-timing.ts';
 import { canTransition, isAudioActive, type PlaybackState } from './state-machine.ts';
 
 /** What a session needs from an audio pipeline (AudioPipeline in production, fakes in tests). */
@@ -41,6 +42,8 @@ export interface SourceSelector {
   refreshStation?(stationId: string, playingSourceId?: string): void;
   /** A stream is starting: background checks wait this long, so they don't compete with it. */
   holdBackground?(ms: number): void;
+  /** A stream has its first audio: automatic background work waits this long, while it settles. */
+  settleBackground?(ms: number): void;
   /** The current choice for a station, without checking anything (for moving back to a better source). */
   select?(guildId: string, stationId: string): SelectionResult;
 }
@@ -65,7 +68,14 @@ export interface SessionTimings {
   stallMs: number;
   firstAudioTimeoutMs: number;
   lagMs: number;
+  /** Playback this long counts as steady: the source's success is recorded and retries reset. */
   stableMs: number;
+  /**
+   * After a stream's first audio, automatic background work (checks of other sources, scheduled
+   * syncs, the daily pack check) waits this long, so nothing competes with it while the
+   * listener's client settles its buffer. This stream's own source refresh waits for it too.
+   */
+  backgroundSettleMs: number;
   noSourceRetryMs: number;
   /** The first retries when no source can play, each capped at noSourceRetryMs; then every noSourceRetryMs. */
   noSourceBackoff: readonly number[];
@@ -86,6 +96,7 @@ export const DEFAULT_TIMINGS: SessionTimings = {
   firstAudioTimeoutMs: 20_000,
   lagMs: 45_000,
   stableMs: 30_000,
+  backgroundSettleMs: 180_000,
   noSourceRetryMs: 120_000,
   noSourceBackoff: [15_000, 30_000, 60_000],
   stoppedIdleLeaveMs: 5 * 60_000,
@@ -173,6 +184,15 @@ export interface SessionLiveStats {
     /** Packets sent more than 40 ms after the one before, while playing, and the longest gap. */
     latePackets: number;
     worstPacketGapMs: number | null;
+    /** The last few late packets (wall-clock time, gap in ms), oldest first. */
+    recentLatePackets: PacketTimingSummary['recent'];
+    /**
+     * Silence the voice player has filled in for the current stream because no audio was ready,
+     * in ms (null when not playing), and how much of it over the last sampling window (about a
+     * minute; null until two samples of the same stream exist).
+     */
+    silenceMs: number | null;
+    recentSilenceMs: number | null;
     ws: LatencySummary | null;
   };
 }
@@ -313,7 +333,8 @@ export class GuildSession {
   #failingRun = -1;
   #connectedSince: number | null = null;
   #wsPing = new LatencySeries(24);
-  #packetSamples: Array<{ at: number; packets: number }> = [];
+  /** Watchdog samples of the voice counters (about a minute's worth), for rates in live stats. */
+  #packetSamples: Array<{ at: number; packets: number; silenceMs: number | null; run: number }> = [];
   #destroyed = false;
 
   constructor(deps: SessionDeps) {
@@ -678,6 +699,8 @@ export class GuildSession {
     link.on('reconnected', () => {
       this.#reconnects++;
       this.#d.metrics.inc('voice.reconnected');
+      // A new voice connection counts its packets from zero: rates start again from its samples.
+      this.#packetSamples = [];
     });
     link.on('connectionError', (err) => this.#log.warn({ err: safeErr(err) }, 'voice connection error'));
     link.on('audioEnded', (err) => {
@@ -798,8 +821,10 @@ export class GuildSession {
       }
       this.#setState('PLAYING');
       this.#lastUpgradeCheckAt = Date.now(); // the first look for a better source comes a minute in
-      // Audio is flowing now; background checks wait until it has had time to settle.
+      // Audio is flowing now; background work waits until it has had time to settle: all of it for
+      // stableMs, and the automatic kind (nobody waiting for it) for backgroundSettleMs.
       this.#d.sources.holdBackground?.(this.#t.stableMs);
+      this.#d.sources.settleBackground?.(this.#t.backgroundSettleMs);
       this.#lastError = null;
       this.#voiceReconnectAttempts = 0;
       this.#persist('playing', { lastSuccessfulSourceId: source.id, lastErrorCode: null });
@@ -812,9 +837,9 @@ export class GuildSession {
         this.#noSourceRetries = 0;
         this.#upgradeUnproven = false;
         try {
+          // The station's other sources are checked later, once the settle period is over (the
+          // first look for a better source after it queues them): see #considerUpgrade.
           this.#d.sources.recordPlaybackSuccess(source.id);
-          // Only now, with the stream settled, may background checks of the other sources run.
-          this.#d.sources.refreshStation?.(stationId, source.id);
         } catch (err) {
           this.#log.error({ err: safeErr(err) }, 'could not record steady playback');
         }
@@ -1143,7 +1168,15 @@ export class GuildSession {
     const v = this.#link.stats();
     this.#wsPing.add(v.wsPingMs);
     if (v.packetsPlayed !== null) {
-      this.#packetSamples.push({ at: Date.now(), packets: v.packetsPlayed });
+      const prev = this.#packetSamples[this.#packetSamples.length - 1];
+      // The counter went backwards: a new voice connection counts from zero, so start again.
+      if (prev && v.packetsPlayed < prev.packets) this.#packetSamples = [];
+      this.#packetSamples.push({
+        at: Date.now(),
+        packets: v.packetsPlayed,
+        silenceMs: v.silenceMs,
+        run: this.#runId,
+      });
       if (this.#packetSamples.length > 13) this.#packetSamples.shift();
     }
   }
@@ -1196,8 +1229,12 @@ export class GuildSession {
     if (this.#desired() !== 'playing') return;
     try {
       // Keeps the station's other sources checked (in the background, at the lowest priority),
-      // so a source that failed earlier can show that it works again.
-      this.#d.sources.refreshStation?.(stationId, current.id);
+      // so a source that failed earlier can show that it works again. Not before this stream's
+      // settle period is over: nothing should compete with it in its first minutes.
+      const firstAudio = p.stats.firstOutputAt;
+      if (firstAudio !== null && now - firstAudio >= this.#t.backgroundSettleMs) {
+        this.#d.sources.refreshStation?.(stationId, current.id);
+      }
       if (this.#manualSourceId || now - this.#lastAutoSwitchAt < this.#t.autoSwitchMinIntervalMs) return;
       const better = this.#betterSource(stationId, current);
       if (better) {
@@ -1313,11 +1350,20 @@ export class GuildSession {
     const p = this.#pipeline;
     const link = this.#link;
     let packetsPerSecond: number | null = null;
+    let recentSilenceMs: number | null = null;
     const first = this.#packetSamples[0];
     const last = this.#packetSamples[this.#packetSamples.length - 1];
-    if (first && last && last.at - first.at >= 4000) {
+    // A count that went down belongs to another voice connection: no rate rather than a wrong one.
+    if (first && last && last.at - first.at >= 4000 && last.packets >= first.packets) {
       packetsPerSecond =
         Math.round(((last.packets - first.packets) / ((last.at - first.at) / 1000)) * 10) / 10;
+    }
+    // Silence is counted per stream, so only the samples of the stream playing now are compared.
+    if (last && last.silenceMs !== null) {
+      const from = this.#packetSamples.find((s) => s.run === last.run && s.silenceMs !== null);
+      if (from && from !== last && last.silenceMs >= from.silenceMs!) {
+        recentSilenceMs = Math.round(last.silenceMs - from.silenceMs!);
+      }
     }
     const v = link?.stats() ?? null;
     return {
@@ -1359,6 +1405,9 @@ export class GuildSession {
               packetsPerSecond,
               latePackets: v.packetTiming.late,
               worstPacketGapMs: v.packetTiming.worstGapMs,
+              recentLatePackets: v.packetTiming.recent,
+              silenceMs: v.silenceMs,
+              recentSilenceMs,
               ws: this.#wsPing.summary(),
             }
           : null,

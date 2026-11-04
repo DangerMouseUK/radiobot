@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CustomStationService } from '../../src/catalogue/custom-provider.ts';
 import type { StationSource } from '../../src/catalogue/types.ts';
 import { RadioError } from '../../src/shared/errors.ts';
@@ -116,6 +116,20 @@ describe('adding custom stations (FR-011)', () => {
     });
     expect(t.stations.countCustomStations(G)).toBe(0);
     expect(t.stations.listAllSources()).toEqual([]);
+  });
+
+  it('leaves no station behind when storing its stream fails', async () => {
+    const t = setup();
+    t.stations.listStations(G); // cached, so a leftover would show in the cache too
+    vi.spyOn(t.stations, 'insertSource').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    await expect(
+      t.service.add(G, 'u', { name: 'Mine', url: 'https://ice.example.org/a.mp3' }),
+    ).rejects.toThrow('disk full');
+    expect(t.stations.countCustomStations(G)).toBe(0);
+    expect(t.stations.listStations(G)).toEqual([]);
+    expect(t.probed).toEqual([]);
   });
 });
 

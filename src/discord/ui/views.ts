@@ -17,9 +17,10 @@ import { searchStations } from '../../catalogue/search.ts';
 import { AVAILABILITY_LABEL, type Station } from '../../catalogue/types.ts';
 import type { GuildSettings, QueueEntry } from '../../persistence/repositories/guilds.ts';
 import { truncate } from '../../shared/text.ts';
+import type { CoverageCounts } from '../../streams/source-service.ts';
 import type { ComponentAction } from '../components/custom-id.ts';
 import type { AppContext } from '../context.ts';
-import { groupName, visibleStations } from '../context.ts';
+import { catalogueKey, groupName, listedStation, visibleStations } from '../context.ts';
 import { availabilityBadge, COLOR, DISCLAIMER, stationLine } from './format.ts';
 
 type Row = ActionRowBuilder<MessageActionRowComponentBuilder>;
@@ -31,9 +32,12 @@ export interface View {
   components: Row[];
 }
 
-/** Shown when the bot has no stations at all: a fresh install starts with no station packs. */
+/**
+ * Shown when the bot has no stations at all: a fresh install starts with no station packs. Packs
+ * are shared by every server, so only the bot's owner installs them.
+ */
 const NO_STATIONS_YET =
-  'No stations yet. An admin can add station packs with `/radio packs library`, or a custom station with `/radio add`.';
+  'No stations yet. The bot’s operator can install station packs with `/radio packs library`, and admins can add a custom station with `/radio add`.';
 
 /** Stations per page in browse and list. List lines carry IDs, so 20 keeps a page under 4000 characters. */
 const PAGE_SIZE = 20;
@@ -75,29 +79,66 @@ function categoryFilter(ctx: AppContext, category: string): string {
   return `category: ${ctx.packs.categories().find((c) => c.id === category)?.name ?? category}`;
 }
 
+/** A browse list's search results, with what they were worked out from. */
+export interface BrowseResults {
+  key: string;
+  stations: readonly Station[];
+}
+
 export interface BrowseState {
   /** A pack id, "custom" or null for everything. */
   pack: string | null;
   /** A category id, "favourites", or null. */
   category: string | null;
   search: string | null;
+  /**
+   * The search's results (at most 500 stations), kept so that Next page and Previous page don't
+   * search the whole catalogue again. Reused only while the catalogue, the filters, the search
+   * and (for the favourites filter) the favourites are what they were.
+   */
+  results?: BrowseResults | undefined;
 }
 
+/** How many stations a browse search keeps, best first. */
+const BROWSE_SEARCH_LIMIT = 500;
+
 /** Filters the browse list. Stations stay grouped by pack, in pack order, custom stations last. */
-export function browseStations(ctx: AppContext, guildId: string, state: BrowseState): Station[] {
+export function browseStations(
+  ctx: AppContext,
+  guildId: string,
+  state: BrowseState,
+  /** This server's favourites, when the caller has read them already. */
+  allFavourites?: readonly string[],
+): readonly Station[] {
+  const favourites =
+    state.category === 'favourites' ? (allFavourites ?? ctx.guilds.listFavourites(guildId)) : null;
+  const key = state.search
+    ? [
+        catalogueKey(ctx),
+        state.pack ?? '',
+        state.category ?? '',
+        state.search,
+        favourites?.join(',') ?? '',
+      ].join('|')
+    : null;
+  if (key !== null && state.results?.key === key) return state.results.stations;
+  state.results = undefined;
   let list = visibleStations(ctx, guildId);
   if (state.pack) list = list.filter((s) => s.provider === state.pack);
-  if (state.category === 'favourites') {
-    const fav = new Set(ctx.guilds.listFavourites(guildId));
+  if (favourites) {
+    const fav = new Set(favourites);
     list = list.filter((s) => fav.has(s.id));
   } else if (state.category === 'custom') {
     list = list.filter((s) => s.provider === 'custom');
   } else if (state.category) {
     list = list.filter((s) => s.category === state.category);
   }
-  if (state.search) {
-    const order = new Map(searchStations(list, state.search, 500).map((h, i) => [h.station.id, i]));
+  if (key !== null) {
+    const order = new Map(
+      searchStations(list, state.search!, BROWSE_SEARCH_LIMIT).map((h, i) => [h.station.id, i]),
+    );
     list = list.filter((s) => order.has(s.id)).sort((x, y) => order.get(x.id)! - order.get(y.id)!);
+    state.results = { key, stations: list };
   }
   return list;
 }
@@ -113,7 +154,7 @@ function groupHeading(ctx: AppContext, provider: string): string {
 /** Station lines grouped under their pack (or custom stations) headings. */
 function groupedLines(
   ctx: AppContext,
-  stations: Station[],
+  stations: readonly Station[],
   current: string | null,
   withIds = false,
   offset = 0,
@@ -140,12 +181,13 @@ export function browseView(
   token: string,
   page: number,
 ): View {
-  const all = browseStations(ctx, guildId, state);
+  const favouriteIds = ctx.guilds.listFavourites(guildId);
+  const all = browseStations(ctx, guildId, state, favouriteIds);
   const pages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
   const p = Math.min(Math.max(0, page), pages - 1);
   const slice = all.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
   const current = ctx.sessions.get(guildId)?.stationId ?? null;
-  const favourites = ctx.guilds.listFavourites(guildId).length;
+  const favourites = favouriteIds.length;
   const onlyFavourites = state.category === 'favourites';
   const lines = groupedLines(ctx, slice, current);
   const filter = [
@@ -323,6 +365,47 @@ function listToggle(ctx: AppContext, guildId: string, scope: ListScope, pack: st
     .setStyle(ButtonStyle.Secondary);
 }
 
+/** Why a chosen pack lists nothing: it isn't installed, it is switched off, or it has no stations. */
+function noPackStations(ctx: AppContext, pack: string): string {
+  const loaded = ctx.packs.get(pack);
+  if (!loaded)
+    return `No station pack called \`${truncate(pack.replaceAll('`', ''), 40)}\` is installed. Run \`/radio list\` on its own to see every station.`;
+  if (!ctx.packs.isEnabled(pack))
+    return `The station pack ${loaded.meta.name} is switched off on this bot, so its stations can’t be listed or played.`;
+  return `The station pack ${loaded.meta.name} has no stations to list.`;
+}
+
+/**
+ * Stream counts for the listed stations: each pack's cached counts (one pack can have thousands
+ * of stations, so they are never counted on a page click), plus this server's custom stations,
+ * which are few and counted now.
+ */
+function listCoverage(
+  ctx: AppContext,
+  scope: ListScope,
+  pack: string | null,
+  custom: Station[],
+  list: readonly Station[],
+): CoverageCounts {
+  // Only a hand-made button names "custom" as a pack; its list is the custom stations.
+  if (pack === 'custom') return ctx.sources.coverage([...list]);
+  const total: CoverageCounts = { catalogued: 0, withSources: 0, usable: 0, verifiedPlayable: 0 };
+  const add = (c: CoverageCounts) => {
+    total.catalogued += c.catalogued;
+    total.withSources += c.withSources;
+    total.usable += c.usable;
+    total.verifiedPlayable += c.verifiedPlayable;
+  };
+  const packs = pack
+    ? ctx.packs.isEnabled(pack)
+      ? [pack]
+      : []
+    : ctx.packs.enabledPacks().map((p) => p.meta.id);
+  for (const id of packs) add(ctx.sources.coverageByProvider(id));
+  if (!pack && scope === 'all' && custom.length > 0) add(ctx.sources.coverage(custom));
+  return total;
+}
+
 export function listView(
   ctx: AppContext,
   guildId: string,
@@ -332,13 +415,12 @@ export function listView(
 ): View {
   const all = visibleStations(ctx, guildId);
   const custom = all.filter((s) => s.provider === 'custom');
-  let list: Station[];
+  let list: readonly Station[];
   if (scope === 'favourites') {
-    // A lookup table, not a search per favourite: favourites have no cap, and packs can be large.
-    const byId = new Map(all.map((s) => [s.id, s]));
+    // Each favourite looked up by ID: no table of the whole catalogue on every page click.
     list = ctx.guilds
       .listFavourites(guildId)
-      .map((id) => byId.get(id))
+      .map((id) => listedStation(ctx, guildId, id))
       .filter((s): s is Station => Boolean(s));
   } else if (scope === 'custom') {
     list = custom;
@@ -375,13 +457,15 @@ export function listView(
             ? 'No favourites yet. Press Favourite under a playing station to add one.'
             : scope === 'custom'
               ? 'This server has no custom stations yet. Admins can add one with `/radio add`.'
-              : NO_STATIONS_YET),
+              : pack
+                ? noPackStations(ctx, pack)
+                : NO_STATIONS_YET),
         4000,
       ),
     );
   let footer = pageLine(p, pages, list.length);
   if (scope === 'all' || scope === 'packs') {
-    const cov = ctx.sources.coverage(list);
+    const cov = listCoverage(ctx, scope, pack, custom, list);
     footer += ` · ${cov.withSources} with a known stream · ${cov.usable} with a working stream · ${cov.verifiedPlayable} verified and playable`;
     const packMeta = pack ? ctx.packs.get(pack) : null;
     if (packMeta?.meta.sync) {

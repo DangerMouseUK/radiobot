@@ -6,6 +6,9 @@ import {
   EXPORT_VERSION,
   exportGuild,
   type GuildExport,
+  IMPORT_MAX_BYTES,
+  MAX_FAVOURITES,
+  MAX_SOURCE_PREFERENCES,
   parseImport,
   previewImport,
 } from '../../src/import-export/config-io.ts';
@@ -111,6 +114,70 @@ describe('guild settings export', () => {
     const t = configured();
     const data = exportGuild(SRC, t.guilds, t.stations);
     expect(parseImport(JSON.stringify(data, null, 2))).toEqual(data);
+  });
+
+  it('imports its own export with more than 200 favourites and source choices, up to the caps', () => {
+    const t = seeded();
+    // Station IDs as long as the format allows (32-character pack, 64-character slug).
+    const id = (n: number) => `${'p'.repeat(32)}:${String(n).padStart(64, 's')}`;
+    t.db.transaction(() => {
+      for (let n = 0; n < 250; n++) {
+        t.stations.upsertProviderStation({
+          id: id(n),
+          provider: 'p'.repeat(32),
+          slug: String(n).padStart(64, 's'),
+          externalId: null,
+          displayName: `Station ${n}`,
+          aliases: [],
+          tags: [],
+          category: null,
+          sortOrder: n,
+          officialPageUrl: null,
+          officialLastSeenAt: null,
+          catalogueStatus: 'active',
+          description: null,
+        });
+        const sourceId = `${'x'.repeat(90)}-${n}`;
+        t.stations.upsertSeedSource({
+          id: sourceId,
+          stationId: id(n),
+          url: `https://ice.example.org/${n}.mp3`,
+          label: null,
+          priority: 1,
+          transportHint: null,
+          codecHint: null,
+          provenance: 'curated',
+          provenanceDetail: null,
+          rightsStatus: 'unreviewed',
+        });
+        t.guilds.setPreference(SRC, id(n), 'prefer', sourceId, null);
+      }
+    });
+    t.guilds.setFavourites(
+      SRC,
+      Array.from({ length: 250 }, (_, n) => id(n)),
+    );
+    const text = `${JSON.stringify(exportGuild(SRC, t.guilds, t.stations), null, 2)}\n`;
+    // It was refused before: the import allowed only 200 of each.
+    const data = parseImport(text);
+    expect(data.favourites).toHaveLength(250);
+    expect(data.sourcePreferences).toHaveLength(250);
+    // With these longest IDs, the file still fits the import's size limit.
+    expect(Buffer.byteLength(text)).toBeLessThan(IMPORT_MAX_BYTES);
+    // The import takes as many as a server can keep, and no more.
+    const full = exportGuild(SRC, t.guilds, t.stations);
+    const atCaps = {
+      ...full,
+      favourites: Array.from({ length: MAX_FAVOURITES }, (_, n) => id(n)),
+      sourcePreferences: Array.from({ length: MAX_SOURCE_PREFERENCES }, (_, n) => ({
+        stationId: id(n),
+        mode: 'prefer' as const,
+        sourceId: 'x'.repeat(60),
+      })),
+    };
+    expect(parseImport(JSON.stringify(atCaps)).favourites).toHaveLength(MAX_FAVOURITES);
+    const over = { ...atCaps, favourites: [...atCaps.favourites, id(MAX_FAVOURITES)] };
+    expect(() => parseImport(JSON.stringify(over))).toThrow(/favourites/);
   });
 
   it('carries the voice channel status setting, and reads older files without it as on', () => {

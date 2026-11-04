@@ -4,9 +4,12 @@
 # container restart-loop like a bot with a bad token. FAKE_COMPOSE_VERSION sets the reported version,
 # and FAKE_PLAYING the number of servers the bot reports playing in. FAKE_UP_FAIL=1 makes `compose up`
 # fail (an update interrupted before the restart) and FAKE_RUN_FAIL=1 makes `compose run` fail (a
-# restore that can't copy the file), and FAKE_COUNT_FAIL=1 makes `packs.js count` fail. Local images are
+# restore that can't copy the file), and FAKE_COUNT_FAIL=1 makes `packs.js count` fail. FAKE_PACKS_STATUS
+# is the exit status of `packs.js add` and `packs.js remove`, FAKE_BACKUP_FAIL=1 makes `backup.js` fail, and
+# FAKE_UNHEALTHY=1 makes the heartbeat check fail (a bot that never gets ready). Local images are
 # listed in $FAKE_STATE/images as "repository:tag id", one per line; pull and build add the checked-out
-# version's. `compose exec` and `compose run` calls whose input is a terminal go to $FAKE_STATE/tty-input.log.
+# version's. `compose exec` and `compose run` calls whose input is a terminal go to $FAKE_STATE/tty-input.log;
+# what any other `compose run` reads from its input goes to $FAKE_STATE/run-input.
 st=$FAKE_STATE
 echo "docker $*" >>"$st/calls.log"
 now() { date -u +%Y-%m-%dT%H:%M:%S.000000000Z; }
@@ -60,7 +63,10 @@ case "$1" in
   config) echo "$REPO:$(version)" ;; # --images: the image the checked-out compose.yaml names
   pull) [ -n "${FAKE_PULL_OK:-}" ] || { echo "manifest unknown" >&2 && exit 1; } && add_image ;;
   build) echo "(built)" && add_image ;;
-  run) [ -z "${FAKE_RUN_FAIL:-}" ] || { echo "cp: cannot create regular file" >&2 && exit 1; } ;;
+  run)
+    [ -z "${FAKE_RUN_FAIL:-}" ] || { echo "cat: cannot create regular file" >&2 && exit 1; }
+    [ -t 0 ] || cat >"$st/run-input"
+    ;;
   up)
     [ -z "${FAKE_UP_FAIL:-}" ] || { echo "network error" >&2 && exit 1; }
     rm -f "$st/stopped" && touch "$st/running" && now >"$st/started"
@@ -71,13 +77,20 @@ case "$1" in
   down) rm -f "$st/running" "$st/stopped" ;;
   exec)
     case "$*" in
-      *backup.js*) echo "Backup written: /app/data/backups/radio-bot-manual-x.sqlite" ;;
+      *backup.js*)
+        [ -z "${FAKE_BACKUP_FAIL:-}" ] || { echo "disk full" >&2 && exit 1; }
+        echo "Backup written: /app/data/backups/radio-bot-manual-x.sqlite"
+        ;;
       *"packs.js count"*)
         [ -z "${FAKE_COUNT_FAIL:-}" ] || exit 1
         cat "$st/packs" 2>/dev/null || echo 0
         ;;
       *"packs.js browse"*) echo "Packs in the official pack library:" && echo "  mypack  My Pack · 3 stations" ;;
-      *"packs.js add"*) echo "Installed My Pack (mypack): 3 stations." && echo 1 >"$st/packs" ;;
+      *"packs.js add"*)
+        echo "Installed My Pack (mypack): 3 stations." && echo 1 >"$st/packs"
+        exit "${FAKE_PACKS_STATUS:-0}"
+        ;;
+      *"packs.js remove"*) echo "(packs)" && exit "${FAKE_PACKS_STATUS:-0}" ;;
       *"packs.js update"*) # like the real one: nothing to update, so status 3 when asked for it
         echo "My Pack (mypack) is already up to date (version 2026.11.03)."
         case "$*" in *--unchanged-status*) exit 3 ;; esac
@@ -85,6 +98,7 @@ case "$1" in
       *packs.js*) echo "(packs)" ;;
       *healthcheck.js*) echo "healthy: ok" ;;
       *health.json*)
+        [ -z "${FAKE_UNHEALTHY:-}" ] || exit 1
         echo "{\"at\":\"x\",\"activeStreams\":${FAKE_PLAYING:-0},\"discordReady\":true,\"dbOk\":true,\"ffmpegOk\":true}"
         ;;
     esac

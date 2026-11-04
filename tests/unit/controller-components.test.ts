@@ -304,12 +304,60 @@ describe('now-playing buttons', () => {
     const { t, st } = customServer();
     const panel = t.textChannel('800000000000000010');
     t.guilds.updateSettings(GUILD, { panelChannelId: panel.id, panelMessageId: PANEL_MESSAGE });
+    // Playing, so the panel shows Favourite or Unfavourite for the station.
+    playingIn(t, V1, st.id).fullStatus = {};
     await t.click(t.people.admin, t.ids.make(GUILD, 'fav', st.id), 'button', [], PANEL_MESSAGE);
     expect(panel.edits.map((e) => e.id)).toEqual([PANEL_MESSAGE]);
     await t.click(t.people.admin, t.ids.make(GUILD, 'fav', st.id), 'button', [], PANEL_MESSAGE);
     expect(panel.edits).toHaveLength(1);
     await t.click(t.people.admin, t.ids.make(GUILD, 'unfav', st.id), 'button', [], PANEL_MESSAGE);
     expect(panel.edits).toHaveLength(2);
+  });
+
+  it('a panel refresh that would show the same is not sent again, and a failed one is retried', async () => {
+    const { t, st } = customServer();
+    const panel = t.textChannel('800000000000000010');
+    t.guilds.updateSettings(GUILD, { panelChannelId: panel.id, panelMessageId: PANEL_MESSAGE });
+    const s = playingIn(t, V1, st.id);
+    s.fullStatus = {};
+    await t.controller.refreshPanel(GUILD);
+    await t.controller.refreshPanel(GUILD);
+    expect(panel.edits).toHaveLength(1);
+    // Something the panel shows changes: it is edited again.
+    s.fullStatus = { state: 'CONNECTED', desiredState: 'stopped' };
+    await t.controller.refreshPanel(GUILD);
+    expect(panel.edits).toHaveLength(2);
+    // A failed edit is forgotten, so the same panel is sent again next time.
+    s.fullStatus = {};
+    panel.editError = 50013;
+    await t.controller.refreshPanel(GUILD);
+    panel.editError = null;
+    await t.controller.refreshPanel(GUILD);
+    expect(panel.edits).toHaveLength(3);
+    await t.controller.refreshPanel(GUILD);
+    expect(panel.edits).toHaveLength(3);
+    // Refresh on the panel redraws it in place, and the timer then has nothing new to send.
+    s.fullStatus = { state: 'CONNECTED', desiredState: 'stopped' };
+    const refresh = await t.click(
+      t.people.member,
+      t.ids.make(GUILD, 'now', '', null),
+      'button',
+      [],
+      PANEL_MESSAGE,
+    );
+    expect(refresh.calls[0]!.method).toBe('update');
+    await t.controller.refreshPanel(GUILD);
+    expect(panel.edits).toHaveLength(3);
+  });
+
+  it('a new panel starts from what it was posted with', async () => {
+    const { t, st } = customServer();
+    const panel = t.textChannel('800000000000000010');
+    playingIn(t, V1, st.id).fullStatus = {};
+    await t.command(t.people.admin, { sub: 'panel', channel: panel.id });
+    expect(panel.sent).toHaveLength(1);
+    await t.controller.refreshPanel(GUILD);
+    expect(panel.edits).toEqual([]);
   });
 
   it('Sources and Inspect show the station’s sources privately', async () => {

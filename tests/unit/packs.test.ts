@@ -9,6 +9,7 @@ import {
   PackRegistry,
   type StationPack,
 } from '../../src/catalogue/packs.ts';
+import { isSyncAdapter, parseOfficialList } from '../../src/catalogue/sync-adapters.ts';
 import { loadConfig } from '../../src/config/env.ts';
 import { COMPONENT_ACTIONS, ComponentIds, MAX_ARG_LENGTH } from '../../src/discord/components/custom-id.ts';
 import { MAX_SLUG_LENGTH } from '../../src/shared/text.ts';
@@ -245,6 +246,40 @@ describe('PackRegistry', () => {
     expect(r.orderOf('unknown')).toBeGreaterThan(r.orderOf('beta'));
     expect(r.get('alpha')?.meta.id).toBe('alpha');
     expect(r.get('nope')).toBeNull();
+  });
+
+  it('counts a generation for every change to its packs, and keeps orderOf in step', () => {
+    const r = new PackRegistry([fakePack('beta'), fakePack('alpha')]);
+    const g0 = r.generation;
+    expect(r.orderOf('alpha')).toBe(0);
+    r.put({ ...fakePack('aaa', { order: 1 }), origin: 'installed' });
+    expect(r.generation).toBeGreaterThan(g0);
+    expect([r.orderOf('aaa'), r.orderOf('alpha'), r.orderOf('beta')]).toEqual([0, 1, 2]);
+    const g1 = r.generation;
+    r.drop('aaa');
+    expect(r.generation).toBeGreaterThan(g1);
+    expect(r.orderOf('aaa')).toBe(Number.MAX_SAFE_INTEGER - 1);
+    expect(r.orderOf('alpha')).toBe(0);
+    // Asking changes nothing.
+    const g2 = r.generation;
+    r.orderOf('beta');
+    r.enabledPacks();
+    expect(r.generation).toBe(g2);
+  });
+
+  it('accepts only real sync adapters, not names every object has', () => {
+    for (const name of ['webradio-apidata', 'json-name-list']) expect(isSyncAdapter(name)).toBe(true);
+    for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'nope'])
+      expect(isSyncAdapter(name), name).toBe(false);
+    const root = tempRoot();
+    const dir = writeFiles(join(root, 'proto'), {
+      meta: { sync: { adapter: 'constructor', url: 'https://example.org/list' } },
+    });
+    expect(() => loadPack(dir)).toThrow(/unknown sync adapter/);
+    expect(parseOfficialList({ adapter: 'toString', bytes: new Uint8Array(), maxEntries: 10 })).toEqual({
+      ok: false,
+      error: 'Unknown sync adapter "toString".',
+    });
   });
 
   it('lets DISABLED_PACKS win over ENABLED_PACKS and hides disabled packs’ categories', () => {

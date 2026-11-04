@@ -263,6 +263,43 @@ describe('Check all sources again', () => {
     await t.full.stop();
   });
 
+  it('waits out the settle period after a stream’s first audio', async () => {
+    const t = harness();
+    t.service.settleBackground(150);
+    const startedAt = Date.now();
+    const done = t.finished();
+    await until(() => t.checked.length > 0);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(140);
+    await done;
+  });
+
+  it('checks a source again after streams starting interrupt it, however often (not a give-way)', async () => {
+    let calls = 0;
+    const t = harness({
+      check: (_id, signal) => {
+        calls++;
+        // The first five checks run until a stream start interrupts them; every later one passes.
+        if (calls > 5) return Promise.resolve(ok());
+        return new Promise((resolve) =>
+          signal?.addEventListener('abort', () =>
+            resolve({ ...emptyOutcome(Date.now()), failureCode: 'CANCELLED' }),
+          ),
+        );
+      },
+    });
+    const done = t.finished();
+    for (let n = 1; n <= 5; n++) {
+      await until(() => calls === n);
+      t.service.holdBackground(1);
+    }
+    const end = await done;
+    const first = t.checked[0]!;
+    expect(t.checked.filter((id) => id === first)).toHaveLength(6);
+    expect(end.skipped).toBe(0);
+    expect(end.done).toBe(end.total);
+    expect(t.source(first).lastProbeAt).not.toBeNull();
+  });
+
   it('gives way to a play on the same host, then checks that source again', async () => {
     let calls = 0;
     const t = harness({

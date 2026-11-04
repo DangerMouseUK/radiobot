@@ -52,7 +52,7 @@ interface StationLists {
 }
 
 interface StationsCache {
-  version: string;
+  version: number;
   /** In catalogue order: pack stations first, then custom stations. */
   all: Station[];
   byId: Map<string, Station>;
@@ -61,7 +61,7 @@ interface StationsCache {
 }
 
 interface SourcesCache {
-  version: string;
+  version: number;
   byId: Map<string, StationSource>;
   /** Each list by priority and ID; in station ID order while `sorted`. */
   byStation: Map<string, StationSource[]>;
@@ -346,6 +346,29 @@ export interface StoredProbeResult extends ProbeResultRecord {
   id: number;
 }
 
+export interface PruneProbeHistoryOptions {
+  /** Results kept per source (PROBE_HISTORY_LIMIT). */
+  keep: number;
+  /** Results older than this many days go (PROBE_HISTORY_DAYS). */
+  days: number;
+  /** Now, in milliseconds since the epoch (default `Date.now()`). */
+  now?: number;
+  /** Awaited between batches: gives the event loop (and voice packets) a turn. */
+  pause: () => Promise<void>;
+  signal?: AbortSignal;
+  /** Also cut every source's history to `keep`, when that limit is lower than the last one applied. */
+  trimEverySource: boolean;
+  /** Most rows one statement deletes (default 250). */
+  batch?: number;
+}
+
+/** Rows deleted per statement by `pruneProbeHistory`: about a millisecond's work. */
+const PRUNE_BATCH = 250;
+/** Sources whose history the count pass trims between two pauses. */
+const PRUNE_SOURCES_PER_PAGE = 50;
+/** The per-source limit the count pass last applied to every source. */
+const PROBE_LIMIT_KEY = 'probe_history.trimmed_to';
+
 /** Source fields updated from a probe. */
 export interface SourceProbePatch {
   transport?: Transport;
@@ -407,7 +430,8 @@ export class StationRepository {
    * the time, and seeding a pack or a sync adds and renames stations by the thousand. A full
    * re-read of a big catalogue (tens of milliseconds for each table) would hold up voice packets.
    * A change to a server's custom stations re-reads only that server's. A write made while a table
-   * wasn't cached, or a rollback, leaves the next read to read it all again.
+   * wasn't cached leaves the next read to read it all again, and so does a rollback of a
+   * transaction that wrote that table (or read it into the cache); other rollbacks keep the cache.
    * The rows are frozen because they are shared.
    */
   #stations: StationsCache | null = null;
@@ -415,22 +439,47 @@ export class StationRepository {
   /** Writes that the caches didn't apply in place, so the next read starts again. */
   #stationWrites = 0;
   #sourceWrites = 0;
+  /** Every station or source write, and every rollback that undid one: see `changeCount`. */
+  #changes = 0;
 
-  #stationsVersion(): string {
-    return `${this.#stationWrites}/${this.#db.rollbacks}`;
+  /** Called by the database when a transaction that wrote stations, or cached them, rolls back. */
+  readonly #stationsUndone = (): void => {
+    this.#stationWrites++;
+    this.#changes++;
+  };
+
+  readonly #sourcesUndone = (): void => {
+    this.#sourceWrites++;
+    this.#changes++;
+  };
+
+  /**
+   * Goes up on every station or source write (in place in the caches or not) and on every rollback
+   * that may have undone one. Never goes down: a cheap key for anything worked out from stations
+   * and sources, valid while it stays the same.
+   */
+  get changeCount(): number {
+    return this.#changes;
   }
 
-  #sourcesVersion(): string {
-    return `${this.#sourceWrites}/${this.#db.rollbacks}`;
+  /** Bookkeeping for a write to the stations table (whether or not it reached the cache). */
+  #stationsWritten(): void {
+    this.#changes++;
+    this.#db.onRollback(this.#stationsUndone);
+  }
+
+  #sourcesWritten(): void {
+    this.#changes++;
+    this.#db.onRollback(this.#sourcesUndone);
   }
 
   /** The cached stations, if still current (single-row reads don't rebuild: seeding writes between them). */
   #currentStations(): StationsCache | null {
-    return this.#stations?.version === this.#stationsVersion() ? this.#stations : null;
+    return this.#stations?.version === this.#stationWrites ? this.#stations : null;
   }
 
   #currentSources(): SourcesCache | null {
-    return this.#sources?.version === this.#sourcesVersion() ? this.#sources : null;
+    return this.#sources?.version === this.#sourceWrites ? this.#sources : null;
   }
 
   #cachedStations(): StationsCache {
@@ -439,8 +488,10 @@ export class StationRepository {
     const all = this.#db
       .all(`SELECT * FROM stations ${STATION_ORDER}`)
       .map((r) => freezeStation(mapStation(r)));
-    this.#stations = { version: this.#stationsVersion(), all, byId: new Map(), lists: null };
+    this.#stations = { version: this.#stationWrites, all, byId: new Map(), lists: null };
     for (const st of all) this.#stations.byId.set(st.id, st);
+    // Read inside a transaction, it may hold rows that a rollback takes back.
+    this.#db.onRollback(this.#stationsUndone);
     return this.#stations;
   }
 
@@ -458,11 +509,12 @@ export class StationRepository {
     }
     for (const list of byStation.values()) list.sort(byPriority);
     this.#sources = {
-      version: this.#sourcesVersion(),
+      version: this.#sourceWrites,
       byId: new Map(all.map((x) => [x.id, x])),
       byStation,
       sorted: true,
     };
+    this.#db.onRollback(this.#sourcesUndone);
     return this.#sources;
   }
 
@@ -477,6 +529,7 @@ export class StationRepository {
       this.#db.run(sql, params);
       done = true;
     } finally {
+      this.#stationsWritten();
       if (done && cache) placeStation(cache, id, this.#db.get('SELECT * FROM stations WHERE id = ?', [id]));
       else this.#stationWrites++;
     }
@@ -500,7 +553,9 @@ export class StationRepository {
       result = this.#db.run(sql, params);
       return result;
     } finally {
+      this.#stationsWritten();
       if (deletes) {
+        this.#sourcesWritten();
         if (result !== null && sources) {
           if (result.changes > 0) dropStationSources(sources, deletes);
         } else this.#sourceWrites++;
@@ -524,6 +579,7 @@ export class StationRepository {
       this.#db.run(sql, params);
       done = true;
     } finally {
+      this.#stationsWritten();
       if (done && cache) {
         const r = this.#db.get('SELECT * FROM stations WHERE id = ?', [id]);
         const prev = cache.byId.get(id);
@@ -548,6 +604,7 @@ export class StationRepository {
       this.#db.run(sql, params);
       done = true;
     } finally {
+      this.#stationsWritten();
       let patched = false;
       if (done && cache) {
         const rows = this.#db.all('SELECT * FROM stations WHERE id IN (SELECT value FROM json_each(?))', [
@@ -576,6 +633,7 @@ export class StationRepository {
       result = this.#db.run(sql, params);
       return result;
     } finally {
+      this.#sourcesWritten();
       if (result !== null && cache)
         patchSource(cache, id, this.#db.get('SELECT * FROM station_sources WHERE id = ?', [id]));
       else this.#sourceWrites++;
@@ -1117,20 +1175,77 @@ export class StationRepository {
       }));
   }
 
-  /** Bounds probe history (PRD §11.2): keep the newest `keep` rows per source and nothing older than `days`. */
-  pruneProbeResults(keep: number, days: number, trimEverySource = true): number {
-    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
-    const byAge = this.#db.run('DELETE FROM source_probe_results WHERE started_at < ?', [cutoff]).changes;
-    // Each new result already trims its own source, so the count pass is only needed once after
-    // start-up (PROBE_HISTORY_LIMIT may have been lowered); it reads every source's history.
-    if (!trimEverySource) return byAge;
-    let byCount = 0;
-    const over = this.#db.all<{ source_id: string }>(
-      'SELECT source_id FROM source_probe_results GROUP BY source_id HAVING COUNT(*) > ?',
-      [keep],
+  /**
+   * Bounds probe history (PRD §11.2) without holding up voice packets: deletes results older than
+   * `days` a batch at a time (through the `started_at` index), with `await pause()` between
+   * batches. With `trimEverySource`, it also cuts every source's history to its newest `keep`
+   * results, but only when `keep` is lower than the limit it last applied (kept in `app_meta`):
+   * each new result already trims its own source, so the pass is needed only after
+   * PROBE_HISTORY_LIMIT was lowered, or the first time. That pass also goes a batch at a time.
+   * Stops between batches once `signal` aborts (the limit is then recorded only when it finished).
+   */
+  async pruneProbeHistory(o: PruneProbeHistoryOptions): Promise<{ deleted: number }> {
+    const batch = Math.max(1, Math.floor(o.batch ?? PRUNE_BATCH));
+    const cutoff = new Date((o.now ?? Date.now()) - o.days * 86_400_000).toISOString();
+    let deleted = 0;
+    for (;;) {
+      if (o.signal?.aborted) return { deleted };
+      const n = this.#db.run(
+        `DELETE FROM source_probe_results WHERE id IN (
+           SELECT id FROM source_probe_results WHERE started_at < ? ORDER BY started_at LIMIT ?)`,
+        [cutoff, batch],
+      ).changes;
+      deleted += n;
+      if (n < batch) break;
+      await o.pause();
+    }
+    if (!o.trimEverySource) return { deleted };
+    const keep = Math.max(0, Math.floor(o.keep));
+    const stored = this.#db.get<{ value: string }>('SELECT value FROM app_meta WHERE key = ?', [
+      PROBE_LIMIT_KEY,
+    ])?.value;
+    const applied = stored === undefined ? Number.NaN : Number(stored);
+    if (Number.isFinite(applied) && keep >= applied) {
+      // A higher limit needs no pass now, but a later, lower one must compare with this one.
+      if (keep > applied) this.#setMeta(PROBE_LIMIT_KEY, String(keep));
+      return { deleted };
+    }
+    let after = '';
+    for (;;) {
+      if (o.signal?.aborted) return { deleted };
+      const ids = this.#db.all<{ source_id: string }>(
+        `SELECT DISTINCT source_id FROM source_probe_results WHERE source_id > ?
+         ORDER BY source_id LIMIT ?`,
+        [after, PRUNE_SOURCES_PER_PAGE],
+      );
+      if (ids.length === 0) break;
+      for (const { source_id } of ids) {
+        for (;;) {
+          const n = this.#db.run(
+            `DELETE FROM source_probe_results WHERE id IN (
+               SELECT id FROM source_probe_results WHERE source_id = ?
+               ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?)`,
+            [source_id, batch, keep],
+          ).changes;
+          deleted += n;
+          if (n < batch) break;
+          await o.pause();
+          if (o.signal?.aborted) return { deleted };
+        }
+      }
+      after = ids.at(-1)!.source_id;
+      await o.pause();
+    }
+    this.#setMeta(PROBE_LIMIT_KEY, String(keep));
+    return { deleted };
+  }
+
+  #setMeta(key: string, value: string): void {
+    this.#db.run(
+      `INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      [key, value, nowIso()],
     );
-    for (const r of over) byCount += this.pruneSourceHistory(r.source_id, keep);
-    return byAge + byCount;
   }
 
   /** Keeps the newest `keep` results of one source, through the per-source index. */
@@ -1177,6 +1292,15 @@ export class StationRepository {
       success: Number(r.success) === 1,
       summary: parseJson(r.summary_json, {}),
     };
+  }
+
+  /** How the pack's last sync ended, without reading its (possibly long) summary. */
+  lastSyncOutcome(provider: string): { finishedAt: string; success: boolean } | null {
+    const r = this.#db.get<{ finished_at: string; success: number }>(
+      'SELECT finished_at, success FROM catalogue_sync_reports WHERE provider = ? ORDER BY id DESC LIMIT 1',
+      [provider],
+    );
+    return r ? { finishedAt: String(r.finished_at), success: Number(r.success) === 1 } : null;
   }
 
   lastSuccessfulSync(provider: string): string | null {

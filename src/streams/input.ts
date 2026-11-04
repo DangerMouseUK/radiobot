@@ -309,13 +309,17 @@ export class HlsReader extends Readable {
     }
   }
 
-  async #fetchPlaylist(): Promise<HlsMedia> {
-    const { text, finalUrl } = await this.#client.fetchText(this.#playlistUrl, {
+  async #fetchPlaylist(): Promise<{ text: string; finalUrl: URL }> {
+    return this.#client.fetchText(this.#playlistUrl, {
       maxBytes: MAX_PLAYLIST_BYTES,
       signal: this.#abort.signal,
       totalTimeoutMs: 10_000,
     });
-    const parsed = parseHls(text, finalUrl);
+  }
+
+  /** Parses a polled playlist; with `minSequence`, only the segments from there on are resolved. */
+  #parse(fetched: { text: string; finalUrl: URL }, minSequence?: number): HlsMedia {
+    const parsed = parseHls(fetched.text, fetched.finalUrl, { minSequence });
     if (parsed.type !== 'media') throw new RadioError('PLAYLIST_INVALID', 'Expected an HLS media playlist.');
     return parsed;
   }
@@ -347,8 +351,14 @@ export class HlsReader extends Readable {
     let segmentFailuresInRow = 0;
     while (!this.destroyed) {
       let playlist: HlsMedia;
+      let fetched: { text: string; finalUrl: URL } | null = null;
       try {
-        playlist = this.#initial ?? (await this.#fetchPlaylist());
+        if (this.#initial) playlist = this.#initial;
+        else {
+          fetched = await this.#fetchPlaylist();
+          // Only what comes next is needed: a long playlist's older segments aren't resolved.
+          playlist = this.#parse(fetched, this.#nextSequence ?? undefined);
+        }
         this.#initial = null;
         playlistFailures = 0;
       } catch (err) {
@@ -373,24 +383,29 @@ export class HlsReader extends Readable {
         throw new RadioError('HLS_ENCRYPTED', 'This HLS stream is encrypted and cannot be played.');
       }
       this.targetDuration = playlist.targetDuration;
-      const segs = playlist.segments;
+      // The playlist's window, from its sequence numbers: segments before the one needed next
+      // were not resolved (see #parse), so `segments` may hold only the newest few.
+      const count = playlist.segmentCount;
+      const first = playlist.mediaSequence;
+      const end = first + count; // one past the last segment
+      const liveEdge = first + Math.max(0, count - this.#liveEdge);
       if (this.#nextSequence === null) {
-        const start = playlist.endList ? 0 : Math.max(0, segs.length - this.#liveEdge);
-        this.#nextSequence = segs[start]?.sequence ?? playlist.mediaSequence;
-      } else if (segs.length > 0 && segs[segs.length - 1]!.sequence + 1 < this.#nextSequence) {
+        this.#nextSequence = playlist.endList ? first : liveEdge;
+      } else if (count > 0 && end < this.#nextSequence) {
         // The playlist ends before what was already sent. A little behind is a stale copy from
         // another CDN node: nothing new, so poll again. Further back than the playlist is long,
         // sequence numbers went backwards (upstream encoder restart): resync near the live edge.
-        const behind = this.#nextSequence - 1 - segs[segs.length - 1]!.sequence;
-        if (behind > segs.length) {
-          this.#nextSequence = segs[Math.max(0, segs.length - this.#liveEdge)]!.sequence;
+        if (this.#nextSequence - end > count) {
+          this.#nextSequence = liveEdge;
+          if (fetched) playlist = this.#parse(fetched, liveEdge);
         }
-      } else if (segs.length > 0 && this.#nextSequence < segs[0]!.sequence) {
+      } else if (count > 0 && this.#nextSequence < first) {
         // We fell out of the live window (long stall): resynchronise near the live edge.
-        this.#stats.skippedSegments += segs[0]!.sequence - this.#nextSequence;
+        this.#stats.skippedSegments += first - this.#nextSequence;
         this.#stats.liveEdgeSkips++;
-        this.#nextSequence = segs[Math.max(0, segs.length - this.#liveEdge)]!.sequence;
+        this.#nextSequence = liveEdge;
       }
+      const segs = playlist.segments;
       for (const seg of segs) {
         if (this.destroyed) return;
         if (seg.sequence < this.#nextSequence) continue;

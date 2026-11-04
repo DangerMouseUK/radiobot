@@ -873,6 +873,13 @@ export function signedId(guildId: string, action: string, arg = '', secret = 'te
 export const internalIncidents = (metrics: Metrics) =>
   metrics.recentIncidents(GUILD, 50).filter((x) => x.code === 'INTERNAL');
 
+/** Who asks for suggestions, where, and in which subcommand group (the server owner, by default). */
+export interface SuggestFrom {
+  actor?: Actor;
+  channelId?: string;
+  group?: string | null;
+}
+
 /** A suggestion request, as Discord sends one while someone types in an option. */
 export async function suggest(
   t: Harness,
@@ -880,11 +887,19 @@ export async function suggest(
   option: string,
   value = '',
   strings: Record<string, string | null> = {},
+  from: SuggestFrom = {},
 ): Promise<Array<{ name: string; value: string }>> {
   let answer: Array<{ name: string; value: string }> = [];
+  const actor = from.actor ?? t.people.owner;
   const i = {
     guildId: GUILD,
-    user: { id: OWNER, bot: false },
+    guild: t.guild,
+    channelId: from.channelId ?? TEXT,
+    user: { id: actor.id, bot: false },
+    member: actor.roles ? memberWithRoles(actor.roles) : {},
+    memberPermissions: {
+      has: (p: bigint) => Boolean(actor.admin) && p === PermissionFlagsBits.Administrator,
+    },
     inCachedGuild: () => true,
     isRepliable: () => false,
     isAutocomplete: () => true,
@@ -895,7 +910,7 @@ export async function suggest(
     options: {
       getFocused: () => ({ name: option, value }),
       getSubcommand: () => sub,
-      getSubcommandGroup: () => null,
+      getSubcommandGroup: () => from.group ?? null,
       getString: (n: string) => strings[n] ?? null,
     },
     respond: async (choices: typeof answer) => {

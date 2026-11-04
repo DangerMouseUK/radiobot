@@ -1,6 +1,6 @@
 import { ChannelType, type Client, type Guild, PermissionFlagsBits, type VoiceChannel } from 'discord.js';
 import { describe, expect, it } from 'vitest';
-import { seedPacks } from '../../src/catalogue/packs.ts';
+import { loadPack, type PackRegistry, seedPacks } from '../../src/catalogue/packs.ts';
 import { loadConfig } from '../../src/config/env.ts';
 import {
   type AppContext,
@@ -20,6 +20,7 @@ import {
   userVoiceChannelId,
 } from '../../src/discord/voice-access.ts';
 import type { GuildSettings } from '../../src/persistence/repositories/guilds.ts';
+import { rootPath } from '../../src/shared/paths.ts';
 import { demoRegistry, memoryDb } from '../helpers.ts';
 
 const G1 = '111111111111111111';
@@ -77,6 +78,74 @@ describe('station visibility', () => {
     const { ctx } = setup({ disabledPacks: ['demo'] });
     expect(visibleStations(ctx, G1).map((s) => s.id)).toEqual(['custom:mine']);
     expect(visibleStation(ctx, G1, 'demo:demo-radio')).toBeNull();
+  });
+
+  it('keeps each server’s list until the catalogue changes, frozen so nobody changes the shared copy', () => {
+    const { ctx, stations } = setup();
+    const packs = ctx.packs as PackRegistry;
+    const first = visibleStations(ctx, G1);
+    expect(visibleStations(ctx, G1)).toBe(first);
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(visibleStations(ctx, G2)).not.toBe(first);
+    expect(visibleStations(ctx, G2).at(-1)!.id).toBe('custom:theirs');
+
+    // A pack added: its stations show, in pack order.
+    packs.put(loadPack(rootPath('catalog', 'packs', '_template'), 'installed'));
+    seedPacks(stations, packs);
+    const added = visibleStations(ctx, G1);
+    expect(added).not.toBe(first);
+    expect(added.some((s) => s.provider === 'template')).toBe(true);
+    expect(added.at(-1)!.id).toBe('custom:mine');
+    // …and dropped again.
+    packs.drop('template');
+    const dropped = visibleStations(ctx, G1);
+    expect(dropped).not.toBe(added);
+    expect(dropped.map((s) => s.id)).toEqual(first.map((s) => s.id));
+
+    // A custom station added to this server.
+    stations.insertCustomStation({
+      id: 'custom:another',
+      guildId: G1,
+      slug: 'another',
+      displayName: 'custom:another',
+      description: null,
+      category: null,
+      websiteUrl: null,
+      language: null,
+      createdById: '1',
+    });
+    const withCustom = visibleStations(ctx, G1);
+    expect(withCustom.map((s) => s.id)).toContain('custom:another');
+    // A station retired by a sync.
+    stations.setCatalogueStatus('demo:demo-radio', 'retired');
+    expect(visibleStations(ctx, G1).map((s) => s.id)).not.toContain('demo:demo-radio');
+  });
+
+  it('switched-off packs stay hidden after a reload, and the list follows it', () => {
+    const repos = memoryDb();
+    const packs = demoRegistry(null, { enabled: new Set(), disabled: new Set(['template']) });
+    seedPacks(repos.stations, packs);
+    const ctx = { stations: repos.stations, packs } as unknown as AppContext;
+    const before = visibleStations(ctx, G1);
+    packs.put(loadPack(rootPath('catalog', 'packs', '_template'), 'installed'));
+    seedPacks(repos.stations, packs);
+    // A new generation, so the list is worked out again, and the switched-off pack is not in it.
+    const after = visibleStations(ctx, G1);
+    expect(after).not.toBe(before);
+    expect(after.map((s) => s.id)).toEqual(before.map((s) => s.id));
+  });
+
+  it('keeps the lists of at most 100 servers, dropping the least recently used', () => {
+    const { ctx } = setup();
+    const first = visibleStations(ctx, G1);
+    const kept = visibleStations(ctx, G2);
+    for (let n = 0; n < 99; n++) {
+      visibleStations(ctx, `3000000000000${String(n).padStart(5, '0')}`);
+      // G2 is used now and then, so it stays.
+      if (n % 10 === 0) expect(visibleStations(ctx, G2)).toBe(kept);
+    }
+    expect(visibleStations(ctx, G2)).toBe(kept);
+    expect(visibleStations(ctx, G1)).not.toBe(first);
   });
 
   it('names groups after their pack', () => {

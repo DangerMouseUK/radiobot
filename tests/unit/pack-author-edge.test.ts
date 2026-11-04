@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -25,6 +26,7 @@ import {
   newPack,
   nextVersion,
   parseCsv,
+  probeCommand,
   readIntake,
   signedUrlReason,
   sourceId,
@@ -33,8 +35,9 @@ import {
   TEMPLATE_DIR,
   tableCells,
   writeCsv,
+  writeIntake as writeIntakeFile,
 } from '../../scripts/pack-author.ts';
-import { checkBundle } from '../../src/catalogue/pack-library.ts';
+import { checkBundle, MAX_INDEX_BYTES } from '../../src/catalogue/pack-library.ts';
 import { loadPack } from '../../src/catalogue/packs.ts';
 import { projectRoot } from '../../src/shared/paths.ts';
 
@@ -863,5 +866,81 @@ describe('validate-catalogue --strict', () => {
     const bad = await validate(['--pack', dir, '--strict']);
     expect(bad.code).toBe(1);
     expect(bad.err).toMatch(/needs at least one language[\s\S]*Strict checks failed: 1 problem\./);
+  });
+});
+
+describe('export keeps intake edits', () => {
+  it('writes a new intake.csv, or one with only its header, and says nothing changed when it matches', () => {
+    const dir = copyTemplate(tempDir());
+    expect(writeIntakeFile(dir)).toMatchObject({ rows: 5 });
+    const written = readFileSync(join(dir, 'intake.csv'), 'utf8');
+    expect(written).toBe(exportIntake(dir).csv);
+    // The same rows again: nothing would be lost.
+    expect(writeIntakeFile(dir).rows).toBe(5);
+    // `new` leaves a header-only intake.csv.
+    writeIntake(dir, []);
+    expect(writeIntakeFile(dir).rows).toBe(5);
+    expect(readFileSync(join(dir, 'intake.csv'), 'utf8')).toBe(written);
+  });
+
+  it('refuses to replace rows that differ unless --force, and never leaves a temporary file', () => {
+    const dir = copyTemplate(tempDir());
+    const edited = [
+      ...exportedRows(dir),
+      { station: 'Example Jazz', url: 'https://stream.example.org/jazz.mp3' },
+    ];
+    writeIntake(dir, edited);
+    const before = readFileSync(join(dir, 'intake.csv'), 'utf8');
+    expect(() => writeIntakeFile(dir)).toThrow(
+      /already has rows.*Run generate first, or run export again with --force/,
+    );
+    expect(readFileSync(join(dir, 'intake.csv'), 'utf8')).toBe(before);
+    const refused = cli(['export', dir]);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toMatch(/already has rows/);
+    // A file that can't even be read as CSV is kept too.
+    writeFileSync(join(dir, 'intake.csv'), 'station,url\n"never closed\n');
+    expect(cli(['export', dir]).code).toBe(1);
+    const forced = cli(['export', dir, '--force']);
+    expect(forced).toMatchObject({ code: 0, out: expect.stringMatching(/Wrote .*intake\.csv: 5 rows\./) });
+    expect(readFileSync(join(dir, 'intake.csv'), 'utf8')).toBe(exportIntake(dir).csv);
+    expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+});
+
+describe('build-library limits and probe hints', () => {
+  it('refuses an index larger than a bot accepts', () => {
+    const base = tempDir();
+    const packs = join(base, 'packs');
+    copyTemplate(packs);
+    const out = join(base, 'out');
+    expect(() => buildLibrary({ packsRoot: packs, outDir: out, baseUrl: './', maxIndexBytes: 500 })).toThrow(
+      /The library index would be \d+ bytes, more than the 500 a bot accepts/,
+    );
+    expect(existsSync(out)).toBe(false);
+    // The real limit is the bot's own.
+    expect(buildLibrary({ packsRoot: packs, outDir: out, baseUrl: './' }).files).toHaveLength(2);
+    expect(MAX_INDEX_BYTES).toBe(2 * 1024 * 1024);
+  });
+
+  it('gives the full command that writes a probe report', () => {
+    const base = tempDir();
+    process.chdir(base);
+    const dir = copyTemplate(join(base, 'packs'));
+    const cmd = probeCommand(dir, 'template');
+    expect(cmd).toMatch(
+      /^node .*scripts\/validate-catalogue\.ts"? --pack packs\/template --probe --pack-id template --json packs\/template\/evidence\/probe-YYYY-MM-DD\.json$/,
+    );
+    rmSync(join(dir, 'evidence'), { recursive: true });
+    expect(strictProblems(loadPack(dir)).join('\n')).toContain(
+      `evidence/ needs at least one .json probe report. Write one with: ${cmd}`,
+    );
+    mkdirSync(join(dir, 'evidence'));
+    writeFileSync(join(dir, 'evidence', 'probe-2027-01-15.json'), '{}');
+    expect(strictProblems(loadPack(dir)).join('\n')).toContain(
+      `is not a probe report: write one with ${cmd}`,
+    );
+    const steps = newPack('hinted', { root: join(base, 'packs') }).nextSteps.join('\n');
+    expect(steps).toContain(probeCommand(join(base, 'packs', 'hinted'), 'hinted'));
   });
 });

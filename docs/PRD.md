@@ -123,7 +123,7 @@ Each pack is seeded from its broadcaster's official station list. The list is a 
 - Packs are installed from the **official pack library**, whose `index.json` address is fixed in the code. Downloads go through the safe HTTP client; each bundle's SHA-256 must match the index, and the pack is validated with the same rules as a folder, on a worker thread, before anything is written (`PACK_INVALID` otherwise). Installs, updates and removals happen while the bot runs, without a restart: the database is written in short slices, as background work that waits for starting streams. Installed packs are recorded in `installed.json` (version, source, SHA-256, install time, and packs removed on purpose).
   - In Discord, `/radio packs library [search] [country]` lists the official library's packs and `/radio packs installed` lists every loaded pack with its version, origin, available updates, skipped packs and notices; each has a menu that opens a pack's card with **Install**, **Update** or **Remove** (which asks first). Viewing needs *admin*; changing packs also needs an operator, because packs are shared by every server, and is limited to 10 changes an hour per installation. Discord installs only from the official library, so only reviewed packs can be installed that way.
   - On the host, `radio-bot packs list|browse|info|add|update|remove` (`dist/scripts/packs.js`) does the same, may name another library with `--from`, and then sends the running bot `SIGHUP` to load the change (`systemctl reload` on a systemd install). The installer offers to add packs on a first install.
-- At start-up, before anything plays, packs the database has stations from but that aren't loaded (and weren't removed on purpose) are restored from the official library, so an installation that relied on the formerly bundled pack keeps its favourites and queues. A daily check (first 15–30 minutes after start) notes updates for an admin to install (nothing updates by itself), removes official packs the library has withdrawn (stopping their playback, with a notice), and retries restores.
+- At start-up, before anything plays, packs the database has stations from but that aren't loaded (and weren't removed on purpose) are restored from the official library, so an installation that relied on the formerly bundled pack keeps its favourites and queues. A daily check (first 15–30 minutes after start) notes updates for the bot's operator to install (nothing updates by itself), removes official packs the library has withdrawn (stopping their playback, with a notice), and retries restores.
 - A pack can declare the oldest bot version that can use it (`minBotVersion`); older bots refuse it.
 - Station IDs are `<pack-id>:<slug>` and never change. The station's provider is its pack ID, or `custom` for custom stations.
 - Each pack is validated when it is loaded:
@@ -147,7 +147,7 @@ Each pack is seeded from its broadcaster's official station list. The list is a 
   - `webradio-apidata`, used by the first library pack, reads a webradio list embedded in a station website's page (a `webradios[]` array in its `var apidata` JSON) and ignores, and never stores, any short-lived signed play URLs on that page;
   - `json-name-list` reads a plain JSON list of `{ id, name }`.
 - Runs on its own jittered schedule for each enabled pack that declares a list (daily by default; `CATALOG_SYNC_INTERVAL_HOURS` can be set from 6 hours to 30 days, and even the longest interval is waited out in full), and on admin request (`/radio packs sync [pack]`), with rate limits.
-- Scheduled syncs run as background work: one at a time with background source checks, and never during a stream's first 30 s. The list is parsed off the main thread and changes are written in short steps (parts of 50). A list with more than 5,000 names is refused.
+- Scheduled syncs run as background work: one at a time with background source checks, and never during a stream's first 3 minutes. The list is parsed off the main thread and changes are written in short steps (parts of 50). A list with more than 5,000 names is refused.
 - Renames are detected by stable ID (or a single clearly similar name); the station keeps its ID and favourites, and the old name becomes an alias.
 - Stations no longer listed are marked *missing from official list* but kept. New names are added as catalogued-only and reported as needing a reviewed source mapping.
 - A failed or implausible fetch changes nothing. A list is implausible when it has fewer than 10 names, or fewer than half the pack's stations for small packs. When no sync has succeeded within three intervals, the pack's list is flagged as possibly stale.
@@ -289,7 +289,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - Missing track data never blocks playback; the line then says there is no song or show title from the stream right now.
 - No album art.
 - The bot's own Discord status shows "Listening to" the station and track (`PRESENCE_MODE`: `track`, `station` or `off`; default `track`). It is one status for the whole installation, so it names a station only when every playing server plays that station, and otherwise says "radio in N servers". A server's custom station is never named. Updates are checked every 20 s and sent only when the text changes. No intent or permission is needed.
-- The bot's voice channel shows the same as its status ("📻 Station · title"), per server, so a custom station may be named. It needs the optional Set Voice Channel Status permission, can be switched off per server (`/radio config` → Notifications, on by default), and is cleared when playback stops or the bot leaves. Without the permission nothing is set and nothing else changes.
+- The bot's voice channel shows the same as its status ("📻 Station · title"), per server, so a custom station may be named. It needs the optional Set Voice Channel Status permission, can be switched off per server (`/radio config` → Notices, on by default), and is cleared when playback stops or the bot leaves. Without the permission nothing is set and nothing else changes.
 
 ### FR-014 — Observability (P0/P1)
 
@@ -297,9 +297,9 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - Counters and coalesced incidents attributed to upstream, Discord, bot, operator or user.
 - `/radio status` for everyone. `/radio stats` for Administrators: a private live panel with Refresh and Close buttons. It shows:
   - **the stream**: requested and redirected host with a region hint parsed from the host name (labelled as such), connected IP and port, HLS segment counts and last segment host, codec, live input rate over 10 s and 60 s, and stream-endpoint round trip measured by 5 TCP handshakes to the exact stream IP, with no HTTP request;
-  - **the output**: Opus target, the voice channel's setting (not a cap), the Ogg Opus rate pulled by the voice player, packets per second (about 50) and packets sent to Discord, and late packets (sent more than 40 ms after the one before while playing) with the longest gap;
+  - **the output**: Opus target, the voice channel's setting (not a cap), the Ogg Opus rate pulled by the voice player, packets per second (about 50) and packets sent to Discord, and late packets (sent more than 40 ms after the one before while playing) with the longest gap, and silence the voice player filled in because no audio was ready;
   - **the Discord connection**: voice endpoint host with region hint and resolved IP, the channel's RTC region, voice WebSocket ping with jitter (`@discordjs/voice` 0.19 no longer measures a UDP round trip), gateway ping, encryption/DAVE mode, failovers, reconnects and encoder PID, and FFmpeg warnings;
-  - **bot health**: process, FFmpeg, User-Agent, per-pack coverage, incidents, and the event-loop delay (typical, 99th percentile and worst over the last minute). A delay of 20 ms or more is flagged, because voice packets are sent every 20 ms from that loop; the delay is also in the diagnostics endpoint, and a minute with a delay of 50 ms or more is logged as a warning (other minutes at debug level). At debug level every interaction is also logged with its type, subcommand, time taken and the process's CPU time meanwhile, so a delay can be matched to its cause.
+  - **bot health**: process, FFmpeg, User-Agent, per-pack coverage, incidents, and the event-loop delay (typical, 99th percentile and worst over the last minute), with the garbage-collection pauses, CPU use, involuntary context switches and (Linux) CPU steal of the same minute. A delay of 20 ms or more is flagged, because voice packets are sent every 20 ms from that loop; the delay is also in the diagnostics endpoint, and a minute with a delay or a garbage-collection pause of 50 ms or more is logged as a warning that lists that minute's late packets (other minutes at debug level). At debug level every interaction is also logged with its type, subcommand, time taken and the process's CPU time meanwhile, so a delay can be matched to its cause.
 - No telemetry. An optional diagnostics endpoint listens only on 127.0.0.1.
 - A heartbeat file drives the container health check.
 
@@ -335,7 +335,7 @@ One top-level `/radio` command, registered per server.
 | `/radio edit <station> …` | Admin | Edit a custom station |
 | `/radio remove <station>` | Admin | Remove a custom station |
 | `/radio rescan <station> [compare]` | Admin | Re-probe; optional ~40 s audio comparison |
-| `/radio packs installed` | Admin (changes: Admin who is also an Operator) | Every loaded pack with version, origin, updates, skipped packs and notices; a menu opens a pack's card with Update and Remove |
+| `/radio packs installed` | Admin (changes: Admin who is also an Operator) | Every loaded pack with version, origin, updates, skipped packs and notices; a menu opens a pack's card with Update and Remove; the operator also gets **Check all sources again** |
 | `/radio packs library [search] [country]` | Admin (installing: Admin who is also an Operator) | The official pack library, filtered; a menu opens a pack's card with Install |
 | `/radio packs sync [pack]` | Admin | Reconcile packs with their official station lists (formerly `/radio sync`) |
 | `/radio config [default_station] [manual_bitrate]` | Admin | Interactive settings panel |
@@ -345,7 +345,7 @@ One top-level `/radio` command, registered per server.
 | `/radio source verify <station> <source> <verdict>` | Admin (custom stations); Admin who is also an Operator (pack sources) | Record an identity review |
 | `/radio help` | Everyone | Short help |
 
-**Button and menu rules:** component IDs are HMAC-signed, bound to the server, and expire (10–30 minutes, counted in whole minutes; panel buttons are persistent). The signature only proves the control is genuine; every click is authorised again on the server. Every ID fits Discord's 100-character limit by design, whatever the station: actions have at most 7 characters and arguments at most 65, the length of the longest station ID. Buttons sent by 1.0.5 and earlier say they have expired.
+**Button and menu rules:** component IDs are HMAC-signed, bound to the server, and expire (10 minutes to an hour, counted in whole minutes; panel buttons are persistent). The signature only proves the control is genuine; every click is authorised again on the server. Every ID fits Discord's 100-character limit by design, whatever the station: actions have at most 7 characters and arguments at most 65, the length of the longest station ID. Buttons sent by 1.0.5 and earlier say they have expired.
 
 ---
 
@@ -399,7 +399,7 @@ A match is strong identity evidence. No match is *inconclusive*, not proof of a 
 
 ### 7.6 Refresh
 
-Known evidence is reused with its timestamp. A playback request probes in the foreground only when no source is eligible, best candidate first. The station's other due sources are re-checked in the background only after the stream has played steadily for 30 s, one at a time, and every check runs FFmpeg/FFprobe at the lowest CPU priority, so checks never compete with a live stream (NFR: stream stability comes before background work, including on single-core hosts).
+Known evidence is reused with its timestamp. A playback request probes in the foreground only when no source is eligible, best candidate first. The station's other due sources are re-checked in the background only after the stream has played for 3 minutes, one at a time, and every check runs FFmpeg/FFprobe at the lowest CPU priority, so checks never compete with a live stream (NFR: stream stability comes before background work, including on single-core hosts).
 
 ---
 
@@ -596,7 +596,7 @@ Each installation can serve several servers, limited by `MAX_ACTIVE_GUILD_STREAM
 
 ### 12.5 Configuration
 
-Environment variables (all listed in `.env.example`): `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`, `DISCORD_DEV_GUILD_ID`, `REGISTER_COMMANDS_ON_START`, `DATABASE_PATH`, `LOG_LEVEL`, `FFMPEG_PATH`, `FFPROBE_PATH`, `EXTRA_PACKS_DIR`, `DISABLED_PACKS`, `ENABLED_PACKS`, `CATALOG_SYNC_ENABLED`, `CATALOG_SYNC_INTERVAL_HOURS`, `DISABLED_STATION_IDS`, `DISABLED_SOURCE_IDS`, `OPERATOR_USER_IDS`, `DEFAULT_QUALITY_MODE`, `MAX_OPUS_BITRATE_KBPS`, `DEFAULT_IDLE_MODE`, `AUTO_RESUME_DEFAULT`, `PRESENCE_MODE`, `MAX_ACTIVE_GUILD_STREAMS`, `MAX_CONCURRENT_PROBES`, `MAX_CUSTOM_STATIONS_PER_GUILD`, `PROBE_HISTORY_LIMIT`, `PROBE_HISTORY_DAYS`, `ALLOW_INSECURE_HTTP_STREAMS`, `STREAM_USER_AGENT`, `TELEMETRY_ENABLED` (must stay `false`), `DIAGNOSTICS_PORT`. Per-server settings are made in Discord with `/radio config`. The repository contains no server or user IDs.
+Environment variables (all listed in `.env.example`): `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`, `DISCORD_DEV_GUILD_ID`, `REGISTER_COMMANDS_ON_START`, `DATABASE_PATH`, `LOG_LEVEL`, `FFMPEG_PATH`, `FFPROBE_PATH`, `EXTRA_PACKS_DIR`, `DISABLED_PACKS`, `ENABLED_PACKS`, `CATALOG_SYNC_ENABLED`, `CATALOG_SYNC_INTERVAL_HOURS`, `DISABLED_STATION_IDS`, `DISABLED_SOURCE_IDS`, `OPERATOR_USER_IDS`, `DEFAULT_QUALITY_MODE`, `MAX_OPUS_BITRATE_KBPS`, `DEFAULT_IDLE_MODE`, `AUTO_RESUME_DEFAULT`, `PRESENCE_MODE`, `MAX_ACTIVE_GUILD_STREAMS`, `MAX_CONCURRENT_PROBES`, `MAX_CUSTOM_STATIONS_PER_GUILD`, `PROBE_HISTORY_LIMIT`, `PROBE_HISTORY_DAYS`, `ALLOW_INSECURE_HTTP_STREAMS`, `STREAM_USER_AGENT`, `VOICE_THREAD`, `TELEMETRY_ENABLED` (must stay `false`), `DIAGNOSTICS_PORT`. Per-server settings are made in Discord with `/radio config`. The repository contains no server or user IDs.
 
 ---
 
@@ -662,7 +662,7 @@ These are engineering targets, not guarantees about broadcasters or Discord.
 | NFR-12 | Truthful reporting | Output settings reported accurately; unknown values marked unknown |
 | NFR-13 | Bounded resources | Stream, probe, buffer and process limits enforced |
 | NFR-14 | Accessibility | Usable on Discord mobile, with text labels alongside any icons |
-| NFR-15 | Stream priority | Voice packets leave on time while the bot does other work: database checkpoints, the heartbeat write, catalogue parsing and station pack checks run off the voice thread, and a pack installed while the bot plays is written in short slices; stream checks run at the lowest CPU and disk priority and are the first to go if memory runs out; the supported deployments give the bot a high CPU weight and protect it from the out-of-memory killer, with no CPU quota or memory limit |
+| NFR-15 | Stream priority | Voice packets leave on time while the bot does other work: database checkpoints, the heartbeat write, catalogue parsing and station pack checks run off the voice thread, and a pack installed while the bot plays is written in short slices; automatic background work waits until a new stream has played for 3 minutes; optionally (`VOICE_THREAD=worker`) the voice connections and their packet timer run on a worker thread of their own; the bot's background worker threads run at the lowest CPU priority (Linux); stream checks run at the lowest CPU and disk priority and are the first to go if memory runs out; the supported deployments give the bot a high CPU weight and protect it from the out-of-memory killer, with no CPU quota or memory limit |
 
 Diagnostics attribute faults to upstream, Discord, the bot, the operator or the user.
 

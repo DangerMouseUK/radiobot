@@ -29,6 +29,9 @@ import {
   applyImport,
   exportGuild,
   type GuildExport,
+  IMPORT_MAX_BYTES,
+  MAX_FAVOURITES,
+  MAX_SOURCE_PREFERENCES,
   parseImport,
   previewImport,
 } from '../import-export/config-io.ts';
@@ -51,6 +54,7 @@ import {
   chooseVoiceChannel,
   groupName,
   isOperator,
+  listedStation,
   lockConflict,
   visibleStation,
   visibleStations,
@@ -66,11 +70,14 @@ import {
   latePacketsLine,
   loopDelayLine,
   nowEmbed,
+  processLoadLine,
   qualityEmbed,
+  silenceLine,
   sourceFormat,
   sourcesEmbed,
   stateColor,
   stationLine,
+  voiceThreadLine,
 } from './ui/format.ts';
 import {
   fullCheckConfirmView,
@@ -149,7 +156,7 @@ export function describeInteraction(i: Interaction): string {
     return `${i.isAutocomplete() ? 'autocomplete' : 'command'} ${name}`;
   }
   if (i.isMessageComponent()) {
-    // Custom IDs are "rb1:<action>:…"; only the action is worth logging.
+    // Custom IDs are "rb2:<action>:…"; only the action is worth logging.
     const action = i.customId.split(':')[1] ?? '?';
     return `${i.isButton() ? 'button' : 'menu'} ${action.slice(0, 16)}`;
   }
@@ -157,13 +164,38 @@ export function describeInteraction(i: Interaction): string {
   return `type ${i.type}`;
 }
 
-/** With nothing typed yet: the default station, then the favourites, then everything else. */
-function defaultSuggestions(stations: Station[], defaultId: string | null, favourites: string[]): Station[] {
-  const top = [...new Set([defaultId, ...favourites])]
-    .map((id) => stations.find((s) => s.id === id))
-    .filter((s): s is Station => Boolean(s));
-  const shown = new Set(top.map((s) => s.id));
-  return [...top, ...stations.filter((s) => !shown.has(s.id))].slice(0, 25);
+/**
+ * With nothing typed yet: the default station, then the favourites, then everything else in
+ * `stations` (custom stations only when `customOnly`). Each default or favourite is looked up by
+ * ID, and the walk stops at 25, so a long favourites list never meets a big catalogue head on.
+ */
+function defaultSuggestions(
+  ctx: AppContext,
+  guildId: string,
+  stations: readonly Station[],
+  defaultId: string | null,
+  favourites: readonly string[],
+  customOnly: boolean,
+): Station[] {
+  const top: Station[] = [];
+  const shown = new Set<string>();
+  const offer = (id: string | null) => {
+    if (id === null || shown.has(id)) return;
+    const s = listedStation(ctx, guildId, id);
+    if (!s || (customOnly && s.provider !== 'custom')) return;
+    shown.add(id);
+    top.push(s);
+  };
+  offer(defaultId);
+  for (const id of favourites) {
+    if (top.length >= 25) break;
+    offer(id);
+  }
+  for (const s of stations) {
+    if (top.length >= 25) break;
+    if (!shown.has(s.id)) top.push(s);
+  }
+  return top.slice(0, 25);
 }
 
 /** An open browse list; `before` is the category to go back to from the Favourites filter. */
@@ -184,6 +216,8 @@ export class RadioController {
   readonly #browse = new Map<string, OpenBrowse>();
   /** At most one import preview per server, by guild ID: a newer one replaces it. */
   readonly #imports = new Map<string, PendingImport>();
+  /** What each server's control panel last showed (see #panelShows), by guild ID. */
+  readonly #panelShown = new Map<string, string>();
 
   constructor(ctx: AppContext) {
     this.#ctx = ctx;
@@ -286,6 +320,14 @@ export class RadioController {
   // ------------------------------------------------------------------ autocomplete
 
   async #autocomplete(i: AutocompleteInteraction<'cached'>): Promise<void> {
+    const settings = this.#ctx.guilds.getSettings(i.guildId);
+    // Suggestions are authorised like the command they belong to: anyone who may read gets
+    // stations and packs, and only admins get `/radio source`'s sources and their review status.
+    const need: Capability = i.options.getSubcommandGroup(false) === 'source' ? 'admin' : 'read';
+    if (!authorize(authContext(this.#ctx, i), settings, need).ok) {
+      await i.respond([]);
+      return;
+    }
     const focused = i.options.getFocused(true);
     const q = String(focused.value ?? '');
     const sub = i.options.getSubcommand(false);
@@ -351,13 +393,13 @@ export class RadioController {
       );
       return;
     }
+    const customOnly = sub === 'edit' || sub === 'remove';
     let stations = visibleStations(this.#ctx, i.guildId);
-    if (sub === 'edit' || sub === 'remove') stations = stations.filter((s) => s.provider === 'custom');
-    const settings = this.#ctx.guilds.getSettings(i.guildId);
+    if (customOnly) stations = stations.filter((s) => s.provider === 'custom');
     const favourites = this.#ctx.guilds.listFavourites(i.guildId);
     const hits = q
       ? searchStations(stations, q, 25).map((h) => h.station)
-      : defaultSuggestions(stations, settings.defaultStationId, favourites);
+      : defaultSuggestions(this.#ctx, i.guildId, stations, settings.defaultStationId, favourites, customOnly);
     const fav = new Set(favourites);
     const choices = hits.map((s) => {
       const marks = [
@@ -462,12 +504,14 @@ export class RadioController {
     const a = this.#auth(i, 'read');
     if (!a.ok) return this.#deny(i, a.reason);
     const token = randomBytes(6).toString('base64url');
-    const state: BrowseState = {
+    // The kept state itself is drawn, so the search results it keeps serve its page buttons.
+    const state: OpenBrowse = {
       pack: i.options.getString('pack'),
       category: i.options.getString('category'),
       search: i.options.getString('search'),
+      expires: Date.now() + 15 * 60_000,
     };
-    this.#browse.set(token, { ...state, expires: Date.now() + 15 * 60_000 });
+    this.#browse.set(token, state);
     this.#sweep();
     await i.reply({ ...browseView(this.#ctx, i.guildId, state, token, 0), flags: EPHEMERAL });
   }
@@ -1022,6 +1066,7 @@ export class RadioController {
               `Sent to Discord: ${kbps(out?.kbps10s)} (10 s) · ${kbps(out?.kbps60s)} (60 s) · Ogg Opus pulled by the voice player`,
               `Packets to Discord: ${live.voice?.packetsPerSecond ?? '—'} per second (expect ~50) · ${live.voice?.packetsPlayed ?? '—'} sent on this connection`,
               latePacketsLine(live.voice?.latePackets, live.voice?.worstPacketGapMs),
+              silenceLine(live.voice?.silenceMs, live.voice?.recentSilenceMs),
             ].join('\n'),
             1024,
           ),
@@ -1049,17 +1094,17 @@ export class RadioController {
     }
 
     const mem = process.memoryUsage();
-    const visible = visibleStations(ctx, guildId);
     const packLines: string[] = [];
     for (const p of ctx.packs.packs) {
       if (!ctx.packs.isEnabled(p.meta.id)) {
         packLines.push(`**${p.meta.name}** (\`${p.meta.id}\`): disabled`);
         continue;
       }
-      // Counting a big pack's sources takes milliseconds: each pack gets a slice of its own.
+      // A pack's counts are cached, but counting a big pack again (after a change, or once they
+      // are a minute old) takes milliseconds: each pack gets a slice of its own.
       await yieldToEventLoop();
-      const cov = ctx.sources.coverage(visible.filter((x) => x.provider === p.meta.id));
-      const sync = p.meta.sync ? ctx.stations.lastSyncReport(p.meta.id) : null;
+      const cov = ctx.sources.coverageByProvider(p.meta.id);
+      const sync = p.meta.sync ? ctx.stations.lastSyncOutcome(p.meta.id) : null;
       const syncText = !p.meta.sync
         ? 'no official list'
         : sync
@@ -1071,6 +1116,8 @@ export class RadioController {
       );
     }
     const incidents = ctx.metrics.recentIncidents(guildId, 6);
+    // With VOICE_THREAD=worker the packets leave from the worker's event loop, not this one.
+    const voiceThread = voiceThreadLine(ctx.voiceThreadStats?.() ?? null);
     const healthEmbed = new EmbedBuilder()
       .setTitle('Bot health')
       .setColor(COLOR.info)
@@ -1081,7 +1128,9 @@ export class RadioController {
             `Uptime: ${Math.round(process.uptime() / 60)} min · memory: RSS ${Math.round(mem.rss / 1048576)} MB, heap ${Math.round(mem.heapUsed / 1048576)} MB`,
             `Active streams: ${ctx.sessions.activeStreams()}/${ctx.config.maxActiveGuildStreams} · stream checks running: ${ctx.sources.activeProbes}/${ctx.config.maxConcurrentProbes}`,
             `FFmpeg processes: ${ctx.registry.active} running, ${ctx.registry.spawned} started, ${ctx.registry.reaped} cleaned up · libopus: ${ctx.ffmpegInfo?.libopus ? 'yes' : 'missing'}`,
-            loopDelayLine(ctx.eventLoop.lastWindow() ?? ctx.eventLoop.current()),
+            loopDelayLine(ctx.eventLoop.lastWindow() ?? ctx.eventLoop.current(), !voiceThread),
+            processLoadLine(ctx.eventLoop.lastWindow() ?? ctx.eventLoop.current()),
+            ...(voiceThread ? [voiceThread] : []),
             `Stream User-Agent: \`${ctx.http.userAgent}\` · database schema v${ctx.db.schemaVersion()}`,
           ].join('\n'),
         },
@@ -1773,14 +1822,20 @@ export class RadioController {
     const a = this.#auth(i, 'admin');
     if (!a.ok) return this.#deny(i, a.reason);
     const data = exportGuild(i.guildId, this.#ctx.guilds, this.#ctx.stations);
-    const file = new AttachmentBuilder(Buffer.from(`${JSON.stringify(data, null, 2)}\n`), {
-      name: `radio-bot-config-${i.guildId}.json`,
-    });
+    const bytes = Buffer.from(`${JSON.stringify(data, null, 2)}\n`);
+    const file = new AttachmentBuilder(bytes, { name: `radio-bot-config-${i.guildId}.json` });
     await i.reply({
       content: [
         'This server’s settings, favourites, source choices and custom stations. To load them here or on another server, use `/radio import` with this file.',
         '-# The file contains no tokens. A custom station URL with a query string, user name or password is left out; add that station again with `/radio add` after an import.',
-      ].join('\n'),
+        // Rare (it takes very long IDs or URLs as well as near the most of everything): say so now,
+        // not when the import refuses it.
+        bytes.length > IMPORT_MAX_BYTES
+          ? `⚠️ This file is larger than \`/radio import\` accepts (${IMPORT_MAX_BYTES / 1024} KB), so it can’t be imported as it is. Fewer favourites, source choices or custom stations make it smaller.`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
       files: [file],
       flags: EPHEMERAL,
     });
@@ -1790,15 +1845,18 @@ export class RadioController {
     const a = this.#auth(i, 'admin');
     if (!a.ok) return this.#deny(i, a.reason);
     const att = i.options.getAttachment('file', true);
-    if (att.size > 256 * 1024)
-      return this.#deny(i, 'That file is too big to be a settings export (the limit is 256 KB).');
+    if (att.size > IMPORT_MAX_BYTES)
+      return this.#deny(
+        i,
+        `That file is too big to be a settings export (the limit is ${IMPORT_MAX_BYTES / 1024} KB).`,
+      );
     const url = new URL(att.url);
     if (!['cdn.discordapp.com', 'media.discordapp.net'].includes(url.hostname)) {
       return this.#deny(i, 'That attachment is not stored on Discord, so it was not read.');
     }
     this.#rate(this.#ctx.limits.importGuild, i.guildId, 'imports');
     await i.deferReply({ flags: EPHEMERAL });
-    const { text } = await this.#ctx.http.fetchText(att.url, { maxBytes: 256 * 1024 });
+    const { text } = await this.#ctx.http.fetchText(att.url, { maxBytes: IMPORT_MAX_BYTES });
     let data: GuildExport;
     try {
       data = parseImport(text);
@@ -1875,9 +1933,11 @@ export class RadioController {
       return this.#deny(i, `I need View Channel, Send Messages and Embed Links in <#${channel.id}>.`);
     }
     await i.deferReply({ flags: EPHEMERAL });
-    const msg = await channel.send({ ...this.#panelView(i.guildId), allowedMentions: { parse: [] } });
+    const view = this.#panelView(i.guildId);
+    const msg = await channel.send({ ...view, allowedMentions: { parse: [] } });
     const old = this.#ctx.guilds.getSettings(i.guildId);
     this.#ctx.guilds.updateSettings(i.guildId, { panelChannelId: channel.id, panelMessageId: msg.id });
+    this.#panelShown.set(i.guildId, this.#panelShows(channel.id, msg.id, view));
     let removedOld = false;
     if (old.panelMessageId && old.panelChannelId) {
       const oldCh = i.guild.channels.cache.get(old.panelChannelId);
@@ -1915,15 +1975,32 @@ export class RadioController {
     return { embeds: [embed], components: controlRows(this.#ctx, guildId, st?.id ?? null, true, queue) };
   }
 
-  /** Re-renders (and thereby rebinds) a guild's persistent panel. Safe to call often. */
+  /** The panel message and what it shows, as one string: equal strings mean an equal panel. */
+  #panelShows(channelId: string, messageId: string, view: View): string {
+    return `${channelId}/${messageId}\n${JSON.stringify(view)}`;
+  }
+
+  /**
+   * Re-renders a guild's persistent panel. Safe to call often: a panel that would look exactly as
+   * it was last sent is not edited again (no request to Discord), and a failed edit is retried on
+   * the next call.
+   */
   async refreshPanel(guildId: string): Promise<void> {
     const settings = this.#ctx.guilds.getSettings(guildId);
-    if (!settings.panelChannelId || !settings.panelMessageId) return;
+    if (!settings.panelChannelId || !settings.panelMessageId) {
+      this.#panelShown.delete(guildId);
+      return;
+    }
+    const view = this.#panelView(guildId);
+    const shows = this.#panelShows(settings.panelChannelId, settings.panelMessageId, view);
+    if (this.#panelShown.get(guildId) === shows) return;
     try {
       const ch = await this.#ctx.client.channels.fetch(settings.panelChannelId);
       if (!ch?.isTextBased()) return;
-      await ch.messages.edit(settings.panelMessageId, this.#panelView(guildId));
+      await ch.messages.edit(settings.panelMessageId, view);
+      this.#panelShown.set(guildId, shows);
     } catch (err) {
+      this.#panelShown.delete(guildId);
       const code = (err as { code?: number }).code;
       if (code === 10008 || code === 10003) {
         this.#ctx.guilds.updateSettings(guildId, { panelChannelId: null, panelMessageId: null });
@@ -1950,7 +2027,7 @@ export class RadioController {
           value: lines(
             '`/radio browse`: pick a station from the list (**Search** narrows it)',
             '`/radio play <station>`: play a station in your voice channel (type part of its name)',
-            '`/radio now` what is playing · `/radio stop` stop playing · `/radio leave` leave the channel',
+            '`/radio now`: what is playing · `/radio stop`: stop playing · `/radio leave`: leave the channel',
             '-# Also: `/radio list` · `/radio join` · `/radio status` · `/radio quality`',
             '-# Station and queue changes, Stop and Leave are announced in the channel in one line. Everything else is shown only to you.',
           ),
@@ -1998,7 +2075,11 @@ export class RadioController {
             },
         {
           name: '🔊 Sound',
-          value: `Audio reaches Discord as 48 kHz stereo Opus at up to the station’s own bitrate (${this.#ctx.config.maxOpusBitrateKbps} kbps at most). A higher bitrate can’t add detail the station’s stream doesn’t contain.`,
+          value: lines(
+            'Audio reaches Discord as 48 kHz stereo Opus. The bitrate depends on the Quality setting:',
+            `**Maximum** follows the station’s own bitrate (${this.#ctx.config.maxOpusBitrateKbps} kbps at most) · **Balanced** uses at most 128 kbps · **Manual** uses the bitrate an admin sets (${this.#ctx.config.maxOpusBitrateKbps} kbps at most), and follows the station until one is set`,
+            '-# A higher bitrate can’t add detail the station’s stream doesn’t contain.',
+          ),
         },
       )
       .setFooter({ text: DISCLAIMER });
@@ -2068,6 +2149,8 @@ export class RadioController {
       return;
     }
     const mode = sub === 'pin' ? 'pin' : 'prefer';
+    const full = this.#preferencesFull(i.guildId, st.id);
+    if (full) return this.#deny(i, full);
     this.#ctx.guilds.setPreference(i.guildId, st.id, mode, source.id, i.user.id);
     const selection = this.#ctx.sources.select(i.guildId, st.id);
     const warn =
@@ -2090,6 +2173,17 @@ export class RadioController {
       ],
       flags: EPHEMERAL,
     });
+  }
+
+  /**
+   * Refusal text when a new source choice would take this server past the most it can keep (so
+   * that /radio export always makes a file /radio import accepts), else null. Changing the choice
+   * for a station that already has one is always allowed.
+   */
+  #preferencesFull(guildId: string, stationId: string): string | null {
+    if (this.#ctx.guilds.getPreference(guildId, stationId)) return null;
+    if (this.#ctx.guilds.listPreferences(guildId).length < MAX_SOURCE_PREFERENCES) return null;
+    return `This server already has source choices for ${MAX_SOURCE_PREFERENCES} stations, the most it can keep. Use \`/radio source auto\` on a station that no longer needs one, then try again.`;
   }
 
   // ------------------------------------------------------------------ components
@@ -2129,6 +2223,8 @@ export class RadioController {
               i,
               'That station isn’t playing from one of its sources right now, so there is no source to try first.',
             );
+          const full = action === 'spref' ? this.#preferencesFull(i.guildId, st.id) : null;
+          if (full) return this.#deny(i, full);
           this.#ctx.guilds.setPreference(
             i.guildId,
             st.id,
@@ -2208,17 +2304,15 @@ export class RadioController {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
           const token = randomBytes(6).toString('base64url');
-          this.#browse.set(token, {
+          const state: OpenBrowse = {
             pack: null,
             category: null,
             search: null,
             expires: Date.now() + 15 * 60_000,
-          });
+          };
+          this.#browse.set(token, state);
           this.#sweep();
-          await i.reply({
-            ...browseView(this.#ctx, i.guildId, { pack: null, category: null, search: null }, token, 0),
-            flags: EPHEMERAL,
-          });
+          await i.reply({ ...browseView(this.#ctx, i.guildId, state, token, 0), flags: EPHEMERAL });
           return;
         }
         case 'list': {
@@ -2262,7 +2356,11 @@ export class RadioController {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
           // Refresh on the panel redraws the panel itself: everyone sees it, and no reply is posted.
-          await i.update(this.#panelView(i.guildId));
+          const view = this.#panelView(i.guildId);
+          await i.update(view);
+          // This is the panel (its message ID is the saved one), so the timer needn't send it again.
+          const channelId = this.#ctx.guilds.getSettings(i.guildId).panelChannelId ?? '';
+          this.#panelShown.set(i.guildId, this.#panelShows(channelId, i.message.id, view));
           return;
         }
         case 'next':
@@ -2277,6 +2375,12 @@ export class RadioController {
           // Each button sets one state, so a double click or an old card never undoes the other.
           const want = action === 'fav';
           const was = this.#ctx.guilds.isFavourite(i.guildId, st.id);
+          // Capped, so that /radio export always makes a file /radio import accepts.
+          if (want && !was && this.#ctx.guilds.listFavourites(i.guildId).length >= MAX_FAVOURITES)
+            return this.#deny(
+              i,
+              `This server already has ${MAX_FAVOURITES} favourites, the most it can keep. Remove one it no longer needs first: play it and press **Unfavourite**.`,
+            );
           if (was !== want) this.#ctx.guilds.toggleFavourite(i.guildId, st.id);
           const text =
             was === want
@@ -2384,16 +2488,25 @@ export class RadioController {
   /** Next/Previous station within the current station's pack (or favourites order if favourites exist). Skips unplayable entries. */
   async #step(i: Comp, dir: 1 | -1): Promise<void> {
     const ctx = this.#ctx;
+    // Access first, exactly as #play checks it (which it does again): a refused click costs no
+    // walk through the catalogue.
+    const settings = ctx.guilds.getSettings(i.guildId);
+    const auth = authContext(ctx, i);
+    const target = chooseVoiceChannel(ctx, i.guildId, settings, null, auth.userVoiceChannelId);
+    const a = authorize(auth, settings, 'control', target);
+    if (!a.ok) return this.#deny(i, a.reason);
     const current =
       ctx.sessions.get(i.guildId)?.stationId ?? ctx.guilds.getIntent(i.guildId)?.desiredStationId ?? null;
-    const all = visibleStations(ctx, i.guildId);
     const fav = ctx.guilds.listFavourites(i.guildId);
-    const provider = current ? (ctx.stations.getStation(current)?.provider ?? null) : all[0]?.provider;
-    let ring: Station[];
+    let ring: readonly Station[];
     if (fav.length >= 2 && current && fav.includes(current)) {
-      const byId = new Map(all.map((s) => [s.id, s]));
-      ring = fav.map((id) => byId.get(id)).filter((s): s is Station => Boolean(s));
-    } else ring = all.filter((s) => s.provider === provider);
+      // Each favourite looked up by ID: no table of the whole catalogue.
+      ring = fav.map((id) => listedStation(ctx, i.guildId, id)).filter((s): s is Station => Boolean(s));
+    } else {
+      const all = visibleStations(ctx, i.guildId);
+      const provider = current ? (ctx.stations.getStation(current)?.provider ?? null) : all[0]?.provider;
+      ring = all.filter((s) => s.provider === provider);
+    }
     // Walk from the current station and check only until a playable one turns up: checking
     // every station of a big pack first would hold up voice packets.
     const idx = current ? ring.findIndex((s) => s.id === current) : -1;

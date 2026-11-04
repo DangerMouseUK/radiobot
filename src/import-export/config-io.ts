@@ -7,6 +7,15 @@ import { redactUrl } from '../shared/redact.ts';
 export const EXPORT_SCHEMA = 'radio-bot/guild-config';
 export const EXPORT_VERSION = 1;
 
+/** The largest settings file `/radio import` reads. */
+export const IMPORT_MAX_BYTES = 256 * 1024;
+/**
+ * The most favourites, and stations with a source choice, a server keeps. The Favourite button and
+ * the source commands refuse more, so a server's own export always passes these import limits.
+ */
+export const MAX_FAVOURITES = 1000;
+export const MAX_SOURCE_PREFERENCES = 1000;
+
 const snowflake = z.string().regex(/^\d{17,20}$/);
 const stationId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}:[a-z0-9-]{1,64}$/);
 
@@ -33,7 +42,7 @@ export const guildExportSchema = z.object({
   }),
   favourites: z
     .array(stationId)
-    .max(200)
+    .max(MAX_FAVOURITES)
     .transform((ids) => [...new Set(ids)]),
   sourcePreferences: z
     .array(
@@ -43,7 +52,7 @@ export const guildExportSchema = z.object({
         sourceId: z.string().regex(/^[a-z0-9-]{1,100}$/),
       }),
     )
-    .max(200),
+    .max(MAX_SOURCE_PREFERENCES),
   customStations: z
     .array(
       z.object({
@@ -260,7 +269,9 @@ function importedFavourites(
   stations: StationRepository,
 ): string[] {
   const ids = data.favourites.filter((id) => stations.getVisibleStation(guildId, id));
-  const kept = guilds.listFavourites(guildId).filter((id) => isCustom(id) && !ids.includes(id));
+  // A set, not a search of the list per favourite: there can be a thousand of each.
+  const chosen = new Set(ids);
+  const kept = guilds.listFavourites(guildId).filter((id) => isCustom(id) && !chosen.has(id));
   return [...ids, ...kept];
 }
 

@@ -18,6 +18,7 @@ import type { SafeHttpClient } from '../streams/safe-fetch.ts';
 import type { SourceService } from '../streams/source-service.ts';
 import type { UrlPolicy } from '../streams/url-policy.ts';
 import type { SessionManager } from '../voice/session-manager.ts';
+import type { VoiceThreadStats } from '../voice/voice-thread.ts';
 import type { ComponentIds } from './components/custom-id.ts';
 import type { Notifier } from './notifier.ts';
 import type { AuthContext } from './permissions/authorize.ts';
@@ -47,6 +48,8 @@ export interface AppContext {
   limits: RateLimits;
   /** How late the event loop runs timers; voice packets are sent from it. */
   eventLoop: EventLoopMonitor;
+  /** The voice worker's own figures (`VOICE_THREAD=worker`); null when voice runs on this thread. */
+  voiceThreadStats?: () => VoiceThreadStats | null;
   startedAt: Date;
   ffmpegInfo: {
     ffmpegVersion: string;
@@ -114,12 +117,52 @@ export function authContext(ctx: AppContext, i: GuildInteraction): AuthContext {
   };
 }
 
-/** Stations a guild may see: every enabled pack (in pack order) plus its own custom stations. */
-export function visibleStations(ctx: AppContext, guildId: string): Station[] {
-  return ctx.stations
-    .listStations(guildId)
-    .filter((s) => isVisible(ctx, guildId, s))
-    .sort((a, b) => ctx.packs.orderOf(a.provider) - ctx.packs.orderOf(b.provider));
+/**
+ * What every guild's visible list depends on: any station or source write, and any change to the
+ * set, order or enabled state of the packs. Equal keys mean an equal catalogue.
+ */
+export function catalogueKey(ctx: AppContext): string {
+  return `${ctx.stations.changeCount}:${ctx.packs.generation}`;
+}
+
+/** Guilds whose visible list is kept; the least recently used goes first. */
+const VISIBLE_MEMO_GUILDS = 100;
+
+/** Each context's memoised visible lists, by guild (a WeakMap, so a test's context takes them with it). */
+const visibleMemo = new WeakMap<AppContext, Map<string, { key: string; list: readonly Station[] }>>();
+
+/**
+ * Stations a guild may see: every enabled pack (in pack order) plus its own custom stations.
+ * Copying, filtering and sorting a few thousand stations runs on every keystroke of a suggestion
+ * and every page click, so the list is kept per guild until the catalogue changes. It is frozen
+ * and shared: callers copy it (`filter`, `slice`) before changing anything.
+ */
+export function visibleStations(ctx: AppContext, guildId: string): readonly Station[] {
+  let memo = visibleMemo.get(ctx);
+  if (!memo) {
+    memo = new Map();
+    visibleMemo.set(ctx, memo);
+  }
+  const key = catalogueKey(ctx);
+  const hit = memo.get(guildId);
+  memo.delete(guildId);
+  if (hit && hit.key === key) {
+    memo.set(guildId, hit);
+    return hit.list;
+  }
+  const list = Object.freeze(
+    ctx.stations
+      .listStations(guildId)
+      .filter((s) => isVisible(ctx, guildId, s))
+      .sort((a, b) => ctx.packs.orderOf(a.provider) - ctx.packs.orderOf(b.provider)),
+  );
+  memo.set(guildId, { key, list });
+  // A Map iterates oldest first, and a hit moved its guild to the newest end.
+  for (const g of memo.keys()) {
+    if (memo.size <= VISIBLE_MEMO_GUILDS) break;
+    memo.delete(g);
+  }
+  return list;
 }
 
 /** Whether a guild may use a station: its pack is enabled, or it is that guild's own custom station. */
@@ -130,6 +173,15 @@ export function isVisible(ctx: AppContext, guildId: string, s: Station): boolean
 export function visibleStation(ctx: AppContext, guildId: string, id: string): Station | null {
   const s = ctx.stations.getVisibleStation(guildId, id);
   return s && isVisible(ctx, guildId, s) ? s : null;
+}
+
+/**
+ * The station with this ID if `visibleStations()` lists it (visible and not retired), found by ID
+ * rather than by searching the list.
+ */
+export function listedStation(ctx: AppContext, guildId: string, id: string): Station | null {
+  const s = visibleStation(ctx, guildId, id);
+  return s && s.catalogueStatus !== 'retired' ? s : null;
 }
 
 /** Display name of a station's group: its pack's name, or "Custom (this server)". */

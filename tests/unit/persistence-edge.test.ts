@@ -423,15 +423,18 @@ describe('StationRepository: probe results and sync reports', () => {
     expect(stations.listProbeResults('my-source', 1)).toHaveLength(1);
   });
 
-  it('prunes by age only when asked not to trim every source', () => {
+  it('prunes by age only when asked not to trim every source', async () => {
     const { stations } = withStation();
     stations.upsertSeedSource(sourceSeed());
     const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
     stations.insertProbeResult(probe({ startedAt: old }));
     for (let i = 0; i < 3; i++) stations.insertProbeResult(probe());
-    expect(stations.pruneProbeResults(1, 30, false)).toBe(1);
+    const pause = async () => {};
+    const prune = (trimEverySource: boolean) =>
+      stations.pruneProbeHistory({ keep: 1, days: 30, pause, trimEverySource });
+    expect(await prune(false)).toMatchObject({ deleted: 1 });
     expect(stations.listProbeResults('my-source')).toHaveLength(3);
-    expect(stations.pruneProbeResults(1, 30)).toBe(2);
+    expect(await prune(true)).toMatchObject({ deleted: 2 });
     expect(stations.listProbeResults('my-source')).toHaveLength(1);
   });
 

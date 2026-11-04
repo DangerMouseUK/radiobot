@@ -21,6 +21,8 @@ export type QualityMode = (typeof QUALITY_MODES)[number];
 export type IdleMode = (typeof IDLE_MODES)[number];
 export const PRESENCE_MODES = ['track', 'station', 'off'] as const;
 export type PresenceMode = (typeof PRESENCE_MODES)[number];
+export const VOICE_THREADS = ['main', 'worker'] as const;
+export type VoiceThreadMode = (typeof VOICE_THREADS)[number];
 
 const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(20, 'is missing or not long enough to be a bot token'),
@@ -53,6 +55,7 @@ const envSchema = z.object({
   DISABLED_SOURCE_IDS: z.string().default(''),
   DISABLED_STATION_IDS: z.string().default(''),
   PROBE_HISTORY_DAYS: int(1, 365).default(30),
+  VOICE_THREAD: z.enum(VOICE_THREADS).default('main'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -92,6 +95,11 @@ export interface AppConfig {
   operatorUserIds: string[];
   disabledSourceIds: Set<string>;
   disabledStationIds: Set<string>;
+  /**
+   * Where voice packets are sent from: the main thread, or a worker thread of their own that the
+   * rest of the bot (commands, database, garbage collection) can't hold up.
+   */
+  voiceThread: VoiceThreadMode;
 }
 
 const list = (v: string) =>
@@ -145,5 +153,6 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     operatorUserIds: list(e.OPERATOR_USER_IDS).filter((id) => /^\d{17,20}$/.test(id)),
     disabledSourceIds: new Set(list(e.DISABLED_SOURCE_IDS)),
     disabledStationIds: new Set(list(e.DISABLED_STATION_IDS)),
+    voiceThread: e.VOICE_THREAD,
   };
 }

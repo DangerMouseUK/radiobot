@@ -54,7 +54,7 @@ tty_run() {
 }
 
 echo "install"
-out=$(printf 'not-an-id\n%s\nshort\n%s\ny\nmypack\n' "$APP" "$TOKEN" | tty_run "bash $T/origin/install.sh")
+out=$(printf 'not-an-id\n%s\nshort\n%s\ny\nmypack *\n' "$APP" "$TOKEN" | tty_run "bash $T/origin/install.sh")
 check "reaches online" has "$out" "Radio Bot is online."
 check "rejects a bad application id" has "$out" "doesn't look like an Application ID"
 check "rejects a bad token" has "$out" "doesn't look like a bot token"
@@ -68,6 +68,7 @@ check "adds the shortcut" test -x "$HOME/.local/bin/radio-bot"
 check "offers station packs on a first install" has "$out" "Add some stations"
 check "lists the library's packs" has "$out" "My Pack"
 check "installs the chosen pack in the container" grep -qF "packs.js add mypack" "$FAKE_STATE/calls.log"
+check "passes a typed * on as it is, not as file names" grep -qF "packs.js add mypack * --unchanged-status" "$FAKE_STATE/calls.log"
 check "tells the running bot to load it" grep -qF "compose kill -s HUP radio-bot" "$FAKE_STATE/calls.log"
 
 echo "status, invite, version"
@@ -84,6 +85,8 @@ echo "# next" >>"$T/origin/CHANGELOG.md"
 git -C "$T/origin" -c user.email=t@example.org -c user.name=test commit -qam v1.0.1
 git -C "$T/origin" tag v1.0.1
 git -C "$T/origin" tag v1.1.0-rc.1
+out=$(radio-bot status 2>&1 | strip)
+check "status fetches new releases to report them" has "$out" "v1.0.1 is available"
 out=$(printf 'n\n' | tty_run "FAKE_PLAYING=2 radio-bot update")
 check "warns that playback stops" has "$out" "Radio Bot is playing in 2 servers."
 check "warns that the download may cause cuts" has "$out" "listeners may hear small cuts"
@@ -156,8 +159,19 @@ check "nothing to do once the update has finished" has "$out" "Already on the ne
 
 echo "station packs"
 out=$(radio-bot packs remove mypack 2>&1 | strip)
-check "removes a pack in the running container" grep -qF "packs.js remove mypack" "$FAKE_STATE/calls.log"
+check "removes a pack in the running container" grep -qF "packs.js remove mypack --unchanged-status" "$FAKE_STATE/calls.log"
 check "says the change loads without interrupting" has "$out" "Nothing that is playing is interrupted."
+hups=$(grep -c "compose kill -s HUP" "$FAKE_STATE/calls.log")
+out=$(FAKE_PACKS_STATUS=1 radio-bot packs remove nosuchpack 2>&1 | strip)
+code=$?
+check "a failed pack change is reported as a failure" test "$code" = 1
+check "doesn't reload the bot when the change failed" test "$(grep -c "compose kill -s HUP" "$FAKE_STATE/calls.log")" = "$hups"
+check "doesn't say a failed change is loading" test "$(has "$out" "loading the change" && echo y)" != y
+out=$(FAKE_PACKS_STATUS=4 radio-bot packs add mypack otherpack 2>&1 | strip)
+code=$?
+check "a partly failed pack change is reported as a failure" test "$code" = 1
+check "but the part that worked is loaded" test "$(grep -c "compose kill -s HUP" "$FAKE_STATE/calls.log")" = "$((hups + 1))"
+check "and says so" has "$out" "Nothing that is playing is interrupted."
 hups=$(grep -c "compose kill -s HUP" "$FAKE_STATE/calls.log")
 out=$(radio-bot packs update 2>&1 | strip)
 check "update with nothing to do says so" has "$out" "already up to date"
@@ -184,6 +198,12 @@ check "explains a crash on start" has "$out" "stopped while starting"
 check "shows the bot's error" has "$out" "invalid token"
 check "restart recreates the container, so .env changes apply"   grep -q "docker compose up -d --force-recreate radio-bot$" "$T/state/calls.log"
 rm -f "$T/state/restarts"
+began=$SECONDS
+out=$(RADIO_BOT_START_WAIT=3 FAKE_UNHEALTHY=1 radio-bot restart 2>&1 | strip)
+code=$?
+check "gives up on a bot that never gets ready" has "$out" "still isn't ready after 3 seconds"
+check "and says so as a failure" test "$code" = 1
+check "the wait is timed by the clock" test "$((SECONDS - began))" -lt 30
 out=$(FAKE_COMPOSE_VERSION=2.20.3 radio-bot status 2>&1 | strip)
 check "refuses Compose older than 2.24" has "$out" "Docker Compose 2.20 is too old"
 
@@ -191,7 +211,9 @@ echo "restore"
 printf 'SQLite format 3\000and the rest of the database' >"$HOME/old.sqlite"
 out=$(cd "$HOME" && printf 'y\n' | tty_run "radio-bot restore old.sqlite")
 check "restores a file named relative to the current folder" has "$out" "Restored."
-check "mounts the chosen file" grep -qF "$HOME/old.sqlite:/restore.sqlite:ro" "$T/state/calls.log"
+check "streams the chosen file into the container" cmp -s "$HOME/old.sqlite" "$T/state/run-input"
+check "mounts nothing for it (the container's user may not be able to read it)" \
+  test "$(grep -c "restore.sqlite" "$T/state/calls.log")" = 0
 printf 'not a database\n' >"$HOME/notes.txt"
 stops=$(grep -c "compose stop" "$T/state/calls.log")
 out=$(radio-bot restore "$HOME/notes.txt" 2>&1 | strip)
@@ -211,6 +233,10 @@ check "finishes with the invite link when the packs can't be counted" has "$out"
 check "says how to add packs later" has "$out" "To add stations later, run: radio-bot packs browse"
 
 echo "uninstall"
+out=$(printf 'y\ny\n' | tty_run "FAKE_BACKUP_FAIL=1 radio-bot uninstall")
+check "stops when the data can't be saved" has "$out" "Couldn't save a copy of the bot's data, so nothing was removed."
+check "and keeps the folder" test -d "$RADIO_BOT_DIR/scripts"
+check "and the container" test "$(grep -c "compose down" "$T/state/calls.log")" = 0
 out=$(printf 'y\ny\nn\n' | tty_run "radio-bot uninstall")
 check "uninstalls" has "$out" "Radio Bot is uninstalled."
 check "keeps the data volume when asked" has "$out" "Keeping the bot's data"

@@ -6,6 +6,7 @@ import {
   type AudioResource,
   createAudioPlayer,
   createAudioResource,
+  type DiscordGatewayAdapterCreator,
   entersState,
   joinVoiceChannel,
   NoSubscriberBehavior,
@@ -30,6 +31,11 @@ export interface VoiceLinkEvents {
   reconnected: [];
   /** The voice WebSocket, UDP socket or DAVE session reported an error; recovery is automatic. */
   connectionError: [error: Error];
+  /**
+   * The connection or the player changed state. Only for observers that mirror the link (the
+   * voice worker pushes a fresh snapshot to the main thread); nothing listens in main-thread mode.
+   */
+  changed: [];
 }
 
 export interface VoiceLinkStats {
@@ -41,6 +47,11 @@ export interface VoiceLinkStats {
   packetsPlayed: number | null;
   /** Packets sent late while playing since the bot joined, and the longest gap between two. */
   packetTiming: PacketTimingSummary;
+  /**
+   * Silence the player has sent in place of audio for the current resource, ms: frames it had to
+   * fill because no Opus packet was ready (null when not playing).
+   */
+  silenceMs: number | null;
   encryptionMode: string | null;
   status: string;
 }
@@ -63,6 +74,13 @@ export interface VoiceLink extends EventEmitter<VoiceLinkEvents> {
 }
 
 export type VoiceLinkFactory = (channel: VoiceBasedChannel) => Promise<VoiceLink>;
+
+/** Where to join: plain values plus the gateway adapter, so the join can run on another thread. */
+export interface VoiceJoinTarget {
+  guildId: string;
+  channelId: string;
+  adapterCreator: DiscordGatewayAdapterCreator;
+}
 
 /**
  * Frames without audio before the player gives up on a resource (20 ms each, so 25 s). It must
@@ -147,6 +165,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
 
     this.player.on('stateChange', (oldState, newState) => {
       if (newState.status !== AudioPlayerStatus.Playing) this.#timing.pause();
+      this.emit('changed');
       if (
         newState.status === AudioPlayerStatus.Idle &&
         oldState.status !== AudioPlayerStatus.Idle &&
@@ -165,6 +184,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
 
     this.#onConnectionState = (_old, state) => {
       if (state.status !== VoiceConnectionStatus.Ready) this.#timing.pause();
+      this.emit('changed');
       if (state.status === VoiceConnectionStatus.Disconnected) void this.#reconnect(state);
       else if (state.status === VoiceConnectionStatus.Destroyed) this.#markLost('destroyed');
     };
@@ -195,11 +215,11 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     this.removeAllListeners();
   }
 
-  static async connect(channel: VoiceBasedChannel, timeoutMs = 20_000): Promise<DiscordVoiceLink> {
+  static async connect(target: VoiceJoinTarget, timeoutMs = 20_000): Promise<DiscordVoiceLink> {
     const connection = joinVoiceChannel({
-      channelId: channel.id,
-      guildId: channel.guild.id,
-      adapterCreator: channel.guild.voiceAdapterCreator,
+      channelId: target.channelId,
+      guildId: target.guildId,
+      adapterCreator: target.adapterCreator,
       selfDeaf: true,
       selfMute: false,
       daveEncryption: true,
@@ -213,7 +233,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
         cause: err,
       });
     }
-    return new DiscordVoiceLink(connection, channel.id);
+    return new DiscordVoiceLink(connection, target.channelId);
   }
 
   /**
@@ -326,9 +346,20 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       endpoint,
       packetsPlayed,
       packetTiming: this.#timing.summary(),
+      silenceMs: this.#silenceMs(),
       encryptionMode,
       status: state.status,
     };
+  }
+
+  /**
+   * The player counts every frame it sends, the resource only those it had audio for, so the
+   * difference is the silence it filled in. Read here, when asked: nothing is added per packet.
+   */
+  #silenceMs(): number | null {
+    const state = this.player.state;
+    if (state.status !== AudioPlayerStatus.Playing) return null;
+    return Math.max(0, state.playbackDuration - state.resource.playbackDuration);
   }
 
   #releaseTiming(): void {
@@ -359,4 +390,10 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
   }
 }
 
-export const discordVoiceLinkFactory: VoiceLinkFactory = (channel) => DiscordVoiceLink.connect(channel);
+/** Main-thread mode: the voice connection and player run on the thread that runs everything else. */
+export const discordVoiceLinkFactory: VoiceLinkFactory = (channel) =>
+  DiscordVoiceLink.connect({
+    guildId: channel.guild.id,
+    channelId: channel.id,
+    adapterCreator: channel.guild.voiceAdapterCreator,
+  });

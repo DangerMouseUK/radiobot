@@ -23,6 +23,11 @@ const fake = vi.hoisted(() => ({
   schedules: [] as Array<{ options: Record<string, unknown>; stop: () => void; stopped: boolean }>,
   diagnostics: [] as Array<{ port: number; snapshot: () => Record<string, unknown>; closed: boolean }>,
   libraryFetches: [] as string[],
+  voice: {
+    threads: [] as Array<{ calls: string[] }>,
+    startFails: false,
+    selfTestOk: true,
+  },
 }));
 
 vi.mock('discord.js', async (importOriginal) => {
@@ -123,6 +128,38 @@ vi.mock('../../src/observability/health.ts', async (importOriginal) => {
     },
   };
 });
+
+// VOICE_THREAD=worker without a real worker thread: what the app asks of it, and when.
+vi.mock('../../src/voice/voice-thread.ts', () => ({
+  VoiceThread: class {
+    calls: string[] = [];
+    constructor() {
+      fake.voice.threads.push(this);
+    }
+    async start() {
+      this.calls.push('start');
+      if (fake.voice.startFails) throw new Error('the worker did not start');
+    }
+    async selfTest() {
+      this.calls.push('selfTest');
+      return fake.voice.selfTestOk
+        ? { ok: true, daveProtocolVersion: 1, heapUsedMb: 9, error: null }
+        : { ok: false, daveProtocolVersion: null, heapUsedMb: null, error: 'davey did not load' };
+    }
+    async stop() {
+      this.calls.push('stop');
+    }
+    factory() {
+      return async () => {
+        this.calls.push('join');
+        throw new Error('no voice in this test');
+      };
+    }
+    stats() {
+      return { alive: true, restarts: 0, links: 0, heapUsedMb: 9 };
+    }
+  },
+}));
 
 const { createApp } = await import('../../src/app.ts');
 const { RadioController } = await import('../../src/discord/controller.ts');
@@ -287,6 +324,12 @@ describe('createApp: Discord client', () => {
       'VOICE_DISCONNECTED',
       'discord',
     ]);
+    // Reconnects and resumes are logged, to be matched with late voice packets.
+    const info = vi.spyOn(ctx.logger, 'info');
+    client.emit(Events.ShardReconnecting, 0);
+    client.emit(Events.ShardResume, 0, 12);
+    expect(info).toHaveBeenCalledWith({ shard: 0 }, 'gateway reconnecting');
+    expect(info).toHaveBeenCalledWith({ shard: 0, replayed: 12 }, 'gateway resumed');
   });
 
   it('registers commands again for a server that re-invites the bot, but only the dev server when set', async () => {
@@ -532,25 +575,125 @@ describe('createApp: stream User-Agent', () => {
   });
 });
 
+describe('createApp: the voice worker (VOICE_THREAD=worker)', () => {
+  beforeEach(() => {
+    fake.voice.threads = [];
+    fake.voice.startFails = false;
+    fake.voice.selfTestOk = true;
+  });
+
+  it('runs voice on the main thread by default, without a worker', async () => {
+    const { app, ctx } = build();
+    await app.start();
+    expect(fake.voice.threads).toEqual([]);
+    expect(ctx.voiceThreadStats?.()).toBeNull();
+  });
+
+  it('starts and checks the worker before logging in, and stops it before the client', async () => {
+    const logger = quietLogger();
+    const info = vi.spyOn(logger, 'info');
+    const { app, ctx, client } = build({ voiceThread: 'worker', diagnosticsPort: 8099 }, logger);
+    await app.start();
+    const thread = fake.voice.threads[0]!;
+    expect(thread.calls).toEqual(['start', 'selfTest']);
+    expect(client.logins).toHaveLength(1);
+    expect(info).toHaveBeenCalledWith({ dave: 1, heapMb: 9 }, 'voice worker ready');
+    // Its figures reach /radio stats and the diagnostics endpoint.
+    expect(ctx.voiceThreadStats?.()).toMatchObject({ alive: true, heapUsedMb: 9 });
+    expect(fake.diagnostics.at(-1)!.snapshot()).toMatchObject({ voiceThread: { alive: true } });
+    const destroyed: number[] = [];
+    const real = client as never as { destroy: () => Promise<void> };
+    const destroy = real.destroy.bind(real);
+    vi.spyOn(real, 'destroy').mockImplementation(async () => {
+      destroyed.push(thread.calls.length);
+      await destroy();
+    });
+    await app.stop('SIGTERM');
+    // The worker leaves its channels through the gateway, so it stops while the client still runs.
+    expect(thread.calls.at(-1)).toBe('stop');
+    expect(destroyed).toEqual([thread.calls.length]);
+    apps = apps.filter((a) => a !== app);
+  });
+
+  it('falls back to the main thread when the worker fails its self-test', async () => {
+    fake.voice.selfTestOk = false;
+    const logger = quietLogger();
+    const error = vi.spyOn(logger, 'error');
+    const { app, ctx } = build({ voiceThread: 'worker' }, logger);
+    await app.start();
+    expect(fake.voice.threads[0]!.calls).toEqual(['start', 'selfTest', 'stop']);
+    expect(error).toHaveBeenCalledWith(
+      expect.anything(),
+      'voice worker unavailable; voice connections run on the main thread instead',
+    );
+    expect(ctx.voiceThreadStats?.()).toBeNull();
+    // Stopped once at the fall-back, not again at shutdown.
+    await app.stop('SIGTERM');
+    expect(fake.voice.threads[0]!.calls).toEqual(['start', 'selfTest', 'stop']);
+    apps = apps.filter((a) => a !== app);
+  });
+
+  it('falls back to the main thread when the worker does not start', async () => {
+    fake.voice.startFails = true;
+    const { app, ctx } = build({ voiceThread: 'worker' });
+    await app.start();
+    expect(fake.voice.threads[0]!.calls).toEqual(['start', 'stop']);
+    expect(ctx.voiceThreadStats?.()).toBeNull();
+  });
+
+  it('labels a main-thread delay as not delaying voice when the worker sends the packets', async () => {
+    const logger = quietLogger();
+    const warn = vi.spyOn(logger, 'warn');
+    const { app, ctx } = build({ voiceThread: 'worker' }, logger);
+    ctx.eventLoop = new EventLoopMonitor(() => ({
+      count: 100,
+      mean: 12e6,
+      max: 80e6,
+      percentile: () => 15e6,
+      reset() {},
+      enable: () => true,
+      disable: () => true,
+    }));
+    await app.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ eventLoopDelay: expect.anything() }),
+      'main event loop was delayed; voice packets are sent from the voice worker',
+    );
+  });
+});
+
 describe('createApp: timers', () => {
-  it('prunes probe history hourly: every source the first time, then only old results', async () => {
+  it('prunes probe history hourly as automatic background work, one run at a time', async () => {
     const logger = quietLogger();
     const warn = vi.spyOn(logger, 'warn');
     const { app, ctx } = build({ probeHistoryLimit: 7, probeHistoryDays: 9 }, logger);
-    const prune = vi.spyOn(ctx.stations, 'pruneProbeResults');
+    const prune = vi.spyOn(ctx.stations, 'pruneProbeHistory');
+    const background = vi.spyOn(ctx.sources, 'runInBackground');
     const sweep = vi.spyOn(ctx.limits, 'sweep');
     await app.start();
-    await vi.advanceTimersByTimeAsync(60 * 60_000);
-    await vi.advanceTimersByTimeAsync(60 * 60_000);
-    expect(prune.mock.calls).toEqual([
-      [7, 9, true],
-      [7, 9, false],
-    ]);
-    expect(sweep).toHaveBeenCalledTimes(2);
-    prune.mockImplementation(() => {
-      throw new Error('database is locked');
-    });
-    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    await vi.advanceTimersByTimeAsync(61 * 60_000);
+    expect(prune).toHaveBeenCalledOnce();
+    expect(prune.mock.calls[0]![0]).toMatchObject({ keep: 7, days: 9, trimEverySource: true });
+    expect(prune.mock.calls[0]![0].signal?.aborted).toBe(false);
+    // Nobody waits for it, so it also waits while a stream settles in.
+    expect(background).toHaveBeenCalledWith(expect.any(Function), { automatic: true });
+    // A clean-up still running an hour later isn't started a second time.
+    let release = (): void => {};
+    prune.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ deleted: 0 });
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(61 * 60_000);
+    await vi.advanceTimersByTimeAsync(61 * 60_000);
+    expect(prune).toHaveBeenCalledTimes(2);
+    expect(sweep).toHaveBeenCalledTimes(3);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    prune.mockRejectedValue(new Error('database is locked'));
+    await vi.advanceTimersByTimeAsync(61 * 60_000);
     expect(warn).toHaveBeenCalledWith(expect.anything(), 'probe history pruning failed');
   });
 
@@ -575,11 +718,60 @@ describe('createApp: timers', () => {
     const delayed = () =>
       warn.mock.calls.filter((c) => c[1] === 'event loop was delayed; voice packets may have been late');
     expect(delayed()).toHaveLength(1);
-    expect(delayed()[0]![0]).toMatchObject({ eventLoopDelay: { maxMs: 70 } });
+    expect(delayed()[0]![0]).toMatchObject({ eventLoopDelay: { maxMs: 70 }, latePackets: [] });
     // A quiet minute is not a warning.
     maxNs = 30e6;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(delayed()).toHaveLength(1);
+  });
+
+  it('warns about a long garbage collection, listing the late packets of that minute', async () => {
+    const logger = quietLogger();
+    const warn = vi.spyOn(logger, 'warn');
+    const { app, ctx } = build({}, logger);
+    let gc: (e: { duration: number; kind: number }) => void = () => {};
+    ctx.eventLoop = new EventLoopMonitor(
+      () => ({
+        count: 100,
+        mean: 11e6,
+        max: 30e6,
+        percentile: () => 12e6,
+        reset() {},
+        enable: () => true,
+        disable: () => true,
+      }),
+      {
+        observeGc: (onEntry) => {
+          gc = onEntry;
+          return () => {};
+        },
+      },
+    );
+    const session = ctx.sessions.ensure('223456789012345678');
+    vi.spyOn(session, 'liveStats').mockImplementation(
+      () =>
+        ({
+          voice: {
+            recentLatePackets: [
+              { at: Date.now() - 2 * 60_000, gapMs: 70 },
+              { at: Date.now() + 30_000, gapMs: 93 },
+            ],
+          },
+        }) as never,
+    );
+    await app.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    gc({ duration: 81.4, kind: 4 });
+    await vi.advanceTimersByTimeAsync(30_000);
+    const delayed = warn.mock.calls.filter(
+      (c) => c[1] === 'event loop was delayed; voice packets may have been late',
+    );
+    expect(delayed).toHaveLength(1);
+    // Only the late packet from this minute, with its server and time.
+    expect(delayed[0]![0]).toMatchObject({
+      eventLoopDelay: { gc: { major: 1, maxMs: 81.4, maxKind: 'major' } },
+      latePackets: [{ guild: '223456789012345678', gapMs: 93 }],
+    });
   });
 
   it('refreshes the panel of every session every 5 minutes, one at a time', async () => {
@@ -688,6 +880,7 @@ describe('createApp: catalogue sync', () => {
     const background = vi.spyOn(ctx.sources, 'runInBackground');
     await o.sync('mypack');
     expect(background).toHaveBeenCalledOnce();
+    expect(background).toHaveBeenCalledWith(expect.any(Function), { automatic: true });
     expect(sync).toHaveBeenCalledWith('mypack', 'scheduled', expect.any(AbortSignal));
     const signal = sync.mock.calls[0]![2]!;
     expect(signal.aborted).toBe(false);
@@ -781,7 +974,7 @@ describe('createApp: shutdown', () => {
     spy(ctx.registry, 'killAll', 'registry.killAll');
     spy(ctx.db, 'checkpoint', 'db.checkpoint');
     spy(ctx.db, 'close', 'db.close');
-    const prune = vi.spyOn(ctx.stations, 'pruneProbeResults');
+    const prune = vi.spyOn(ctx.stations, 'pruneProbeHistory');
     const refresh = vi.spyOn(RadioController.prototype, 'refreshPanel').mockResolvedValue();
     ctx.sessions.ensure('223456789012345678');
 

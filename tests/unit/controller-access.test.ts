@@ -13,6 +13,9 @@ import {
   V2,
 } from './controller-harness.ts';
 
+/** Suggestions for an option of `/radio source …`. */
+const SOURCE = { group: 'source' };
+
 /** A server with only custom stations, and one playable station called My Station. */
 function customServer() {
   const t = setup({ customOnly: true });
@@ -139,16 +142,46 @@ describe('suggestions while typing', () => {
       provenanceDetail: null,
       rightsStatus: 'unreviewed',
     });
-    const all = await suggest(t, 'pin', 'source', '', { station: st.id });
+    const all = await suggest(t, 'pin', 'source', '', { station: st.id }, SOURCE);
     expect(all.map((c) => c.value).sort()).toEqual(['custom-my-station-1', 'custom-my-station-2']);
     expect(all.find((c) => c.value === 'custom-my-station-2')?.name).toBe(
       'Backup stream · custom-my-station-2 · unverified',
     );
-    const byLabel = await suggest(t, 'pin', 'source', 'BACKUP', { station: st.id });
+    const byLabel = await suggest(t, 'pin', 'source', 'BACKUP', { station: st.id }, SOURCE);
     expect(byLabel.map((c) => c.value)).toEqual(['custom-my-station-2']);
-    const byId = await suggest(t, 'pin', 'source', 'station-1', { station: st.id });
+    const byId = await suggest(t, 'pin', 'source', 'station-1', { station: st.id }, SOURCE);
     expect(byId.map((c) => c.value)).toEqual(['custom-my-station-1']);
-    expect(await suggest(t, 'pin', 'source', '', { station: 'Nothing Like It' })).toEqual([]);
+    expect(await suggest(t, 'pin', 'source', '', { station: 'Nothing Like It' }, SOURCE)).toEqual([]);
+  });
+
+  it('are authorised like the command: nothing outside the command channels, sources only for admins', async () => {
+    const { t, st } = customServer();
+    const member = t.people.member;
+    // Anyone who may read gets stations.
+    expect((await suggest(t, 'play', 'station', '', {}, { actor: member })).map((c) => c.value)).toEqual([
+      st.id,
+    ]);
+    // `/radio source` is for admins, so its sources and their review status are too.
+    const sourcesFor = (from: Parameters<typeof suggest>[5]) =>
+      suggest(t, 'pin', 'source', '', { station: st.id }, { ...SOURCE, ...from });
+    expect(await sourcesFor({ actor: member })).toEqual([]);
+    t.guilds.updateSettings(GUILD, { djRoleIds: [DJ_ROLE] });
+    expect(await sourcesFor({ actor: t.people.dj })).toEqual([]);
+    expect((await sourcesFor({ actor: t.people.admin })).map((c) => c.value)).toEqual([
+      'custom-my-station-1',
+    ]);
+    // The station option of `/radio source` reveals no more than browse does, but is still the admins'.
+    expect(await suggest(t, 'pin', 'station', '', {}, { ...SOURCE, actor: member })).toEqual([]);
+    // Outside the command channels a member gets nothing at all; an admin still gets suggestions.
+    t.guilds.updateSettings(GUILD, { allowedTextChannelIds: [TEXT] });
+    const elsewhere = { actor: member, channelId: '800000000000000099' };
+    expect(await suggest(t, 'play', 'station', '', {}, elsewhere)).toEqual([]);
+    expect(await suggest(t, 'browse', 'pack', '', {}, elsewhere)).toEqual([]);
+    expect(await suggest(t, 'browse', 'category', '', {}, elsewhere)).toEqual([]);
+    expect(await suggest(t, 'play', 'station', '', {}, { actor: member })).not.toEqual([]);
+    expect(
+      await suggest(t, 'play', 'station', '', {}, { actor: t.people.admin, channelId: '800000000000000099' }),
+    ).not.toEqual([]);
   });
 
   it('for a pack: every enabled pack and the custom stations, but only syncable packs for sync', async () => {

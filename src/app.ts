@@ -35,12 +35,14 @@ import { WalCheckpointer } from './persistence/checkpoint.ts';
 import { Db } from './persistence/db.ts';
 import { GuildRepository, MetaRepository } from './persistence/repositories/guilds.ts';
 import { StationRepository } from './persistence/repositories/stations.ts';
+import { yieldToEventLoop } from './shared/async.ts';
 import { FullSourceCheck } from './streams/full-check.ts';
 import { SafeHttpClient } from './streams/safe-fetch.ts';
 import { SourceService } from './streams/source-service.ts';
 import { UrlPolicy } from './streams/url-policy.ts';
 import { discordVoiceLinkFactory } from './voice/link.ts';
 import { SessionManager } from './voice/session-manager.ts';
+import { VoiceThread } from './voice/voice-thread.ts';
 
 export interface RadioApp {
   ctx: AppContext;
@@ -123,6 +125,11 @@ export function createApp(
   });
 
   const notifier = new Notifier(client, guilds, logger);
+  // VOICE_THREAD=worker: voice connections and their 20 ms packet timer run on a worker thread of
+  // their own, out of reach of everything else this thread does. Falls back to this thread if the
+  // worker can't start.
+  const voiceThread = config.voiceThread === 'worker' ? new VoiceThread({ logger }) : null;
+  let useVoiceThread = voiceThread !== null;
   const sessions = new SessionManager({
     client,
     stations,
@@ -131,7 +138,9 @@ export function createApp(
     http,
     registry,
     ffmpegPath: config.ffmpegPath,
-    linkFactory: discordVoiceLinkFactory,
+    // Captured here, so it decides per join: the worker if it started, otherwise this thread.
+    linkFactory: (channel) =>
+      voiceThread && useVoiceThread ? voiceThread.factory()(channel) : discordVoiceLinkFactory(channel),
     maxActiveStreams: config.maxActiveGuildStreams,
     maxOpusKbps: config.maxOpusBitrateKbps,
     brandLabels: (provider) => packs.brandLabels(provider),
@@ -156,7 +165,7 @@ export function createApp(
     transaction: (fn) => db.transaction(fn),
     http,
     logger,
-    background: (fn) => sources.runInBackground(fn),
+    background: (fn, opts) => sources.runInBackground(fn, opts),
     // A pack added or removed changes which official lists there are to sync with.
     onChange: () => {
       if (syncSchedule) scheduleSync();
@@ -198,6 +207,7 @@ export function createApp(
     notifier,
     limits: new RateLimits(),
     eventLoop: new EventLoopMonitor(),
+    voiceThreadStats: () => (voiceThread && useVoiceThread ? voiceThread.stats() : null),
     startedAt: new Date(),
     ffmpegInfo: null,
   };
@@ -277,9 +287,12 @@ export function createApp(
       packIds: catalogueSync.syncablePacks().map((p) => p.meta.id),
       intervalMs: config.catalogSyncIntervalHours * 3_600_000,
       lastSync: (packId) => catalogueSync.lastSync(packId).at,
-      // Background work: one at a time with source checks, and never while a stream is starting.
+      // Background work: one at a time with source checks, and never while a stream is starting
+      // or settling in.
       sync: (packId) =>
-        sources.runInBackground(() => catalogueSync.sync(packId, 'scheduled', shutdownSignal.signal)),
+        sources.runInBackground(() => catalogueSync.sync(packId, 'scheduled', shutdownSignal.signal), {
+          automatic: true,
+        }),
     });
   };
 
@@ -303,6 +316,23 @@ export function createApp(
       );
     }
     logger.debug({ report: generateDependencyReport() }, 'voice dependency report');
+    // Before logging in, so it is ready before any join. A worker that can't load the voice
+    // libraries (or make a DAVE session) is a reason to fall back, not to stay silent.
+    if (voiceThread) {
+      try {
+        await voiceThread.start();
+        const r = await voiceThread.selfTest();
+        if (!r.ok) throw new Error(r.error ?? 'the voice worker failed its self-test');
+        logger.info({ dave: r.daveProtocolVersion, heapMb: r.heapUsedMb }, 'voice worker ready');
+      } catch (err) {
+        logger.error(
+          { err: safeErr(err) },
+          'voice worker unavailable; voice connections run on the main thread instead',
+        );
+        useVoiceThread = false;
+        await voiceThread.stop();
+      }
+    }
     // Before anything plays: packs this installation uses but no longer has (a pack that used to
     // ship with the bot, say) come back from the pack library, so favourites and resumes work.
     // Bounded, so a slow link never holds start-up past the health check's grace period; anything
@@ -317,6 +347,9 @@ export function createApp(
     client.on(Events.ShardDisconnect, (_e, shard) => {
       metrics.incident(null, 'VOICE_DISCONNECTED', 'discord', `gateway shard ${shard} disconnected`);
     });
+    // Logged so a gateway reconnect can be matched with a late-packet warning at the same time.
+    client.on(Events.ShardReconnecting, (shard) => logger.info({ shard }, 'gateway reconnecting'));
+    client.on(Events.ShardResume, (shard, replayed) => logger.info({ shard, replayed }, 'gateway resumed'));
     client.on(Events.GuildCreate, (guild) => {
       if (config.registerCommandsOnStart && (!config.devGuildId || config.devGuildId === guild.id)) {
         // Forced: a server that removed and re-invited the bot has lost its commands.
@@ -353,10 +386,28 @@ export function createApp(
 
     timers.push(setInterval(() => void heartbeat(), 30_000));
     // A blocked event loop sends voice packets late: listeners hear a drop, then a catch-up.
+    // The minute's figures carry what can explain a delay (garbage collection, CPU, host steal) and
+    // the late packets themselves, so a gap a listener heard can be matched to its cause.
     ctx.eventLoop.start(60_000, (s) => {
-      if (s.maxMs >= 50)
-        logger.warn({ eventLoopDelay: s }, 'event loop was delayed; voice packets may have been late');
-      else logger.debug({ eventLoopDelay: s }, 'event loop delay');
+      if (s.maxMs >= 50 || s.gc.maxMs >= 50) {
+        const since = Date.now() - s.windowSec * 1000;
+        const latePackets = sessions
+          .all()
+          .flatMap((session) =>
+            (session.liveStats().voice?.recentLatePackets ?? [])
+              .filter((p) => p.at >= since)
+              .map((p) => ({ guild: session.guildId, at: new Date(p.at).toISOString(), gapMs: p.gapMs })),
+          );
+        // With the voice worker, a delay here only holds up the hand-over of encoded audio, which
+        // the worker rides out with what it has already received. It logs its own delays, and any
+        // silence it had to fill in shows in /radio stats.
+        logger.warn(
+          { eventLoopDelay: s, latePackets },
+          useVoiceThread
+            ? 'main event loop was delayed; voice packets are sent from the voice worker'
+            : 'event loop was delayed; voice packets may have been late',
+        );
+      } else logger.debug({ eventLoopDelay: s }, 'event loop delay');
     });
     // Every 20 s, and only on a change: well within Discord's limit on status updates.
     timers.push(
@@ -365,18 +416,32 @@ export function createApp(
         void voiceStatus.update();
       }, 20_000),
     );
-    // The first clean-up also applies PROBE_HISTORY_LIMIT to every source; later ones only age out old results.
-    let trimEverySource = true;
+    // Old check results are deleted as background work, in small batches that give the event loop
+    // back in between: one big DELETE once held up voice packets for tens of milliseconds. The
+    // per-source PROBE_HISTORY_LIMIT trim only runs when that limit has been lowered.
+    let pruning = false;
     timers.push(
       setInterval(() => {
         ctx.limits.sweep();
-        try {
-          stations.pruneProbeResults(config.probeHistoryLimit, config.probeHistoryDays, trimEverySource);
-          trimEverySource = false;
-        } catch (err) {
-          logger.warn({ err: safeErr(err) }, 'probe history pruning failed');
-        }
-      }, 60 * 60_000),
+        if (pruning) return;
+        pruning = true;
+        void sources
+          .runInBackground(
+            () =>
+              stations.pruneProbeHistory({
+                keep: config.probeHistoryLimit,
+                days: config.probeHistoryDays,
+                pause: yieldToEventLoop,
+                signal: shutdownSignal.signal,
+                trimEverySource: true,
+              }),
+            { automatic: true },
+          )
+          .catch((err: unknown) => logger.warn({ err: safeErr(err) }, 'probe history pruning failed'))
+          .finally(() => {
+            pruning = false;
+          });
+      }, 61 * 60_000),
     );
     // Panels reflect live state without spamming edits. One server at a time, giving the event
     // loop back in between: building every panel in one go held up voice packets with many streams.
@@ -418,6 +483,7 @@ export function createApp(
         },
         counters: metrics.snapshot(),
         eventLoopDelay: { current: ctx.eventLoop.current(), lastMinute: ctx.eventLoop.lastWindow() },
+        voiceThread: ctx.voiceThreadStats?.() ?? null,
         incidents: metrics.recentIncidents(null, 20),
         sessions: sessions.all().map((s) => {
           const st = s.status();
@@ -449,6 +515,8 @@ export function createApp(
     ctx.eventLoop.stop();
     diagnostics?.close();
     sessions.shutdown();
+    // Its leave messages go out through this thread's gateway, so before the client is destroyed.
+    if (useVoiceThread) await voiceThread?.stop();
     notifier.close();
     await client.destroy().catch(() => {});
     await heartbeat();

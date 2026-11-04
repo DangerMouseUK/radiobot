@@ -100,7 +100,13 @@ export interface HlsSegment {
 export interface HlsMedia {
   type: 'media';
   targetDuration: number;
+  /** The sequence number of the playlist's first segment. */
   mediaSequence: number;
+  /**
+   * Segments in the playlist, counting those left out (below `minSequence`, or with an address
+   * the bot can't use): segment n of the playlist has sequence `mediaSequence + n`.
+   */
+  segmentCount: number;
   segments: HlsSegment[];
   endList: boolean;
   encryption: string | null;
@@ -123,7 +129,13 @@ const num = (v: string | undefined): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-export function parseHls(text: string, base: URL): HlsMaster | HlsMedia {
+/**
+ * Parses an HLS playlist. For a media playlist, `minSequence` leaves out the segments before that
+ * sequence number without resolving their addresses: a live reader polling a long (DVR-window)
+ * playlist needs only the newest few, and resolving thousands of URLs on every poll would hold up
+ * the thread that sends voice packets.
+ */
+export function parseHls(text: string, base: URL, opts: { minSequence?: number } = {}): HlsMaster | HlsMedia {
   if (!looksLikeHls(text)) throw new RadioError('PLAYLIST_INVALID', 'Not a valid HLS playlist.');
   const ls = lines(text);
   if (ls.some((l) => l.startsWith('#EXT-X-STREAM-INF'))) {
@@ -179,7 +191,10 @@ export function parseHls(text: string, base: URL): HlsMaster | HlsMedia {
   let pendingDuration: number | null = null;
   let pendingDiscontinuity = false;
   let mapUri: URL | null = null;
+  let mapRaw: string | undefined | null = null;
+  const minSequence = opts.minSequence ?? Number.NEGATIVE_INFINITY;
   const segments: HlsSegment[] = [];
+  let segmentCount = 0;
   for (const l of ls) {
     if (l.startsWith('#EXT-X-TARGETDURATION:')) {
       const declared = num(l.split(':')[1]) ?? targetDuration;
@@ -193,16 +208,21 @@ export function parseHls(text: string, base: URL): HlsMaster | HlsMedia {
       if (method !== 'NONE') encryption ??= method;
     } else if (l.startsWith('#EXT-X-MAP:')) {
       const uri = parseAttributes(l.slice('#EXT-X-MAP:'.length)).URI;
-      mapUri = uri ? resolveEntry(uri, base) : null;
+      // Some packagers repeat the same init section before every segment: resolve it once.
+      if (uri !== mapRaw) mapUri = uri ? resolveEntry(uri, base) : null;
+      mapRaw = uri;
     } else if (l.startsWith('#EXTINF:')) {
       pendingDuration = num(l.slice('#EXTINF:'.length).split(',')[0]) ?? 0;
     } else if (!l.startsWith('#')) {
-      const uri = resolveEntry(l, base);
+      // Every segment line has its sequence number (RFC 8216 §6.3.2), even one that can't be
+      // used: numbering only the usable ones would renumber the rest once it left the window.
+      const sequence = mediaSequence + segmentCount++;
+      const uri = sequence >= minSequence ? resolveEntry(l, base) : null;
       if (uri) {
         segments.push({
           uri,
           duration: pendingDuration ?? targetDuration,
-          sequence: mediaSequence + segments.length,
+          sequence,
           mapUri,
           discontinuity: pendingDiscontinuity,
         });
@@ -211,7 +231,7 @@ export function parseHls(text: string, base: URL): HlsMaster | HlsMedia {
       pendingDiscontinuity = false;
     }
   }
-  return { type: 'media', targetDuration, mediaSequence, segments, endList, encryption };
+  return { type: 'media', targetDuration, mediaSequence, segmentCount, segments, endList, encryption };
 }
 
 const VIDEO_CODEC = /^(avc|hvc|hev|vp0|vp8|vp9|av01|dvh|dvhe|mp4v)/;
