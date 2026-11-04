@@ -22,6 +22,7 @@ export const COMPONENT_ACTIONS = [
   'browse',
   'bsearch',
   'cfg',
+  'cfgm',
   'close',
   'fav',
   'imp',

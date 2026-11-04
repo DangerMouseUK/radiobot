@@ -86,7 +86,8 @@ src/
                         state-machine.ts, session.ts (per-guild state machine, watchdog, recovery,
                         failover), session-manager.ts (all guilds, boot/resume)
   discord/              controller.ts (every interaction), commands/definitions.ts (/radio),
-                        permissions/authorize.ts, components/custom-id.ts (signed IDs), ui/ (views, format, packs-view),
+                        permissions/authorize.ts, components/custom-id.ts (signed IDs),
+                        ui/ (views, format, packs-view, settings-view: the /radio config card),
                         register.ts, notifier.ts, presence.ts (bot status),
                         voice-status.ts (voice channel status),
                         voice-access.ts, context.ts

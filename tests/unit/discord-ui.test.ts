@@ -1,4 +1,4 @@
-import { type APIEmbed, ButtonStyle, type EmbedBuilder } from 'discord.js';
+import { type APIEmbed, ButtonStyle, type EmbedBuilder, MessageFlags } from 'discord.js';
 import { describe, expect, it } from 'vitest';
 import { planEncoder } from '../../src/audio/encoder.ts';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
@@ -25,10 +25,19 @@ import {
   transportLabel,
 } from '../../src/discord/ui/format.ts';
 import {
+  bitrateModal,
+  isSettingsScreen,
+  NO_DEFAULT_STATION,
+  qualityText,
+  SETTINGS_SCREENS,
+  type SettingsCard,
+  settingsCard,
+  stationModal,
+} from '../../src/discord/ui/settings-view.ts';
+import {
   ambiguityView,
   browseSearchModal,
   browseView,
-  configView,
   controlRows,
   listArg,
   listView,
@@ -296,9 +305,6 @@ describe('browse and list views', () => {
       { components: controlRows(ctx, GUILD, null, false) },
       browseView(ctx, GUILD, { pack: null, category: null, search: null }, 'tok123', 0),
       browseView(ctx, GUILD, { pack: null, category: 'favourites', search: null }, 'tok123', 0),
-      ...(['access', 'playback', 'notify'] as const).map((page) =>
-        configView(ctx, GUILD, guilds.getSettings(GUILD), page),
-      ),
     ];
     let green = 0;
     for (const v of views) {
@@ -309,8 +315,8 @@ describe('browse and list views', () => {
         green += styles.filter((s) => s === ButtonStyle.Success).length;
       }
     }
-    // The voice channel status switch is on by default: the one green button.
-    expect(green).toBe(1);
+    // Green is for settings switches that are on, and these views have none (see the settings card).
+    expect(green).toBe(0);
   });
 
   it('says "No favourites yet" only when there are none, not when a search leaves none', () => {
@@ -328,38 +334,6 @@ describe('browse and list views', () => {
     // There is a favourite now; the search is what found nothing, so say that.
     expect(empty().description).toMatch(/^No stations match\. Press \*\*Change search\*\*/);
     expect(empty().footer?.text).toMatch(/^Page 1\/1 · 0 stations · favourites only · search: "zzzz"\./);
-  });
-
-  it('explains the default station, and says when autostart is missing what it needs', () => {
-    const { ctx, guilds } = context();
-    const text = () => {
-      const e = configView(ctx, GUILD, guilds.getSettings(GUILD), 'playback').embeds[0]!.toJSON();
-      return [e.description, ...(e.fields ?? []).map((f) => `${f.name}\n${f.value}`)].join('\n');
-    };
-    expect(text()).toMatch(/default station is what `\/radio join` plays/);
-    expect(text()).not.toMatch(/Autostart needs/);
-    guilds.updateSettings(GUILD, { autostart: true });
-    expect(text()).toMatch(
-      /missing the default station and the preferred voice channel, so it does nothing yet/,
-    );
-    guilds.updateSettings(GUILD, { defaultStationId: ctx.stations.listStations(GUILD)[0]!.id });
-    expect(text()).toMatch(/missing the preferred voice channel, so/);
-    guilds.updateSettings(GUILD, { preferredVoiceChannelId: '700000000000000001' });
-    expect(text()).not.toMatch(/Autostart needs/);
-  });
-
-  it('says when Channel lock is on without a preferred voice channel', () => {
-    const { ctx, guilds } = context();
-    const text = () =>
-      configView(ctx, GUILD, guilds.getSettings(GUILD), 'playback').embeds[0]!.toJSON().fields![0]!.value;
-    guilds.updateSettings(GUILD, { voiceLock: true });
-    expect(text()).toContain('⚠️ Channel lock needs a preferred voice channel, so it does nothing yet.');
-    guilds.updateSettings(GUILD, { preferredVoiceChannelId: '700000000000000001' });
-    expect(text()).not.toMatch(/Channel lock needs/);
-    // And that changes save straight away, since there is no Save button.
-    const e = configView(ctx, GUILD, guilds.getSettings(GUILD), 'notify').embeds[0]!.toJSON();
-    expect(e.description).toMatch(/Changes save as soon as you make them\./);
-    expect(e.fields![0]!.value).toMatch(/optional Set Voice Channel Status permission/);
   });
 
   it('filters by search, category and favourites and says when nothing matches', () => {
@@ -532,72 +506,304 @@ describe('browse and list views', () => {
   });
 });
 
-describe('settings view', () => {
-  it.each(['access', 'playback', 'notify'] as const)('builds a valid %s page with signed cfg ids', (page) => {
-    const { ctx, ids, guilds } = context();
-    const s = guilds.updateSettings(GUILD, {
-      djRoleIds: ['223456789012345678'],
-      qualityMode: 'manual',
-      manualBitrateKbps: 256,
-      defaultStationId: 'demo:demo-chic',
-    });
-    const v = configView(ctx, GUILD, s, page);
-    const comps = checkComponents(v);
-    for (const p of parseAll(ids, comps)) expect(p).toMatchObject({ action: 'cfg', expired: false });
-    const e = v.embeds[0]!.toJSON();
-    // Only the page being edited is shown, so the message stays short on a phone.
-    const name = { access: 'Access', playback: 'Playback', notify: 'Notices' }[page];
-    expect(e.title).toBe(`Radio Bot settings: ${name}`);
-    expect((e.fields ?? []).map((f) => f.name)).toEqual([name]);
-    const d = e.fields![0]!.value;
-    if (page === 'access') expect(d).toContain('<@&223456789012345678>');
-    if (page === 'playback') {
-      expect(d).toContain('Demo Chic');
-      expect(d).toContain('manual (256 kbps)');
-    }
-    // Every page ends with the page buttons, and has room to spare under Discord's five rows.
-    expect(v.components.length).toBeLessThanOrEqual(5);
-    const last = v.components.at(-1)!.toJSON().components;
-    expect(last.map((c) => (c as { label?: string }).label)).toEqual(['Access', 'Playback', 'Notices']);
-    // Option labels and descriptions are short enough for a phone to show them in full.
-    for (const c of comps)
-      for (const o of (Array.isArray(c.options) ? c.options : []) as {
-        label: string;
-        description?: string;
-      }[]) {
-        expect(o.label.length).toBeLessThanOrEqual(30);
-        expect((o.description ?? '').length).toBeLessThanOrEqual(40);
+describe('settings card', () => {
+  type Node = Record<string, unknown> & { type: number; components?: Node[]; accessory?: Node };
+  /** Every component of a card, nested ones included, as Discord receives them. */
+  const nodes = (card: SettingsCard): Node[] => {
+    const out: Node[] = [];
+    const walk = (list: Node[]) => {
+      for (const n of list) {
+        out.push(n);
+        if (n.components) walk(n.components);
+        if (n.accessory) walk([n.accessory]);
       }
+    };
+    walk(card.components.map((c) => c.toJSON() as unknown as Node));
+    return out;
+  };
+  const textOf = (card: SettingsCard) =>
+    nodes(card)
+      .filter((n) => n.type === 10)
+      .map((n) => String(n.content))
+      .join('\n');
+  const controls = (card: SettingsCard) => nodes(card).filter((n) => [2, 3, 5, 6, 7, 8].includes(n.type));
+  const byArg = (ids: ComponentIds, card: SettingsCard, arg: string) =>
+    controls(card).find((c) => {
+      const p = ids.parse(GUILD, String(c.custom_id));
+      return p && !p.expired && p.arg === arg;
+    });
+
+  it.each(SETTINGS_SCREENS)(
+    'builds a valid %s screen within Discord’s limits and fit for a phone',
+    (screen) => {
+      const { ctx, ids, guilds } = context();
+      // Long lists and every optional part shown, for the largest card each screen can make.
+      const many = (start: number) =>
+        Array.from({ length: 50 }, (_, n) => `7${String(start + n).padStart(17, '0')}`);
+      const s = guilds.updateSettings(GUILD, {
+        allowedTextChannelIds: many(100),
+        allowedVoiceChannelIds: many(200),
+        djRoleIds: many(300),
+        qualityMode: 'manual',
+        manualBitrateKbps: 256,
+        defaultStationId: 'demo:demo-chic',
+        preferredVoiceChannelId: '700000000000000001',
+        notificationChannelId: '700000000000000002',
+        panelChannelId: '700000000000000003',
+        autostart: true,
+        voiceLock: true,
+      });
+      const card = settingsCard(ctx, GUILD, s, screen, '⚠️ A note about the last change.');
+      expect(card.flags).toBe(MessageFlags.IsComponentsV2);
+      expect(card.allowedMentions).toEqual({ parse: [] });
+      // Discord: at most 40 components in all, counting the ones inside others.
+      expect(nodes(card).length).toBeLessThanOrEqual(40);
+      // Kept well under the 4000 characters a message's text displays may hold.
+      expect(textOf(card).length).toBeLessThanOrEqual(2000);
+      expect(textOf(card).startsWith('⚠️ A note about the last change.')).toBe(true);
+      let red = 0;
+      for (const c of controls(card)) {
+        const id = String(c.custom_id);
+        expect(id.length).toBeLessThanOrEqual(100);
+        expect(['cfg', 'close']).toContain((ids.parse(GUILD, id) as { action?: string }).action);
+        // Short enough to show in full on a phone.
+        if (c.type === 2) expect(String(c.label).length).toBeLessThanOrEqual(20);
+        if (c.style === ButtonStyle.Danger) red++;
+        // Green means "on", so only the switches are green.
+        if (c.style === ButtonStyle.Success) expect(c.label).toBe('On');
+        for (const o of (c.options ?? []) as Array<{ label: string; description?: string }>) {
+          expect(o.label.length).toBeLessThanOrEqual(30);
+          expect((o.description ?? '').length).toBeLessThanOrEqual(40);
+        }
+        if (c.placeholder) expect(String(c.placeholder).length).toBeLessThanOrEqual(40);
+      }
+      expect(red).toBeLessThanOrEqual(1);
+      // In each row: at most one blurple button, and never green beside red.
+      for (const r of nodes(card).filter((n) => n.type === 1)) {
+        const styles = (r.components ?? []).map((c) => c.style);
+        expect(styles.filter((x) => x === ButtonStyle.Primary).length).toBeLessThanOrEqual(1);
+        expect(styles.includes(ButtonStyle.Success) && styles.includes(ButtonStyle.Danger)).toBe(false);
+      }
+    },
+  );
+
+  it('the overview shows every setting, so a server’s set-up reads at a glance', () => {
+    const { ctx, guilds } = context();
+    const s = guilds.updateSettings(GUILD, {
+      allowedTextChannelIds: ['700000000000000011'],
+      djRoleIds: ['223456789012345678'],
+      memberControlMode: 'any',
+      defaultStationId: 'demo:demo-chic',
+      preferredVoiceChannelId: '700000000000000001',
+      voiceLock: true,
+      qualityMode: 'balanced',
+      idleMode: 'pause_when_empty',
+      autostart: true,
+      notificationChannelId: '700000000000000002',
+      voiceChannelStatus: false,
+      panelChannelId: '700000000000000003',
+    });
+    const text = textOf(settingsCard(ctx, GUILD, s, 'home'));
+    for (const line of [
+      'Commands work in: <#700000000000000011>',
+      'Radio plays in: every voice channel',
+      'DJ roles: <@&223456789012345678>',
+      'Listeners can control it: from anywhere',
+      'Default station: Demo Chic',
+      'Preferred voice channel: <#700000000000000001> (locked)',
+      'Autostart: on · Resume after a restart: off',
+      'Quality: Balanced (up to 128 kbps)',
+      'When everyone leaves: pause, and play again when someone joins',
+      'Problem notices: <#700000000000000002>',
+      'Voice channel status: off',
+      'Posted in <#700000000000000003>',
+    ])
+      expect(text).toContain(line);
+    // Set up: nothing is missing, so no checklist, and Set up is no longer the recommended step.
+    expect(text).not.toMatch(/Getting started/);
   });
 
-  it('puts the three playback switches in one menu, ticked when on', () => {
+  it('points a new server at Set up, and says what is still missing', () => {
+    const { ctx, ids, guilds } = context();
+    const fresh = settingsCard(ctx, GUILD, guilds.getSettings(GUILD), 'home');
+    expect(textOf(fresh)).toContain('**Getting started:** ⬜ Voice channel · ⬜ Default station');
+    expect(byArg(ids, fresh, 'go:setup1')).toMatchObject({ label: 'Set up', style: ButtonStyle.Primary });
+    const half = settingsCard(
+      ctx,
+      GUILD,
+      guilds.updateSettings(GUILD, { preferredVoiceChannelId: '700000000000000001' }),
+      'home',
+    );
+    expect(textOf(half)).toContain('✅ Voice channel · ⬜ Default station');
+  });
+
+  it('says when autostart or channel lock is on but can’t work yet, and greys them out until they can', () => {
     const { ctx, ids, guilds } = context();
     const s = guilds.updateSettings(GUILD, { autostart: true, voiceLock: true });
-    const comps = checkComponents(configView(ctx, GUILD, s, 'playback'));
-    const menu = comps.find(
-      (c) => (ids.parse(GUILD, String(c.custom_id)) as { arg?: string })?.arg === 'switches',
-    )!;
-    expect(menu).toMatchObject({ min_values: 0, max_values: 3 });
-    const options = menu.options as { value: string; default?: boolean }[];
-    expect(options.map((o) => [o.value, Boolean(o.default)])).toEqual([
-      ['autostart', true],
-      ['resume', false],
-      ['lock', true],
-    ]);
-    // No row of switch buttons any more: they didn't fit a phone's width.
-    expect(comps.filter((c) => c.type === 2).map((c) => c.label)).toEqual(['Access', 'Playback', 'Notices']);
+    expect(textOf(settingsCard(ctx, GUILD, s, 'home'))).toContain(
+      '⚠️ Autostart does nothing yet: it needs a default station and a preferred voice channel.',
+    );
+    expect(textOf(settingsCard(ctx, GUILD, s, 'home'))).toContain(
+      '⚠️ Channel lock does nothing yet: it needs a preferred voice channel.',
+    );
+    // On, so they can still be switched off.
+    const on = settingsCard(ctx, GUILD, s, 'playing');
+    expect(byArg(ids, on, 'autostart:playing')).toMatchObject({ label: 'On', disabled: false });
+    const off = settingsCard(
+      ctx,
+      GUILD,
+      guilds.updateSettings(GUILD, { autostart: false, voiceLock: false }),
+      'playing',
+    );
+    expect(byArg(ids, off, 'autostart:playing')).toMatchObject({ label: 'Off', disabled: true });
+    expect(byArg(ids, off, 'lock:playing')).toMatchObject({ label: 'Off', disabled: true });
+    expect(textOf(off)).toContain('-# Needs a default station and a preferred voice channel first.');
+    const ready = settingsCard(
+      ctx,
+      GUILD,
+      guilds.updateSettings(GUILD, {
+        defaultStationId: 'demo:demo-chic',
+        preferredVoiceChannelId: '700000000000000001',
+      }),
+      'playing',
+    );
+    expect(byArg(ids, ready, 'autostart:playing')).toMatchObject({ disabled: false });
+    expect(textOf(ready)).not.toMatch(/Needs/);
   });
 
-  it('marks the current choices in the access and playback selects', () => {
+  it('says when the default station is no longer available', () => {
     const { ctx, guilds } = context();
-    const s = guilds.updateSettings(GUILD, { idleMode: '24x7', memberControlMode: 'any' });
-    const chosen = (page: 'access' | 'playback') =>
-      checkComponents(configView(ctx, GUILD, s, page))
-        .flatMap((c) => (Array.isArray(c.options) ? c.options : []))
-        .filter((o: { default?: boolean }) => o.default)
-        .map((o: { value: string }) => o.value);
-    expect(chosen('access')).toEqual(['any']);
-    expect(chosen('playback')).toEqual(['24x7', 'maximum']);
+    const s = guilds.updateSettings(GUILD, { defaultStationId: 'gone:station' });
+    expect(textOf(settingsCard(ctx, GUILD, s, 'home'))).toContain(
+      'Default station: a station that is no longer available',
+    );
+  });
+
+  it('marks the installation’s defaults and the current choices in the menus', () => {
+    const { ctx, ids, guilds } = context();
+    const s = guilds.updateSettings(GUILD, {
+      idleMode: '24x7',
+      memberControlMode: 'any',
+      qualityMode: 'balanced',
+    });
+    const sound = settingsCard(ctx, GUILD, s, 'sound');
+    const quality = byArg(ids, sound, 'quality:sound')!.options as Array<{
+      value: string;
+      description: string;
+      default: boolean;
+    }>;
+    expect(quality.find((o) => o.value === 'maximum')!.description).toBe(
+      'Follow the station’s bitrate (default)',
+    );
+    expect(quality.filter((o) => o.default).map((o) => o.value)).toEqual(['balanced']);
+    const idle = byArg(ids, sound, 'idle:sound')!.options as Array<{ value: string; description: string }>;
+    expect(idle.find((o) => o.value === 'leave_when_empty')!.description).toMatch(/\(default\)$/);
+    const access = settingsCard(ctx, GUILD, s, 'access');
+    const member = byArg(ids, access, 'member:access')!.options as Array<{ value: string; default: boolean }>;
+    expect(member.filter((o) => o.default).map((o) => o.value)).toEqual(['any']);
+  });
+
+  it('shows the manual bitrate only with Manual quality, and the cap that applies', () => {
+    const { ctx, ids, guilds } = context();
+    const max = ctx.config.maxOpusBitrateKbps;
+    expect(
+      byArg(ids, settingsCard(ctx, GUILD, guilds.getSettings(GUILD), 'sound'), 'bitrate:sound'),
+    ).toBeUndefined();
+    const unset = settingsCard(ctx, GUILD, guilds.updateSettings(GUILD, { qualityMode: 'manual' }), 'sound');
+    expect(byArg(ids, unset, 'bitrate:sound')).toMatchObject({ label: 'Set' });
+    expect(textOf(unset)).toContain('Not set yet, so Manual follows the station.');
+    expect(qualityText(guilds.updateSettings(GUILD, { manualBitrateKbps: max + 10 }), max)).toBe(
+      `Manual (${max + 10} kbps, capped at ${max})`,
+    );
+  });
+
+  it('setup offers Skip until a question is answered, then Next', () => {
+    const { ctx, ids, guilds } = context();
+    const step1 = settingsCard(ctx, GUILD, guilds.getSettings(GUILD), 'setup1');
+    expect(byArg(ids, step1, 'go:setup2')).toMatchObject({ label: 'Skip', style: ButtonStyle.Secondary });
+    expect(byArg(ids, step1, 'go:home')).toMatchObject({ label: 'Back' });
+    const answered = guilds.updateSettings(GUILD, { preferredVoiceChannelId: '700000000000000001' });
+    expect(byArg(ids, settingsCard(ctx, GUILD, answered, 'setup1'), 'go:setup2')).toMatchObject({
+      label: 'Next',
+      style: ButtonStyle.Primary,
+    });
+    // No station yet: choosing one is the recommended step.
+    const step2 = settingsCard(ctx, GUILD, answered, 'setup2');
+    expect(byArg(ids, step2, 'station:setup2')).toMatchObject({
+      label: 'Choose a station',
+      style: ButtonStyle.Primary,
+    });
+    expect(textOf(settingsCard(ctx, GUILD, answered, 'setup4'))).toContain('Step 4 of 4');
+  });
+
+  it('the reset confirmation says what everything goes back to, and what stays', () => {
+    const { ctx, ids, guilds } = context();
+    const card = settingsCard(ctx, GUILD, guilds.updateSettings(GUILD, { qualityMode: 'balanced' }), 'reset');
+    const text = textOf(card);
+    expect(text).toContain('- Sound: Maximum (follows each station’s bitrate, up to');
+    expect(text).toContain('when everyone leaves: leave the channel');
+    expect(text).toContain('resume after a restart off');
+    expect(text).toContain(
+      'Favourites, source choices, custom stations and the control panel stay as they are.',
+    );
+    expect(byArg(ids, card, 'reset:home')).toMatchObject({
+      label: 'Reset everything',
+      style: ButtonStyle.Danger,
+    });
+  });
+
+  it('offers Remove only when there is a control panel', () => {
+    const { ctx, ids, guilds } = context();
+    expect(
+      byArg(ids, settingsCard(ctx, GUILD, guilds.getSettings(GUILD), 'panel'), 'go:unpanel'),
+    ).toBeUndefined();
+    const none = settingsCard(ctx, GUILD, guilds.getSettings(GUILD), 'unpanel');
+    expect(byArg(ids, none, 'unpanel:panel')).toBeUndefined();
+    expect(textOf(none)).toContain('There is no control panel to remove.');
+    const posted = guilds.updateSettings(GUILD, { panelChannelId: '700000000000000003' });
+    expect(byArg(ids, settingsCard(ctx, GUILD, posted, 'panel'), 'go:unpanel')).toMatchObject({
+      style: ButtonStyle.Danger,
+    });
+  });
+
+  it('builds forms within Discord’s limits', () => {
+    const { ctx, ids, stations } = context();
+    const all = stations.listStations(GUILD);
+    const station = stationModal(ctx, GUILD, 'setup2', all, all[0]!.id, () => 'favourite').toJSON();
+    expect(station.title.length).toBeLessThanOrEqual(45);
+    expect(station.components.length).toBeLessThanOrEqual(5);
+    expect(ids.parse(GUILD, station.custom_id)).toMatchObject({ action: 'cfgm', arg: 'station:setup2' });
+    const labels = station.components as unknown as Array<{
+      label: string;
+      description: string;
+      component: { options?: Array<{ value: string; default?: boolean }> };
+    }>;
+    for (const l of labels) {
+      expect(l.label.length).toBeLessThanOrEqual(45);
+      expect(l.description.length).toBeLessThanOrEqual(100);
+    }
+    const options = labels[0]!.component.options!;
+    expect(options.length).toBeLessThanOrEqual(25);
+    expect(options[0]).toMatchObject({ value: NO_DEFAULT_STATION, default: false });
+    expect(options.find((o) => o.value === all[0]!.id)!.default).toBe(true);
+    const bitrate = bitrateModal(ctx, GUILD, 'sound', null).toJSON();
+    expect(ids.parse(GUILD, bitrate.custom_id)).toMatchObject({ action: 'cfgm', arg: 'bitrate:sound' });
+    expect(JSON.stringify(bitrate)).not.toContain('"value"');
+  });
+
+  it('resets to what a new server gets', () => {
+    const { guilds } = context();
+    const fresh = guilds.getSettings('323456789012345678');
+    const defaults = guilds.defaultSettings();
+    for (const [key, value] of Object.entries(defaults))
+      expect(fresh[key as keyof typeof fresh], key).toEqual(value);
+  });
+
+  it('knows its screens', () => {
+    expect(isSettingsScreen('home')).toBe(true);
+    expect(isSettingsScreen('setup5')).toBe(true);
+    expect(isSettingsScreen('nowhere')).toBe(false);
+    expect(isSettingsScreen(undefined)).toBe(false);
   });
 });
 

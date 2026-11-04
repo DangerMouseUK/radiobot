@@ -338,7 +338,7 @@ One top-level `/radio` command, registered per server.
 | `/radio packs installed` | Admin (changes: Admin who is also an Operator) | Every loaded pack with version, origin, updates, skipped packs and notices; a menu opens a pack's card with Update and Remove; the operator also gets **Check all sources again** |
 | `/radio packs library [search] [country]` | Admin (installing: Admin who is also an Operator) | The official pack library, filtered; a menu opens a pack's card with Install |
 | `/radio packs sync [pack]` | Admin | Reconcile packs with their official station lists (formerly `/radio sync`) |
-| `/radio config [default_station] [manual_bitrate]` | Admin | Interactive settings panel |
+| `/radio config` | Admin | Settings card: an overview of every server setting with a Change button per group, one page per group, forms for the default station and the manual bitrate, a four-step Set up for a new server, Reset everything (with a confirmation), and posting, moving or removing the control panel |
 | `/radio export` / `/radio import <file>` | Admin | Settings as JSON; import shows a preview first |
 | `/radio panel [channel]` | Admin | Post a persistent control panel |
 | `/radio source pin\|prefer\|auto` | Admin | Per-server source overrides |

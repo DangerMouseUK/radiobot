@@ -201,7 +201,7 @@ In your Discord server:
 Useful next steps:
 
 - `/radio help` lists the commands.
-- **Server owners and administrators** can run `/radio config` to choose which channels the bot can be used in, which roles count as DJs (DJs can always control the radio), what happens when everyone leaves the channel, and the audio quality. `/radio panel` posts a control panel whose buttons work for everyone allowed to control playback.
+- **Server owners and administrators** can run `/radio config`. It shows every setting for your server, and only you see it. Press **Set up** and answer four short questions: which voice channel the radio should use, which station it plays by default, what happens when everyone leaves the channel, and where it reports problems. Each group of settings has a **Change** button for the rest: which channels the bot can be used in, which roles count as DJs (DJs can always control the radio), the audio quality, and the control panel. `/radio panel` posts a control panel whose buttons work for everyone allowed to control playback.
 - Press **Favourite** under a playing station to add it to this server's favourites. Favourites come first when you type `/radio play`, and **Unfavourite** removes one.
 - The [README's command list](../README.md#commands) explains every command and who can use it.
 - While it plays, the bot's status in the member list says what it's playing, such as "Listening to My Station · Artist - Title". To show only the station, or nothing, change `PRESENCE_MODE` to `station` or `off` (see [Changing settings](#changing-settings)).
@@ -373,7 +373,7 @@ On a metered connection or a slow upload:
 2. Change the `MAX_OPUS_BITRATE_KBPS=510` line to `MAX_OPUS_BITRATE_KBPS=192` (or `128`).
 3. Save, close, and let it restart.
 
-You can also limit a single Discord server to 128 kbps: in `/radio config`, open **Playback** and choose **Balanced** in the **Audio quality** menu. That only saves anything on stations above 128 kbps.
+You can also limit a single Discord server to 128 kbps: in `/radio config`, press **Change** beside **Sound and empty channel** and choose **Balanced** in the **Audio quality** menu. That only saves anything on stations above 128 kbps.
 
 ## If something goes wrong
 
