@@ -45,6 +45,7 @@ import {
   type View,
 } from '../../src/discord/ui/views.ts';
 import { Metrics } from '../../src/observability/metrics.ts';
+import type { GuildSettings } from '../../src/persistence/repositories/guilds.ts';
 import type { ProbeOutcome } from '../../src/streams/probe.ts';
 import { selectSource } from '../../src/streams/ranking.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
@@ -605,17 +606,18 @@ describe('settings card', () => {
     });
     const text = textOf(settingsCard(ctx, GUILD, s, 'home'));
     for (const line of [
-      'Commands work in: <#700000000000000011>',
-      'Radio plays in: every voice channel',
+      'Commands: <#700000000000000011>',
+      'Plays in: every voice channel',
       'DJ roles: <@&223456789012345678>',
-      'Listeners can control it: from anywhere',
+      'Listener control: anywhere',
       'Default station: Demo Chic',
-      'Preferred voice channel: <#700000000000000001> (locked)',
-      'Autostart: on · Resume after a restart: off',
+      'Voice channel: <#700000000000000001> (locked)',
+      'Autostart: on',
+      'Resume on restart: off',
       'Quality: Balanced (up to 128 kbps)',
-      'When everyone leaves: pause, and play again when someone joins',
+      'When empty: pause',
       'Problem notices: <#700000000000000002>',
-      'Voice channel status: off',
+      'Channel status: off',
       'Posted in <#700000000000000003>',
     ])
       expect(text).toContain(line);
@@ -637,14 +639,37 @@ describe('settings card', () => {
     expect(textOf(half)).toContain('✅ Voice channel · ⬜ Default station');
   });
 
+  it('keeps the overview’s lines short enough for a phone', () => {
+    const { ctx, guilds } = context();
+    const max = ctx.config.maxOpusBitrateKbps;
+    // Beside a Change button, a phone has room for about 20 characters a line; keep each line to
+    // two at most. Mentions and station names are left out: Discord draws those, not the bot.
+    const lines = (s: GuildSettings) =>
+      nodes(settingsCard(ctx, GUILD, s, 'home'))
+        .filter((n) => n.type === 9)
+        .flatMap((n) => (n.components ?? []).flatMap((c) => String(c.content).split('\n')))
+        .filter((l) => !/<[#@]|^Default station:/.test(l));
+    for (const s of [
+      guilds.getSettings(GUILD),
+      guilds.updateSettings(GUILD, { qualityMode: 'manual', idleMode: '24x7', memberControlMode: 'none' }),
+      guilds.updateSettings(GUILD, { qualityMode: 'balanced', idleMode: 'pause_when_empty' }),
+    ])
+      for (const line of lines(s)) expect(line.replace(/\*\*/g, '').length, line).toBeLessThanOrEqual(36);
+    // The overview gives the bitrate that applies; the Sound page explains the cap.
+    const capped = guilds.updateSettings(GUILD, { qualityMode: 'manual', manualBitrateKbps: max + 10 });
+    expect(textOf(settingsCard(ctx, GUILD, capped, 'home'))).toContain(`Quality: Manual (${max} kbps)`);
+    const unset = guilds.updateSettings(GUILD, { manualBitrateKbps: null });
+    expect(textOf(settingsCard(ctx, GUILD, unset, 'home'))).toContain('Quality: Manual (not set yet)');
+  });
+
   it('says when autostart or channel lock is on but can’t work yet, and greys them out until they can', () => {
     const { ctx, ids, guilds } = context();
     const s = guilds.updateSettings(GUILD, { autostart: true, voiceLock: true });
     expect(textOf(settingsCard(ctx, GUILD, s, 'home'))).toContain(
-      '⚠️ Autostart does nothing yet: it needs a default station and a preferred voice channel.',
+      '⚠️ Autostart needs a default station and a preferred voice channel first.',
     );
     expect(textOf(settingsCard(ctx, GUILD, s, 'home'))).toContain(
-      '⚠️ Channel lock does nothing yet: it needs a preferred voice channel.',
+      '⚠️ Channel lock needs a preferred voice channel first.',
     );
     // On, so they can still be switched off.
     const on = settingsCard(ctx, GUILD, s, 'playing');

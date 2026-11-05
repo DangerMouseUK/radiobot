@@ -81,22 +81,38 @@ const IDLE_TEXT: Record<GuildSettings['idleMode'], string> = {
   '24x7': 'keep playing (24/7)',
 };
 
-const LISTENER_TEXT: Record<MemberControlMode, string> = {
-  same_channel: 'from the bot’s voice channel',
-  any: 'from anywhere',
-  none: 'no, only DJs and admins',
+// The overview's words are short: on a phone the Change button beside each group leaves room for
+// about 20 characters a line. Each group's own page says the same things in full.
+const LISTENER_SHORT: Record<MemberControlMode, string> = {
+  same_channel: 'bot’s channel',
+  any: 'anywhere',
+  none: 'off',
+};
+
+const IDLE_SHORT: Record<GuildSettings['idleMode'], string> = {
+  leave_when_empty: 'leave',
+  pause_when_empty: 'pause',
+  '24x7': 'keep playing (24/7)',
 };
 
 const onOff = (on: boolean) => (on ? 'on' : 'off');
 
-/** Up to six mentions, then "and 3 more", so a long list can't crowd the card. */
+/** Up to three mentions, then "and 3 more", so a long list can't crowd the overview. */
 function mentions(ids: readonly string[], kind: '#' | '@&', none: string): string {
   if (ids.length === 0) return none;
   const shown = ids
-    .slice(0, 6)
+    .slice(0, 3)
     .map((x) => `<${kind}${x}>`)
     .join(', ');
-  return ids.length > 6 ? `${shown} and ${ids.length - 6} more` : shown;
+  return ids.length > 3 ? `${shown} and ${ids.length - 3} more` : shown;
+}
+
+/** The quality in a few words, for the overview: "Maximum (up to 510 kbps)". */
+function qualityShort(s: GuildSettings, maxKbps: number): string {
+  if (s.qualityMode === 'maximum') return `Maximum (up to ${maxKbps} kbps)`;
+  if (s.qualityMode === 'balanced') return 'Balanced (up to 128 kbps)';
+  if (s.manualBitrateKbps === null) return 'Manual (not set yet)';
+  return `Manual (${Math.min(s.manualBitrateKbps, maxKbps)} kbps)`;
 }
 
 /** "Maximum (follows each station’s bitrate, up to 510 kbps)": quality in words, with the cap applied. */
@@ -205,7 +221,7 @@ export function settingsCard(
         text(
           [
             '## Radio Bot settings',
-            'Changes save as soon as you make them, and apply to everyone on this server.',
+            'Changes save straight away and apply to the whole server.',
             ...(setupDue
               ? [
                   `**Getting started:** ${s.preferredVoiceChannelId ? '✅' : '⬜'} Voice channel · ${station ? '✅' : '⬜'} Default station`,
@@ -218,20 +234,21 @@ export function settingsCard(
       const playing = [
         '**Playing**',
         `Default station: ${stationName}`,
-        `Preferred voice channel: ${voice}${s.voiceLock && s.preferredVoiceChannelId ? ' (locked)' : ''}`,
-        `Autostart: ${onOff(s.autostart)} · Resume after a restart: ${onOff(s.resumeOnRestart)}`,
+        `Voice channel: ${voice}${s.voiceLock && s.preferredVoiceChannelId ? ' (locked)' : ''}`,
+        `Autostart: ${onOff(s.autostart)}`,
+        `Resume on restart: ${onOff(s.resumeOnRestart)}`,
       ];
-      if (s.autostart && needs) playing.push(`⚠️ Autostart does nothing yet: it needs ${needs}.`);
+      if (s.autostart && needs) playing.push(`⚠️ Autostart needs ${needs} first.`);
       if (s.voiceLock && !s.preferredVoiceChannelId)
-        playing.push('⚠️ Channel lock does nothing yet: it needs a preferred voice channel.');
+        playing.push('⚠️ Channel lock needs a preferred voice channel first.');
       const groups: Array<[string, SettingsScreen]> = [
         [
           [
             '**Who can use it**',
-            `Commands work in: ${mentions(s.allowedTextChannelIds, '#', 'every channel')}`,
-            `Radio plays in: ${mentions(s.allowedVoiceChannelIds, '#', 'every voice channel')}`,
+            `Commands: ${mentions(s.allowedTextChannelIds, '#', 'every channel')}`,
+            `Plays in: ${mentions(s.allowedVoiceChannelIds, '#', 'every voice channel')}`,
             `DJ roles: ${mentions(s.djRoleIds, '@&', 'none')}`,
-            `Listeners can control it: ${LISTENER_TEXT[s.memberControlMode]}`,
+            `Listener control: ${LISTENER_SHORT[s.memberControlMode]}`,
           ].join('\n'),
           'access',
         ],
@@ -239,8 +256,8 @@ export function settingsCard(
         [
           [
             '**Sound and empty channel**',
-            `Quality: ${qualityText(s, max)}`,
-            `When everyone leaves: ${IDLE_TEXT[s.idleMode]}`,
+            `Quality: ${qualityShort(s, max)}`,
+            `When empty: ${IDLE_SHORT[s.idleMode]}`,
           ].join('\n'),
           'sound',
         ],
@@ -248,7 +265,7 @@ export function settingsCard(
           [
             '**Notices**',
             `Problem notices: ${s.notificationChannelId ? `<#${s.notificationChannelId}>` : 'off'}`,
-            `Voice channel status: ${onOff(s.voiceChannelStatus)}`,
+            `Channel status: ${onOff(s.voiceChannelStatus)}`,
           ].join('\n'),
           'notices',
         ],

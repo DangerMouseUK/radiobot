@@ -806,7 +806,7 @@ describe('settings with long channel and role lists', () => {
     });
     const view = await t.command(t.people.owner, { sub: 'config' });
     expect(view.violations).toEqual([]);
-    expect(view.text).toMatch(/Commands work in: .* and 44 more/);
+    expect(view.text).toMatch(/Commands: .* and 47 more/);
     expect(view.text.length).toBeLessThan(2000);
     // The menus preselect what fits in them: Discord's 25.
     const access = await t.click(t.people.owner, t.ids.make(GUILD, 'cfg', 'go:access'));
