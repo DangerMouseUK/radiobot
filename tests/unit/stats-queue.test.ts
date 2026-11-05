@@ -46,7 +46,7 @@ describe('latency summaries', () => {
 
 describe('region hints from host names', () => {
   it.each([
-    ['n04-eu1.rcs.revma.com', 'Europe'],
+    ['n04-eu1.stream.example.net', 'Europe'],
     ['c-lhr05-1a2b3c.discord.media:443', 'London'],
     ['c-iad07-abcd.discord.media', 'Ashburn (US East)'],
     ['edge-us-east-1.example.net', 'US East'],

@@ -65,7 +65,7 @@ Each person has one level in each server (worked out by `accessLevel()`):
 | Level | Who |
 |---|---|
 | **admin** | The server owner, or anyone with Discord's **Administrator** permission. **Manage Server alone does not count**, and there is no admin-role setting. To let someone run the bot, give their role Administrator. To let them control playback only, make it a DJ role. |
-| **dj** | Anyone with a role that an admin has set as a *DJ role* in `/radio config` → Access |
+| **dj** | Anyone with a role that an admin has set as a *DJ role* in `/radio config` → Who can use it |
 | **member** | Everyone else (called *listeners* on this page) |
 
 Separately, the bot **operator** is the person running the bot: a Discord user listed in `OPERATOR_USER_IDS`, or the owner of the bot's Discord application (or a member of its team). Only operators can do things that affect every server the bot is in:
@@ -92,7 +92,7 @@ Each command, button and menu needs one of three kinds of access (*capabilities*
 | Play or switch, stop, join, leave, next and previous, favourite and unfavourite, skip, queue add, remove and clear, choose another source | Depends on the listener control mode (below) | Yes | Yes |
 | Add, edit or remove a custom station | No | No | Yes |
 | Check or compare sources again, sync station packs, pin, prefer or auto source | No | No | Yes |
-| Change channels, DJ roles, idle mode, quality, autostart, notices and the voice channel status; post the panel | No | No | Yes |
+| Open the settings card (`/radio config`) and change anything on it: channels, DJ roles, the default station, idle mode, quality, autostart, notices, the voice channel status; **Set up**; **Reset…**; post, move or remove the control panel | No | No | Yes |
 | Import or export settings; `/radio stats` (private live statistics) | No | No | Yes |
 | See the station packs (`/radio packs installed`, `/radio packs library`) | No | No | Yes |
 | Record an identity verdict (`source verify`) for a **custom** station of this server | No | No | Yes |
@@ -102,7 +102,7 @@ Each command, button and menu needs one of three kinds of access (*capabilities*
 
 ### Listener control mode
 
-The **Who else can control the radio** menu in `/radio config` → Access decides what listeners (not DJs or admins) may do with *control* actions:
+The **Listeners** menu in `/radio config` → Who can use it decides what listeners (not DJs or admins) may do with *control* actions:
 
 | Mode | Shown as | Listeners can control playback… |
 |---|---|---|
@@ -114,9 +114,9 @@ The **Who else can control the radio** menu in `/radio config` → Access decide
 
 All three settings are in `/radio config`. An empty list means "no restriction".
 
-- **Command channels** (Access): when the list isn't empty, commands and clicks from **listeners and DJs** are refused outside those channels, with a private message naming the allowed channels. The text chat inside an *approved voice channel* also counts as an allowed command channel. **Admins are never restricted by this list**, so an admin can't lock themselves out.
-- **Approved voice channels** (Access): when the list isn't empty, the bot joins only those channels. This applies to everyone, admins included, because it is checked when the bot connects. If someone moves the bot into a channel that isn't approved, it leaves and posts a notice in the notice channel, if one is set.
-- **Preferred voice channel and lock** (Playback): with **Channel lock** on, playback always goes to the preferred channel. `/radio play` and `/radio join` refuse a `channel` option that names any other channel, and without one they go to the preferred channel. If someone moves the bot away from the preferred channel, it leaves in the same way.
+- **Command channels** (Who can use it): when the list isn't empty, commands and clicks from **listeners and DJs** are refused outside those channels, with a private message naming the allowed channels. The text chat inside an *approved voice channel* also counts as an allowed command channel. **Admins are never restricted by this list**, so an admin can't lock themselves out.
+- **Approved voice channels** (Who can use it): when the list isn't empty, the bot joins only those channels. This applies to everyone, admins included, because it is checked when the bot connects. If someone moves the bot into a channel that isn't approved, it leaves and posts a notice in the notice channel, if one is set.
+- **Preferred voice channel and lock** (Playing): **Channel lock** can only be switched on once a preferred voice channel is set. With it on, playback always goes to the preferred channel. `/radio play` and `/radio join` refuse a `channel` option that names any other channel, and without one they go to the preferred channel. If someone moves the bot away from the preferred channel, it leaves in the same way.
 
 ### Voice channel choice
 
@@ -135,7 +135,7 @@ The capability check runs against that channel. So DJs and admins can name any c
 A button posted in a public channel must not let anyone get round the rules above. This is how the bot makes sure:
 
 1. **Every click is authorised again,** using the clicking user's current roles, channel and voice channel, exactly as the matching slash command would be. A Stop button in a public panel still needs *control*. A settings menu still needs *admin*.
-2. **Signed button IDs.** Every button and menu, and the form behind Browse's **Search** button, carries a hidden ID of the form `rb2:<action>:<argument>:<expiry>:<signature>`.
+2. **Signed button IDs.** Every button and menu, and every form (Browse's **Search**, and the settings card's default station and manual bitrate), carries a hidden ID of the form `rb2:<action>:<argument>:<expiry>:<signature>`.
    - The signature is an HMAC-SHA256 (a keyed checksum), cut to 16 characters. It covers the server ID and the rest of the ID, and uses a secret that each installation generates once and stores in its database. It is checked in constant time, so the time a check takes gives nothing away.
    - A forged ID, or an ID copied from another server, fails the check with "This button or menu is not valid here." (for a form: "This form is not valid here.").
    - **The signature is not permission.** It only proves that this installation made the ID for this server. Step 1 still applies.
@@ -145,9 +145,9 @@ A button posted in a public channel must not let anyone get round the rules abov
    - Now-playing card buttons (from `/radio play`, `/radio now`, `/radio join` and the buttons that play a station) expire after an hour. The bot keeps nothing for a card, so this costs nothing.
    - Sources views, "which station?" menus, the **Play now** button after `/radio add`, `/radio list` pages and the menus and buttons of `/radio packs` expire after 15 minutes. (While **Check all sources again** runs, each update of its reply comes with fresh buttons, so **Stop the check** keeps working there; after that, open `/radio packs installed` again for a new one.)
    - A browse list stays open for 15 minutes after it was last used.
-   - Settings pages and the `/radio stats` panel expire after 30 minutes.
+   - The settings card (its buttons, menus and forms) and the `/radio stats` panel expire after 30 minutes.
    - Import previews expire after 10 minutes.
-   - Expired controls answer "These buttons have expired. Run the command again." (an expired browse list says to run `/radio browse` again). Browse's search box is a form with a signed, expiring ID too; an expired one answers "This form has expired. Run the command again."
+   - Expired controls answer "These buttons have expired. Run the command again." (an expired browse list says to run `/radio browse` again). Browse's search box and the settings card's forms have signed, expiring IDs too; an expired one answers "This form has expired. Run the command again."
    - Control-panel buttons never expire, so the panel keeps working across restarts. They are still authorised on every click.
 4. **State kept by the bot.** Browse lists and import previews are referred to by a random token. The list or preview itself stays inside the bot. An import can be applied only by an admin of the same server, only before its preview expires, and only once. Each server has at most one import preview: a new `/radio import` replaces the previous one, whose buttons then say it has expired.
 5. **Suggestions are authorised too.** The station, pack and category suggestions shown while someone types an option need *read*, so nothing is suggested outside the allowed command channels; suggestions for `/radio source …` need *admin*, like the commands.

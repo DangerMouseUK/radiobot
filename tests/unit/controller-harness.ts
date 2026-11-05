@@ -208,6 +208,8 @@ export class FakeTextChannel {
   readonly lacks = new Set<bigint>();
   /** An error code to throw from messages.edit (10008 = unknown message). */
   editError: number | null = null;
+  /** An error code to throw from messages.delete (10008 = unknown message, 50013 = missing access). */
+  deleteError: number | null = null;
   readonly id: string;
   readonly messages = {
     edit: async (id: string, view: unknown) => {
@@ -215,6 +217,8 @@ export class FakeTextChannel {
       this.edits.push({ id, view });
     },
     delete: async (id: string) => {
+      if (this.deleteError !== null)
+        throw Object.assign(new Error('delete failed'), { code: this.deleteError });
       this.deleted.push(id);
     },
   };
@@ -272,13 +276,23 @@ export class FakeInteraction {
   readonly member: unknown;
   readonly memberPermissions: { has(p: bigint): boolean };
   readonly guild: FakeGuild;
-  readonly message: { id: string };
+  /** The message a button or form belongs to; `card`: sent in Discord's newer layout (Components V2). */
+  readonly message: { id: string; flags: { has(flag: number): boolean } } | null;
   readonly type = 2;
   readonly channelId: string;
 
-  constructor(actor: Actor, guild: FakeGuild, channelId: string = TEXT, messageId = 'message-1') {
+  constructor(
+    actor: Actor,
+    guild: FakeGuild,
+    channelId: string = TEXT,
+    messageId: string | null = 'message-1',
+    card = true,
+  ) {
     this.channelId = channelId;
-    this.message = { id: messageId };
+    this.message =
+      messageId === null
+        ? null
+        : { id: messageId, flags: { has: (f: number) => card && f === MessageFlags.IsComponentsV2 } };
     this.user = { id: actor.id, bot: false };
     this.member = actor.roles ? memberWithRoles(actor.roles) : {};
     this.memberPermissions = { has: (p) => Boolean(actor.admin) && p === PermissionFlagsBits.Administrator };
@@ -353,21 +367,34 @@ export class FakeInteraction {
   /** Was the first acknowledgement private? */
   get ephemeral(): boolean {
     const first = this.calls[0]?.payload.flags;
-    return first === MessageFlags.Ephemeral;
+    // A card is sent with two flags: private, and the newer layout.
+    return Array.isArray(first) ? first.includes(MessageFlags.Ephemeral) : first === MessageFlags.Ephemeral;
   }
-  /** Titles, descriptions and fields of every embed sent, as one string. */
+  /** Titles, descriptions and fields of every embed sent, and the text of every card, as one string. */
   get text(): string {
     return this.calls
       .flatMap((c) => [
         String(c.payload.content ?? ''),
         ...(c.payload.embeds ?? []).map((e) => embedText(e.toJSON())),
+        ...cardTexts(c.payload),
       ])
       .join('\n');
   }
-  /** The text of the last payload that had embeds. */
+  /** The text of the last payload that had embeds or was a card. */
   get lastText(): string {
-    const last = [...this.calls].reverse().find((c) => (c.payload.embeds ?? []).length > 0);
-    return (last?.payload.embeds ?? []).map((e) => embedText(e.toJSON())).join('\n');
+    const last = [...this.calls]
+      .reverse()
+      .find((c) => (c.payload.embeds ?? []).length > 0 || cardTexts(c.payload).length > 0);
+    if (!last) return '';
+    return [
+      ...(last.payload.embeds ?? []).map((e) => embedText(e.toJSON())),
+      ...cardTexts(last.payload),
+    ].join('\n');
+  }
+  /** Every button and menu of the last card sent (Components V2), however deeply it is nested. */
+  get cardControls(): CardControl[] {
+    const last = [...this.calls].reverse().find((c) => cardTexts(c.payload).length > 0);
+    return last ? cardControls(last.payload) : [];
   }
   /** The rows of the last payload that had components, as Discord receives them (style, label…). */
   get componentRows(): Array<Array<{ custom_id?: string; style?: number; label?: string; type: number }>> {
@@ -392,6 +419,54 @@ export class FakeInteraction {
       ),
     );
   }
+}
+
+/** A button or menu on a card, as Discord receives it. */
+export interface CardControl {
+  type: number;
+  custom_id?: string;
+  style?: number;
+  label?: string;
+  disabled?: boolean;
+  placeholder?: string;
+  options?: Array<{ value: string; label: string; description?: string; default?: boolean }>;
+}
+
+/** A payload's components as Discord receives them. */
+function componentJson(p: Payload): unknown[] {
+  return (p.components ?? []).map((c) =>
+    typeof (c as { toJSON?: unknown }).toJSON === 'function' ? (c as { toJSON(): unknown }).toJSON() : c,
+  );
+}
+
+/** Calls `visit` on every component of a payload, nested ones included. */
+function walk(nodes: unknown[], visit: (n: Record<string, unknown>) => void): void {
+  for (const n of nodes) {
+    if (!n || typeof n !== 'object') continue;
+    const node = n as Record<string, unknown>;
+    visit(node);
+    if (Array.isArray(node.components)) walk(node.components, visit);
+    if (node.accessory) walk([node.accessory], visit);
+  }
+}
+
+/** The text displays of a card (Components V2), in order; none for an embed message. */
+export function cardTexts(p: Payload): string[] {
+  const out: string[] = [];
+  walk(componentJson(p), (n) => {
+    if (n.type === 10 && typeof n.content === 'string') out.push(n.content);
+  });
+  return out;
+}
+
+/** Every button (type 2) and menu (3, 5–8) of a card. */
+export function cardControls(p: Payload): CardControl[] {
+  const out: CardControl[] = [];
+  walk(componentJson(p), (n) => {
+    if (n.type === 2 || n.type === 3 || (typeof n.type === 'number' && n.type >= 5 && n.type <= 8))
+      out.push(n as unknown as CardControl);
+  });
+  return out;
 }
 
 /** Title, description, fields and footer of an embed, as one string. */
@@ -455,8 +530,9 @@ export class FakeComponent extends FakeInteraction {
     kind: ComponentKind = 'button',
     values: string[] = [],
     messageId?: string,
+    card = true,
   ) {
-    super(actor, guild, TEXT, messageId);
+    super(actor, guild, TEXT, messageId, card);
     this.customId = customId;
     this.kind = kind;
     this.values = values;
@@ -481,10 +557,13 @@ export class FakeComponent extends FakeInteraction {
   }
 }
 
-/** A submitted form (modal), with what was typed into each text box. */
+/** A submitted form (modal), with what was typed into each text box and chosen in each menu. */
 export class FakeModal extends FakeInteraction {
   readonly customId: string;
-  readonly fields: { getTextInputValue(id: string): string };
+  readonly fields: {
+    getTextInputValue(id: string): string;
+    getStringSelectValues(id: string): readonly string[];
+  };
   readonly #fromMessage: boolean;
   constructor(
     actor: Actor,
@@ -492,14 +571,20 @@ export class FakeModal extends FakeInteraction {
     customId: string,
     values: Record<string, string>,
     fromMessage = true,
+    selects: Record<string, string[]> = {},
   ) {
-    super(actor, guild);
+    super(actor, guild, TEXT, fromMessage ? 'message-1' : null);
     this.customId = customId;
     this.#fromMessage = fromMessage;
     this.fields = {
       getTextInputValue: (id: string) => {
         const v = values[id];
         if (v === undefined) throw new Error(`no text box ${id}`);
+        return v;
+      },
+      getStringSelectValues: (id: string) => {
+        const v = selects[id];
+        if (v === undefined) throw new Error(`no menu ${id}`);
         return v;
       },
     };
@@ -859,9 +944,15 @@ export function setup(opts: SetupOptions = {}) {
       kind: ComponentKind = 'button',
       values: string[] = [],
       messageId?: string,
-    ) => run(new FakeComponent(actor, guild, customId, kind, values, messageId)),
-    submit: (actor: Actor, customId: string, values: Record<string, string>, fromMessage = true) =>
-      run(new FakeModal(actor, guild, customId, values, fromMessage)),
+      card = true,
+    ) => run(new FakeComponent(actor, guild, customId, kind, values, messageId, card)),
+    submit: (
+      actor: Actor,
+      customId: string,
+      values: Record<string, string>,
+      fromMessage = true,
+      selects: Record<string, string[]> = {},
+    ) => run(new FakeModal(actor, guild, customId, values, fromMessage, selects)),
     run,
   };
 }

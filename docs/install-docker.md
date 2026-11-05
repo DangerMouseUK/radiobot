@@ -126,14 +126,13 @@ The bot starts with no stations. Add station packs first, either with `packs.js`
 
 As a bot admin (the server owner, or a member with Discord's **Administrator** permission; Manage Server alone is not enough):
 
-1. Run **`/radio config`**. Only you see its replies.
-   - **Access page:** command channels, approved voice channels, *DJ roles*, and who else can play or stop (listeners in the same channel by default, only DJs and admins, or anyone). Leaving a list empty means no restriction. There is no admin-role setting.
-   - **Playback page:**
-     - idle mode (*Leave* is the default, *Pause*, or *Keep playing (24/7)*);
-     - quality mode (*Maximum*, *Balanced* or *Manual*);
-     - the preferred voice channel, and one menu for the *Autostart*, *Resume after restart* and *Channel lock* switches (a ticked switch is on).
-   - **Notices page:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and the *Voice channel status* switch, which shows what's playing as the voice channel's status (on by default; needs the optional Set Voice Channel Status permission).
-   - Set a default station with `/radio config default_station:` and a manual Opus target with `/radio config manual_bitrate:`.
+1. Run **`/radio config`**. Only you see its replies. It opens on an overview of every setting; press **Set up** for the main ones in four steps, or **Change** beside a group:
+   - **Who can use it:** command channels, approved voice channels, *DJ roles*, and who else can play or stop (listeners in the same channel by default, only DJs and admins, or anyone). Leaving a list empty means no restriction. There is no admin-role setting.
+   - **Playing:** the default station (**Change** opens a form: pick one from the menu or type a name), the preferred voice channel, and the *Autostart*, *Channel lock* and *Resume after a restart* switches (green is on). Autostart needs a default station and a preferred voice channel, and Channel lock a preferred voice channel; until then they are greyed out.
+   - **Sound and empty channel:** quality (*Maximum*, *Balanced* or *Manual*; Manual asks for its bitrate in kbps) and what happens when everyone leaves (*Leave* is the default, *Pause*, or *Keep playing (24/7)*).
+   - **Notices:** a channel for recovery and error notices (optional; needs Send Messages in that channel), and the *Voice channel status* switch, which shows what's playing as the voice channel's status (on by default; needs the optional Set Voice Channel Status permission).
+   - **Control panel:** posts, moves or removes the panel described in step 4.
+   - **Reset…** puts every setting back to its default after asking you to confirm.
 2. Join a voice channel and run **`/radio play`**, then start typing a station's name and pick it from the list, or use **`/radio browse`**.
 3. Run **`/radio quality`** to see the source, the Discord output and the processing report.
 4. Optionally, post a persistent control panel with **`/radio panel channel:#radio`**.
@@ -284,6 +283,30 @@ On start-up, pending database migrations are applied automatically:
 **From 1.1.0 or earlier:** those versions included a station pack in the image. Newer images include none, so on its first start the new version reinstalls, from the official pack library and before anything plays, every pack its database has stations from but no longer has. Favourites, queues and preferences keep working. This needs outbound HTTPS to `github.com`; if the library can't be reached, the bot logs a warning and tries again at its daily check. `packs.js list` (or `radio-bot packs`) shows what is installed.
 
 Read [CHANGELOG.md](../CHANGELOG.md) before upgrading.
+
+### Trying an unreleased branch
+
+To test a change before it is released (a pull request's branch, say), give `radio-bot update` the branch's name instead of a version:
+
+```sh
+radio-bot update my-branch
+```
+
+It goes through the same steps as an update: the warning if the bot is playing, the backup, the saved logs, the restart. No image is published for a branch, so step 4 always builds one on this machine. That takes a few minutes and about 1 GB of disk, and the build needs a fair amount of memory, so on a small server do it at a quiet moment. Running the same command again picks up anything pushed to the branch since. A branch that was rewritten (force-pushed) can't be followed: the update stops before restarting anything, and says so.
+
+For a new install, the installer takes a branch name in `RADIO_BOT_VERSION`, as it does a release (only when the install folder doesn't exist yet):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DangerMouseUK/radiobot/main/install.sh | RADIO_BOT_VERSION=my-branch bash
+```
+
+Things to know while you are on a branch:
+
+- **Test with a separate Discord application and a private server** if you can. A branch is unreleased work and may have bugs.
+- **The image is named after the release in that branch's `compose.yaml`** (for example `radio-bot:1.2.4`), although it was built from the branch. `radio-bot status` shows the branch's name as the version, and says the newest release "is available", because you aren't on it.
+- **Commands are registered again when the bot starts,** so a branch that changes `/radio` shows its version in Discord. If a Discord app still shows the old options, restart that app.
+
+To go back, run `radio-bot update` on its own, which switches to the newest release and downloads its published image, or name a release (`radio-bot update v1.2.4`). If the branch added a database migration, the release refuses to open the newer database: put back the `radio-bot-pre-v<N>-…` backup taken just before the migration ran (see [Backups](#backups)). The [CHANGELOG](../CHANGELOG.md)'s *Unreleased* section, or the pull request, says whether a branch adds one.
 
 ## Backups
 

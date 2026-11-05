@@ -338,6 +338,22 @@ describe('main-thread budget while a stream plays', () => {
         await time('suggest: one letter', async () => {
           expect(await suggest(t, 'play', 'station', 's')).toHaveLength(25);
         });
+        // The settings card, its default-station form (a menu built from the catalogue) and a typed
+        // station name, which is matched against every station.
+        await time('settings card', () => t.command(t.people.admin, { sub: 'config' }));
+        await time('settings: station form', () =>
+          t.click(t.people.admin, t.ids.make(t.guild.id, 'cfg', 'station:playing')),
+        );
+        await time('settings: typed station', async () => {
+          const i = await t.submit(
+            t.people.admin,
+            t.ids.make(t.guild.id, 'cfgm', 'station:playing'),
+            { name: 'synthetic 19' },
+            true,
+            { pick: [] },
+          );
+          expect(i.violations).toEqual([]);
+        });
         // Every source of every bundled station ranked in one stretch, with no break in between.
         await time('ranking', () => {
           for (const st of bundled) selectSource(t.ctx.sources.sourcesFor(st.id), null);

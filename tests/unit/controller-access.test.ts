@@ -223,13 +223,6 @@ describe('suggestions while typing', () => {
     expect(hits[0]!.value).toBe(st.id);
   });
 
-  it('for the default station: offers to clear it only when what is typed fits', async () => {
-    const { t } = customServer();
-    expect((await suggest(t, 'config', 'default_station', 'no'))[0]!.value).toBe('none');
-    const named = await suggest(t, 'config', 'default_station', 'my');
-    expect(named.map((c) => c.value)).not.toContain('none');
-  });
-
   it('a failure while suggesting is recorded, and nothing is sent', async () => {
     const t = setup();
     const i = {
