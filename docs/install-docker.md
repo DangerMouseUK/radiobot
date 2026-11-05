@@ -284,6 +284,30 @@ On start-up, pending database migrations are applied automatically:
 
 Read [CHANGELOG.md](../CHANGELOG.md) before upgrading.
 
+### Trying an unreleased branch
+
+To test a change before it is released (a pull request's branch, say), give `radio-bot update` the branch's name instead of a version:
+
+```sh
+radio-bot update my-branch
+```
+
+It goes through the same steps as an update: the warning if the bot is playing, the backup, the saved logs, the restart. No image is published for a branch, so step 4 always builds one on this machine. That takes a few minutes and about 1 GB of disk, and the build needs a fair amount of memory, so on a small server do it at a quiet moment. Running the same command again picks up anything pushed to the branch since. A branch that was rewritten (force-pushed) can't be followed: the update stops before restarting anything, and says so.
+
+For a new install, the installer takes a branch name in `RADIO_BOT_VERSION`, as it does a release (only when the install folder doesn't exist yet):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DangerMouseUK/radiobot/main/install.sh | RADIO_BOT_VERSION=my-branch bash
+```
+
+Things to know while you are on a branch:
+
+- **Test with a separate Discord application and a private server** if you can. A branch is unreleased work and may have bugs.
+- **The image is named after the release in that branch's `compose.yaml`** (for example `radio-bot:1.2.4`), although it was built from the branch. `radio-bot status` shows the branch's name as the version, and says the newest release "is available", because you aren't on it.
+- **Commands are registered again when the bot starts,** so a branch that changes `/radio` shows its version in Discord. If a Discord app still shows the old options, restart that app.
+
+To go back, run `radio-bot update` on its own, which switches to the newest release and downloads its published image, or name a release (`radio-bot update v1.2.4`). If the branch added a database migration, the release refuses to open the newer database: put back the `radio-bot-pre-v<N>-…` backup taken just before the migration ran (see [Backups](#backups)). The [CHANGELOG](../CHANGELOG.md)'s *Unreleased* section, or the pull request, says whether a branch adds one.
+
 ## Backups
 
 Take a consistent backup while the bot is running:
