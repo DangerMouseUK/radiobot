@@ -9,6 +9,7 @@ import {
   type DiscordGatewayAdapterCreator,
   entersState,
   joinVoiceChannel,
+  NetworkingStatusCode,
   NoSubscriberBehavior,
   type PlayerSubscription,
   StreamType,
@@ -31,6 +32,10 @@ export interface VoiceLinkEvents {
   reconnected: [];
   /** The voice WebSocket, UDP socket or DAVE session reported an error; recovery is automatic. */
   connectionError: [error: Error];
+  /** The voice connection stopped being ready (a resume, a reconnect or a move). */
+  interrupted: [info: VoiceInterruption];
+  /** The voice connection is ready again after an interruption. */
+  restored: [info: VoiceRestore];
   /**
    * The connection or the player changed state. Only for observers that mirror the link (the
    * voice worker pushes a fresh snapshot to the main thread); nothing listens in main-thread mode.
@@ -38,10 +43,30 @@ export interface VoiceLinkEvents {
   changed: [];
 }
 
+export interface VoiceInterruption {
+  /** The connection's new status (`connecting`, `signalling`, `disconnected` …). */
+  status: string;
+  /** The library is resuming the same voice session (same UDP socket, keys and DAVE state). */
+  resuming: boolean;
+  /** The voice WebSocket's close code, when the interruption began with one. */
+  closeCode: number | null;
+  /** Playback was held in place rather than read on and dropped (it was playing). */
+  held: boolean;
+}
+
+export interface VoiceRestore {
+  /** How long the connection was not ready, ms. */
+  afterMs: number;
+  /** Audio held in place, to play on from where it stopped (none of it skipped), ms. */
+  heldMs: number;
+  /** Audio read and dropped while the connection was not ready, ms (0 when nothing was playing). */
+  skippedMs: number;
+}
+
 export interface VoiceLinkStats {
   /** Round trip of the voice WebSocket heartbeat, ms. */
   wsPingMs: number | null;
-  /** Discord voice server endpoint host (e.g. "c-lhr05-….discord.media"). */
+  /** Discord voice server endpoint host (e.g. "c-abc01-….discord.media"). */
   endpoint: string | null;
   /** Opus packets sent to Discord on this connection. */
   packetsPlayed: number | null;
@@ -88,6 +113,17 @@ export interface VoiceJoinTarget {
  * reported as STREAM_STALLED by the watchdog rather than ending the resource as STREAM_EOF.
  */
 export const MAX_MISSED_FRAMES = 1250;
+
+/**
+ * How long the player holds its place while the voice connection is not ready. The library sends
+ * nothing then (not even during a voice WebSocket resume, usually a fraction of a second), and a player
+ * left playing reads the station's audio and drops it, so every resume skipped a little music.
+ * Holding plays on from where it stopped instead. Past this limit the player goes back to reading
+ * and dropping, so a long outage can't leave playback far behind live, or back the encoder up
+ * until the watchdog takes it for a stall. Each hold adds at most this much delay, which the
+ * session's live-lag check bounds like any other drift.
+ */
+export const VOICE_HOLD_MS = 1_000;
 
 /**
  * Connections that already have a fallback 'error' listener. An EventEmitter 'error' with no
@@ -151,6 +187,12 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
   #reconnecting = false;
   #destroyed = false;
   readonly #timing = new PacketTiming();
+  /** The interruption in progress: since when, and whether the player was paused to hold its place. */
+  #outage: { since: number; held: boolean } | null = null;
+  #holdTimer: NodeJS.Timeout | null = null;
+  /** The close code of the voice WebSocket that closed last, read when the interruption begins. */
+  #closeCode: number | null = null;
+  readonly #watchedSockets = new WeakSet<object>();
 
   private constructor(connection: VoiceConnection, channelId: string) {
     super();
@@ -182,8 +224,18 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       }
     });
 
-    this.#onConnectionState = (_old, state) => {
-      if (state.status !== VoiceConnectionStatus.Ready) this.#timing.pause();
+    this.#watchSocket(connection.state);
+    this.#onConnectionState = (old, state) => {
+      this.#watchSocket(state);
+      const ready = state.status === VoiceConnectionStatus.Ready;
+      if (!ready) this.#timing.pause();
+      if (
+        old.status === VoiceConnectionStatus.Ready &&
+        !ready &&
+        state.status !== VoiceConnectionStatus.Destroyed
+      ) {
+        this.#interrupted(state);
+      } else if (ready && this.#outage) this.#restored();
       this.emit('changed');
       if (state.status === VoiceConnectionStatus.Disconnected) void this.#reconnect(state);
       else if (state.status === VoiceConnectionStatus.Destroyed) this.#markLost('destroyed');
@@ -203,6 +255,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     if (this.#destroyed) return;
     this.#destroyed = true;
     this.#expectingAudio = false;
+    this.#endHold();
     try {
       this.player.stop(true);
     } catch {
@@ -293,6 +346,66 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     this.destroy();
   }
 
+  /**
+   * Notes the close code of each voice WebSocket the connection uses. The listener goes first, so
+   * the code is known before the library reacts to the close (and moves the connection on).
+   */
+  #watchSocket(state: VoiceConnectionState): void {
+    const net = 'networking' in state ? state.networking?.state : undefined;
+    const ws = net && 'ws' in net ? (net.ws as unknown) : undefined;
+    if (!(ws instanceof EventEmitter) || this.#watchedSockets.has(ws)) return;
+    this.#watchedSockets.add(ws);
+    ws.prependOnceListener('close', (event: { code?: unknown } | undefined) => {
+      this.#closeCode = typeof event?.code === 'number' ? event.code : null;
+    });
+  }
+
+  /**
+   * The connection stopped being ready. While it isn't, the library sends nothing, so a playing
+   * player is paused to hold its place (for up to VOICE_HOLD_MS) instead of reading on.
+   */
+  #interrupted(state: VoiceConnectionState): void {
+    const net = 'networking' in state ? state.networking?.state : undefined;
+    const resuming = net?.code === NetworkingStatusCode.Resuming;
+    const closeCode = this.#closeCode;
+    this.#closeCode = null;
+    this.#endHold();
+    const held = this.player.pause(false);
+    this.#outage = { since: Date.now(), held };
+    if (held) {
+      this.#holdTimer = setTimeout(() => {
+        this.#holdTimer = null;
+        // Too long to hold: play on without the connection, as before, to stay at the live edge.
+        this.#unpause();
+      }, VOICE_HOLD_MS);
+      this.#holdTimer.unref?.();
+    }
+    this.emit('interrupted', { status: state.status, resuming, closeCode, held });
+  }
+
+  /** Ready again: a held player plays on from the frame after the last one sent. */
+  #restored(): void {
+    const outage = this.#outage!;
+    this.#outage = null;
+    this.#closeCode = null;
+    const afterMs = Math.max(0, Date.now() - outage.since);
+    this.#endHold();
+    this.#unpause();
+    const heldMs = outage.held ? Math.min(afterMs, VOICE_HOLD_MS) : 0;
+    const skippedMs = outage.held ? afterMs - heldMs : 0;
+    this.emit('restored', { afterMs, heldMs, skippedMs });
+  }
+
+  /** Unpauses only a pause of the link's own: nothing else pauses this player. */
+  #unpause(): void {
+    if (this.player.state.status === AudioPlayerStatus.Paused) this.player.unpause();
+  }
+
+  #endHold(): void {
+    if (this.#holdTimer) clearTimeout(this.#holdTimer);
+    this.#holdTimer = null;
+  }
+
   #markLost(reason: 'kicked' | 'destroyed' | 'reconnect_failed'): void {
     if (this.listenerCount('lost') === 0) return;
     this.#expectingAudio = false;
@@ -377,6 +490,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     if (this.#destroyed) return;
     this.#destroyed = true;
     this.#expectingAudio = false;
+    this.#endHold();
     try {
       this.player.stop(true);
     } catch {

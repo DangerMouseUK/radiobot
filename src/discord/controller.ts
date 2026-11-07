@@ -1482,7 +1482,7 @@ export class RadioController {
     // After a Stop the session still remembers the station, so ask whether it was really playing.
     const desired = current ? this.#ctx.guilds.getIntent(i.guildId)?.desiredState : null;
     const wasPlaying = desired === 'playing' || desired === 'paused_empty';
-    if (current) session!.stop();
+    if (current) session!.stop('station_removed');
     const ok = this.#ctx.custom.remove(i.guildId, st.id);
     const settings = this.#ctx.guilds.getSettings(i.guildId);
     const wasDefault = settings.defaultStationId === st.id;

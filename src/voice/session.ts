@@ -57,6 +57,17 @@ export type SessionNoticeKind =
   | 'idle-left'
   | 'info';
 
+/** Why playback stopped, for the log: a listener's Stop, or its station going away. */
+export type StopReason = 'command' | 'station_removed' | 'pack_removed';
+
+/** Why the bot left its voice channel, for the log. */
+export type LeaveReason =
+  | 'command'
+  | 'channel_empty'
+  | 'idle_after_stop'
+  | 'channel_deleted'
+  | 'moved_disallowed';
+
 export interface SessionNotice {
   guildId: string;
   kind: SessionNoticeKind;
@@ -497,7 +508,8 @@ export class GuildSession {
   }
 
   /** Explicit stop: authoritative, suppresses auto-resume (PRD §9.1). Keeps the voice link briefly. */
-  stop(): void {
+  stop(reason: StopReason = 'command'): void {
+    this.#log.info({ reason, state: this.#state, stationId: this.#stationId }, 'stopping playback');
     this.#commands++;
     this.#gen++;
     this.#persist('stopped');
@@ -510,7 +522,11 @@ export class GuildSession {
   }
 
   /** Explicit leave: disconnect and cancel auto-rejoin until the next explicit play. */
-  leave(desired: DesiredState = 'left'): void {
+  leave(desired: DesiredState = 'left', reason: LeaveReason = 'command'): void {
+    this.#log.info(
+      { reason, desired, state: this.#state, channelId: this.#link?.channelId ?? this.#channelId },
+      'leaving the voice channel',
+    );
     this.#commands++;
     this.#gen++;
     const gen = this.#gen;
@@ -571,9 +587,8 @@ export class GuildSession {
     if (idleMode === 'leave_when_empty') {
       this.#emptyTimer = setTimeout(() => {
         this.#emptyTimer = null;
-        this.#log.info('voice channel empty; leaving');
         // An explicit stop stays authoritative, so autostart doesn't fire on the next boot.
-        this.leave(this.#desired() === 'stopped' ? 'stopped' : 'idle');
+        this.leave(this.#desired() === 'stopped' ? 'stopped' : 'idle', 'channel_empty');
         this.#d.notify({
           guildId: this.guildId,
           kind: 'idle-left',
@@ -703,6 +718,15 @@ export class GuildSession {
       this.#packetSamples = [];
     });
     link.on('connectionError', (err) => this.#log.warn({ err: safeErr(err) }, 'voice connection error'));
+    // Rare, and each one a brief gap in the audio, so worth seeing at info level.
+    link.on('interrupted', (info) => {
+      this.#d.metrics.inc('voice.interrupted');
+      this.#log.info(
+        info,
+        info.resuming ? 'voice connection resuming' : 'voice connection interrupted; reconnecting',
+      );
+    });
+    link.on('restored', (info) => this.#log.info(info, 'voice connection ready again'));
     link.on('audioEnded', (err) => {
       if (link !== this.#link) return;
       const code: ReasonCode = err ? 'FFMPEG_EXIT' : 'STREAM_EOF';
@@ -1314,8 +1338,7 @@ export class GuildSession {
       this.#idleTimer = null;
       if (gen !== this.#gen || isAudioActive(this.#state)) return;
       const desired = this.#desired();
-      this.#log.info('idle after stop; leaving voice channel');
-      this.leave(desired === 'stopped' ? 'stopped' : 'idle');
+      this.leave(desired === 'stopped' ? 'stopped' : 'idle', 'idle_after_stop');
     }, this.#t.stoppedIdleLeaveMs);
   }
 

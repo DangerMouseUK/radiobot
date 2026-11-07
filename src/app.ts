@@ -174,7 +174,7 @@ export function createApp(
     onGone: (packId) => {
       for (const s of sessions.all()) {
         const id = s.status().stationId;
-        if (id && stations.getStation(id)?.provider === packId) s.stop();
+        if (id && stations.getStation(id)?.provider === packId) s.stop('pack_removed');
       }
     },
   });

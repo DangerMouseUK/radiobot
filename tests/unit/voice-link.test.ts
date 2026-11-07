@@ -55,7 +55,17 @@ vi.mock('@discordjs/voice', async (importOriginal) => {
     createAudioPlayer: (options: unknown) => {
       voice.playerOptions = options;
       return Object.assign(new Emitter(), {
-        state: { status: 'idle' },
+        state: { status: 'idle' } as { status: string },
+        pause(this: { state: { status: string } }) {
+          if (this.state.status !== 'playing') return false;
+          this.state = { status: 'paused' };
+          return true;
+        },
+        unpause(this: { state: { status: string } }) {
+          if (this.state.status !== 'paused') return false;
+          this.state = { status: 'playing' };
+          return true;
+        },
         stop() {
           voice.stops++;
           if (voice.stopThrows) throw new Error('player already gone');
@@ -70,8 +80,15 @@ vi.mock('@discordjs/voice', async (importOriginal) => {
 // The reconnect loop waits between attempts; tests don't need the real delays.
 vi.mock('../../src/shared/async.ts', () => ({ delay: () => Promise.resolve() }));
 
-const { DiscordVoiceLink, MAX_MISSED_FRAMES, discordVoiceLinkFactory, guardConnection, timePackets } =
-  await import('../../src/voice/link.ts');
+const {
+  DiscordVoiceLink,
+  MAX_MISSED_FRAMES,
+  VOICE_HOLD_MS,
+  discordVoiceLinkFactory,
+  guardConnection,
+  timePackets,
+} = await import('../../src/voice/link.ts');
+const { NetworkingStatusCode } = await import('@discordjs/voice');
 const { DEFAULT_TIMINGS } = await import('../../src/voice/session.ts');
 
 const adapterCreator = () => ({}) as never;
@@ -365,6 +382,92 @@ describe('DiscordVoiceLink: losing the connection', () => {
     link.destroy();
     link.destroy();
     expect(lost).toEqual(['destroyed']);
+  });
+});
+
+describe('DiscordVoiceLink: brief interruptions', () => {
+  type PlayerLike = { state: { status: string } };
+  const playing = (link: { player: unknown }) => {
+    (link.player as PlayerLike).state = { status: 'playing' };
+  };
+  const status = (link: { player: unknown }) => (link.player as PlayerLike).state.status;
+  /** The networking state of a voice WebSocket resume, with the socket that replaced the closed one. */
+  const resuming = () => ({
+    status: 'connecting',
+    networking: { state: { code: NetworkingStatusCode.Resuming, ws: new EventEmitter() } },
+  });
+
+  it('holds its place while the voice WebSocket resumes, then plays on with nothing skipped', async () => {
+    vi.useFakeTimers();
+    const { connection, link } = await connect();
+    const ws = new EventEmitter();
+    connection.setState({ status: 'ready', networking: { state: { code: NetworkingStatusCode.Ready, ws } } });
+    playing(link);
+    const interrupted: unknown[] = [];
+    const restored: unknown[] = [];
+    link.on('interrupted', (info) => interrupted.push(info));
+    link.on('restored', (info) => restored.push(info));
+    // The library hears the close first and moves the connection on from inside it.
+    ws.once('close', () => connection.setState(resuming()));
+    ws.emit('close', { code: 1006 });
+    expect(status(link)).toBe('paused');
+    expect(interrupted).toEqual([{ status: 'connecting', resuming: true, closeCode: 1006, held: true }]);
+    await vi.advanceTimersByTimeAsync(120);
+    connection.setState({ status: 'ready', networking: { state: { code: NetworkingStatusCode.Ready } } });
+    expect(status(link)).toBe('playing');
+    expect(restored).toEqual([{ afterMs: 120, heldMs: 120, skippedMs: 0 }]);
+    // The hold's own timer is gone: nothing unpauses the player later.
+    (link.player as PlayerLike).state = { status: 'paused' };
+    await vi.advanceTimersByTimeAsync(VOICE_HOLD_MS * 2);
+    expect(status(link)).toBe('paused');
+  });
+
+  it('stops holding after a second, so a long outage cannot leave playback far behind live', async () => {
+    vi.useFakeTimers();
+    const { connection, link } = await connect();
+    playing(link);
+    const restored: unknown[] = [];
+    link.on('restored', (info) => restored.push(info));
+    connection.setState({ status: 'connecting' });
+    expect(status(link)).toBe('paused');
+    await vi.advanceTimersByTimeAsync(VOICE_HOLD_MS - 1);
+    expect(status(link)).toBe('paused');
+    await vi.advanceTimersByTimeAsync(1);
+    // Playing again without the connection: it reads on and drops, as the library always did.
+    expect(status(link)).toBe('playing');
+    await vi.advanceTimersByTimeAsync(3_000);
+    connection.setState({ status: 'ready' });
+    expect(restored).toEqual([{ afterMs: VOICE_HOLD_MS + 3_000, heldMs: VOICE_HOLD_MS, skippedMs: 3_000 }]);
+  });
+
+  it('holds nothing when nothing is playing, and says why the connection went', async () => {
+    const { connection, link } = await connect();
+    const interrupted: unknown[] = [];
+    const restored: Array<{ heldMs: number; skippedMs: number }> = [];
+    link.on('interrupted', (info) => interrupted.push(info));
+    link.on('restored', (info) => restored.push(info));
+    connection.setState({ status: 'signalling' });
+    expect(status(link)).toBe('idle');
+    // Still not ready: one interruption, not one per state.
+    connection.setState({ status: 'connecting' });
+    connection.setState({ status: 'ready' });
+    expect(interrupted).toEqual([{ status: 'signalling', resuming: false, closeCode: null, held: false }]);
+    expect(restored).toMatchObject([{ heldMs: 0, skippedMs: 0 }]);
+    // Destroyed is not an interruption: the link is lost.
+    connection.setState({ status: 'destroyed' });
+    expect(interrupted).toHaveLength(1);
+  });
+
+  it('lets go of a hold when it is detached or destroyed', async () => {
+    vi.useFakeTimers();
+    for (const end of ['detach', 'destroy'] as const) {
+      const { connection, link } = await connect();
+      playing(link);
+      connection.setState({ status: 'connecting' });
+      expect(status(link)).toBe('paused');
+      link[end]();
+      expect(vi.getTimerCount()).toBe(0);
+    }
   });
 });
 

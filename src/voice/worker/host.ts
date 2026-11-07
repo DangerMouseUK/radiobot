@@ -204,6 +204,8 @@ export class VoiceHost {
     link.on('connectionError', (err) =>
       this.#post({ t: 'connectionError', linkId, error: serializeError(err) }),
     );
+    link.on('interrupted', (info) => this.#post({ t: 'interrupted', linkId, info }));
+    link.on('restored', (info) => this.#post({ t: 'restored', linkId, info }));
     link.on('changed', () => this.#queueSnapshot(entry));
     this.#post({ t: 'joined', linkId, snapshot: this.#snapshot(entry) });
   }

@@ -448,6 +448,7 @@ Each server has at most one authoritative pipeline. A process registry owns ever
 - Same-source retries at about 1, 3 and 8 s (±25 % jitter), then failover.
 - A source playing stably for 30 s resets its failure streak.
 - Voice reconnects at about 2, 5, 10, 30 and 60 s, then a visible error, then every 2 minutes while playback is wanted.
+- While the voice connection is briefly not ready (for example while Discord's voice WebSocket resumes), playback holds its place for up to 1 s, so no audio is skipped; after that it plays on to stay at the live edge.
 - With no eligible source, retry after 15, 30 and 60 s, then every 2 minutes while playback is wanted.
 - After `/radio stop`, leave the channel after 5 minutes unless the idle mode is 24/7.
 

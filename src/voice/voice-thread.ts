@@ -440,6 +440,8 @@ export class VoiceThread {
       case 'audioEnded':
       case 'reconnected':
       case 'connectionError':
+      case 'interrupted':
+      case 'restored':
       case 'flow':
         gen.links.get(msg.linkId)?.receive(msg);
         return;
@@ -523,7 +525,7 @@ export class VoiceThread {
 
 type LinkMessage = Extract<
   FromWorker,
-  { t: 'lost' | 'audioEnded' | 'reconnected' | 'connectionError' | 'flow' }
+  { t: 'lost' | 'audioEnded' | 'reconnected' | 'connectionError' | 'interrupted' | 'restored' | 'flow' }
 >;
 
 const noop = () => {};
@@ -651,6 +653,12 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
         return;
       case 'connectionError':
         this.emit('connectionError', deserializeError(msg.error));
+        return;
+      case 'interrupted':
+        this.emit('interrupted', msg.info);
+        return;
+      case 'restored':
+        this.emit('restored', msg.info);
         return;
       case 'flow':
         if (this.#hook?.streamId !== msg.streamId) return;

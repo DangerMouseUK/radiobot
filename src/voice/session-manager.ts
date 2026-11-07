@@ -162,7 +162,7 @@ export class SessionManager {
       if (!('guildId' in ch) || !ch.guildId) return;
       const s = this.#sessions.get(ch.guildId);
       if (s && s.channelId === ch.id) {
-        s.leave('idle');
+        s.leave('idle', 'channel_deleted');
         this.#d.notify({
           guildId: ch.guildId,
           kind: 'error',
@@ -201,8 +201,7 @@ export class SessionManager {
         settings.preferredVoiceChannelId &&
         settings.preferredVoiceChannelId !== channelId)
     ) {
-      this.#log.info({ guildId: guild.id, channelId }, 'moved to a disallowed channel; leaving');
-      session.leave('idle');
+      session.leave('idle', 'moved_disallowed');
       this.#d.notify({
         guildId: guild.id,
         kind: 'error',
