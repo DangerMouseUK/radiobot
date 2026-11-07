@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Scheduled background work (a catalogue sync, the daily pack check) waiting for a stream to settle could, now and then, lose its turn to work queued after it, when the system timer fired a moment before the clock said the wait was over. It now keeps its order. A test of this used to fail on busy CI machines, and stopped the 1.3.0 release from publishing until it was run again.
+
 ## [1.3.0] - 2026-11-07
 
 A new settings card for `/radio config`, and live means live: streams start about 1 s behind live instead of about 4 s, never fall further behind, and stay live through Discord voice resumes.
