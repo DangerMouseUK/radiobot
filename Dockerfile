@@ -20,7 +20,10 @@ RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
 
 FROM node:24.22.2-trixie-slim AS base
 # Debian's FFmpeg includes libopus (required) and is LGPL/GPL-licensed; see docs/rights-and-disclaimer.md.
+# `upgrade` applies Debian's security fixes to the base image's own packages (zlib, for example),
+# which can come out before a new base image does; the image scan fails on any with a fix available.
 RUN apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*
 

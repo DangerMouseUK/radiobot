@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **No music is skipped while Discord's voice connection resumes.** Every so often Discord closes the bot's voice WebSocket and the bot resumes it, usually within a fraction of a second. Nothing can be sent meanwhile, and the voice player used to read on and throw that audio away, so listeners heard a short jump in the music. The player now holds its place and plays on from where it stopped, so only the short pause remains. It holds for at most 1 s; a longer outage plays on as before, so playback can't fall far behind live.
+- The Docker image now applies Debian's security updates to its base packages when it is built, so a fix such as the recent zlib one is included without waiting for a new Node base image.
 
 ### Added
 
