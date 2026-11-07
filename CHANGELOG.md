@@ -6,9 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-07
+
+Low-bitrate stations keep their stereo and treble, voice works whichever encryption Discord's voice server offers, and every source reaches the encoder as float samples.
+
 ### Fixed
 
 - **Voice works whichever encryption Discord's voice server offers.** Discord's voice servers prefer AES-256-GCM, but the one mode every client must support is XChaCha20-Poly1305, and the bot had no library for it. A voice server that offered only that mode would have made every packet fail, and on the main thread stopped the bot. It now ships `@noble/ciphers` for it, checks both modes at start-up (logged as `voice encryption available`), and the smoke test checks them in the image.
+- The test of background-work order added in 1.3.1 could still fail on a fast machine, when two stream starts landed in the same millisecond. It now moves its own clock, so it no longer depends on the machine's speed. The bot's own code was not affected.
 
 ### Changed
 
@@ -451,7 +456,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.3...v1.2.4
