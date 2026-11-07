@@ -18,6 +18,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { REENCODE_FLOOR_KBPS } from '../../audio/encoder.ts';
 import type { Station } from '../../catalogue/types.ts';
 import type { GuildSettings, MemberControlMode } from '../../persistence/repositories/guilds.ts';
 import { truncate } from '../../shared/text.ts';
@@ -115,9 +116,10 @@ function qualityShort(s: GuildSettings, maxKbps: number): string {
   return `Manual (${Math.min(s.manualBitrateKbps, maxKbps)} kbps)`;
 }
 
-/** "Maximum (follows each station’s bitrate, up to 510 kbps)": quality in words, with the cap applied. */
+/** "Maximum (follows each station’s bitrate, 128–510 kbps)": quality in words, with the cap applied. */
 export function qualityText(s: GuildSettings, maxKbps: number): string {
-  if (s.qualityMode === 'maximum') return `Maximum (follows each station’s bitrate, up to ${maxKbps} kbps)`;
+  if (s.qualityMode === 'maximum')
+    return `Maximum (follows each station’s bitrate, ${Math.min(REENCODE_FLOOR_KBPS, maxKbps)}–${maxKbps} kbps)`;
   if (s.qualityMode === 'balanced') return 'Balanced (up to 128 kbps)';
   if (s.manualBitrateKbps === null) return 'Manual (no bitrate set yet, so it follows the station)';
   return s.manualBitrateKbps > maxKbps
@@ -440,7 +442,7 @@ export function settingsCard(
                 opt(
                   'maximum',
                   'Maximum',
-                  'Follow the station’s bitrate',
+                  'Station’s bitrate, ≥ 128 kbps',
                   s.qualityMode,
                   defaults.qualityMode,
                 ),

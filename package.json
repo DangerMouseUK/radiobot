@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@discordjs/voice": "0.19.2",
+    "@noble/ciphers": "2.4.0",
     "@snazzah/davey": "0.1.12",
     "discord.js": "14.28.0",
     "pino": "10.4.0",

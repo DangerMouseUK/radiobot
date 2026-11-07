@@ -199,6 +199,11 @@ describe('DiscordVoiceLink', () => {
     );
   });
 
+  it("turns off the player's debug output, which builds strings on every state change", async () => {
+    await connect();
+    expect((voice.playerOptions as { debug?: boolean }).debug).toBe(false);
+  });
+
   it('times the packets it sends, ignoring gaps across a pause or a reconnect', async () => {
     const { connection, link } = await connect();
     let t = 0;

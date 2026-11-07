@@ -718,7 +718,7 @@ describe('settings card', () => {
       default: boolean;
     }>;
     expect(quality.find((o) => o.value === 'maximum')!.description).toBe(
-      'Follow the station’s bitrate (default)',
+      'Station’s bitrate, ≥ 128 kbps (default)',
     );
     expect(quality.filter((o) => o.default).map((o) => o.value)).toEqual(['balanced']);
     const idle = byArg(ids, sound, 'idle:sound')!.options as Array<{ value: string; description: string }>;
@@ -765,7 +765,7 @@ describe('settings card', () => {
     const { ctx, ids, guilds } = context();
     const card = settingsCard(ctx, GUILD, guilds.updateSettings(GUILD, { qualityMode: 'balanced' }), 'reset');
     const text = textOf(card);
-    expect(text).toContain('- Sound: Maximum (follows each station’s bitrate, up to');
+    expect(text).toContain('- Sound: Maximum (follows each station’s bitrate, 128–');
     expect(text).toContain('when everyone leaves: leave the channel');
     expect(text).toContain('resume after a restart off');
     expect(text).toContain(

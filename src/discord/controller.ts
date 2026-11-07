@@ -2114,7 +2114,7 @@ export class RadioController {
           name: '🔊 Sound',
           value: lines(
             'Audio reaches Discord as 48 kHz stereo Opus. The bitrate depends on the Quality setting:',
-            `**Maximum** follows the station’s own bitrate (${this.#ctx.config.maxOpusBitrateKbps} kbps at most) · **Balanced** uses at most 128 kbps · **Manual** uses the bitrate an admin sets (${this.#ctx.config.maxOpusBitrateKbps} kbps at most), and follows the station until one is set`,
+            `**Maximum** follows the station’s own bitrate, but never below 128 kbps (96 for mono) (${this.#ctx.config.maxOpusBitrateKbps} kbps at most) · **Balanced** uses at most 128 kbps · **Manual** uses the bitrate an admin sets (${this.#ctx.config.maxOpusBitrateKbps} kbps at most), and follows the station until one is set`,
             '-# A higher bitrate can’t add detail the station’s stream doesn’t contain.',
           ),
         },

@@ -5,6 +5,18 @@ import type { QualityMode } from '../config/env.ts';
 export const OPUS_ENCODER_MAX_KBPS = 510;
 export const OPUS_MIN_KBPS = 32;
 export const BALANCED_CAP_KBPS = 128;
+/**
+ * The least `maximum` sends for a stereo source. Re-encoding is a second lossy generation, and the
+ * last encode's bitrate dominates what is heard. Below about 134 kbps libopus codes the bands above
+ * a bitrate-dependent frequency as one shared signal with only each side's level (intensity stereo,
+ * `intensity_thresholds` in celt/celt_encoder.c): above 3.2 kHz at 48 kbps, 5.6 kHz at 64, 12 kHz
+ * at 96, and only the top band (15.6–20 kHz) at 128. A low-rate source still carries real stereo
+ * well above those points, and HE-AAC's rebuilt treble and parametric stereo arrive as real audio
+ * that Opus must code in full. 128 kbps is also where Opus alone is near-transparent for music.
+ */
+export const REENCODE_FLOOR_KBPS = 128;
+/** The same for a mono source: there is no stereo image to keep, and VBR spends little on the side. */
+export const REENCODE_FLOOR_MONO_KBPS = 96;
 export const OUTPUT_SAMPLE_RATE = 48_000;
 export const OUTPUT_CHANNELS = 2;
 export const FRAME_MS = 20;
@@ -65,10 +77,12 @@ export interface EncoderPlan {
 /**
  * Chooses the Opus target (PRD §8.3). `maximum` follows the source's own bitrate, up to the
  * installation ceiling (libopus allows up to 510 kbps stereo): encoding a 128 kbps stream at
- * 510 kbps only costs bandwidth, since no target can restore what the source lacks. When the
- * source's bitrate is unknown it uses the ceiling. `balanced` uses 128 kbps, or the source's
- * rate when lower; `manual` uses the admin's value exactly. A bot's stream is not limited by
- * the voice channel's bitrate setting, so that setting is reported only.
+ * 510 kbps only costs bandwidth, since no target can restore what the source lacks. Below the
+ * re-encode floor (128 kbps, 96 for mono) it uses the floor instead, so the second encode does
+ * not throw away the stereo image and treble the source still has. When the source's bitrate is
+ * unknown it uses the ceiling. `balanced` uses 128 kbps, or the source's rate when lower; `manual`
+ * uses the admin's value exactly. A bot's stream is not limited by the voice channel's bitrate
+ * setting, so that setting is reported only.
  */
 export function planEncoder(i: EncoderInput): EncoderPlan {
   const channelBitrateKbps = i.channelBitrateBps ? Math.round(i.channelBitrateBps / 1000) : null;
@@ -79,22 +93,29 @@ export function planEncoder(i: EncoderInput): EncoderPlan {
   let target: number;
   const notes: string[] = [];
   const source = i.sourceBitrate ?? null;
+  const floor = i.sourceChannels === 1 ? REENCODE_FLOOR_MONO_KBPS : REENCODE_FLOOR_KBPS;
+  // `maximum`, and `manual` before a value is set: the source's rate, raised to the floor.
+  const followed = source === null ? ceiling : Math.min(ceiling, Math.max(source.kbps, floor));
   switch (i.qualityMode) {
     case 'balanced':
       target = Math.min(ceiling, BALANCED_CAP_KBPS, source?.kbps ?? BALANCED_CAP_KBPS);
       break;
     case 'manual':
-      // Without a manual value yet, manual behaves like maximum.
-      target = Math.min(ceiling, i.manualBitrateKbps ?? source?.kbps ?? ceiling);
+      target = Math.min(ceiling, i.manualBitrateKbps ?? followed);
       break;
     default:
-      target = Math.min(ceiling, source?.kbps ?? ceiling);
+      target = followed;
   }
   // Rounded up, never down, so a fractional source rate (128.1) is never encoded below itself.
   target = Math.max(OPUS_MIN_KBPS, Math.ceil(target));
   if (i.qualityMode !== 'manual' || i.manualBitrateKbps === null) {
     if (source === null) {
       notes.push(`The source's bitrate is unknown, so the encoder uses ${target} kbps.`);
+    } else if (target > Math.ceil(source.kbps)) {
+      const limit = target < floor ? ` (this installation's limit; the usual minimum is ${floor} kbps)` : '';
+      notes.push(
+        `The source is ${source.kbps} kbps (${source.evidence}); the encoder uses ${target} kbps${limit}, the minimum for a re-encode, so Opus keeps the ${i.sourceChannels === 1 ? 'treble' : 'stereo image and treble'} the source has. This adds no detail the source lacks.`,
+      );
     } else if (target === Math.max(OPUS_MIN_KBPS, Math.ceil(source.kbps))) {
       notes.push(`The encoder follows the source's ${source.kbps} kbps (${source.evidence}).`);
     } else if (target < source.kbps) {
@@ -174,6 +195,11 @@ export function buildEncodeArgs(plan: EncoderPlan): string[] {
     String(plan.channels),
     '-ar',
     String(plan.sampleRateHz),
+    // libopus takes 16-bit or float input. FFmpeg picks float when the decoder outputs float (MP3,
+    // AAC, Opus, Vorbis) but 16-bit for 16-bit FLAC or PCM, which it would then resample in integers
+    // and round back without dither, clipping any overshoot. Float keeps every source on one path.
+    '-sample_fmt',
+    'flt',
     '-c:a',
     'libopus',
     '-b:a',
