@@ -49,7 +49,7 @@ Anyone can run their own instance with their own Discord application token. It r
 3. **Evidence over labels.** A source is described only by what was measured. Unknown values are shown as unknown.
 4. **Quality is bounded by the source and by Discord.** Lost detail cannot be restored. HLS is a delivery protocol, not a codec.
 5. **No audio processing by default.** No normalisation, EQ, compression or limiting; only the resampling to 48 kHz that Discord requires.
-6. **Live radio, not file playback.** No recording, no caching of programme audio beyond short in-memory buffers.
+6. **Live radio, not file playback.** No recording, no caching of programme audio beyond short in-memory buffers. Live means live: the delay from the station to the listener is kept as small as possible and never grows during a session (§8.4, NFR-16).
 7. **Simple to operate.** No Redis, PostgreSQL, Kubernetes, reverse proxy or public domain.
 8. **Least privilege.** No Administrator permission, no message content, no privileged intents, no voice reception.
 9. **Per-server isolation.** Each Discord server has its own settings, permissions and playback.
@@ -213,8 +213,8 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 
 ### FR-007 — Discord output (P0)
 
-- FFmpeg decodes the source and encodes **once** with libopus: 48 kHz, stereo, 20 ms frames, VBR, music mode, compression level 10, in Ogg pages of 100 ms.
-- The Ogg Opus stream is handed to `@discordjs/voice` as `StreamType.OggOpus`, which only demuxes it: no second encode, no inline volume.
+- FFmpeg decodes the source and encodes **once** with libopus: 48 kHz, stereo, 20 ms frames, VBR, music mode, compression level 10, in Ogg pages of 20 ms (one packet each).
+- The live queue (§8.4) only demuxes the Ogg Opus stream, and hands its Opus packets to `@discordjs/voice` as `StreamType.Opus`, which sends them as they are: no second encode, no inline volume.
 - Target bitrate:
   - `maximum` (default) = the source's own bitrate (measured, then codec metadata, then manifest or advertised, rounded up to a whole kbps so it is never below the source), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
   - `balanced` = 128 kbps, or the source's bitrate when lower;
@@ -297,7 +297,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - Counters and coalesced incidents attributed to upstream, Discord, bot, operator or user.
 - `/radio status` for everyone. `/radio stats` for Administrators: a private live panel with Refresh and Close buttons. It shows:
   - **the stream**: requested and redirected host with a region hint parsed from the host name (labelled as such), connected IP and port, HLS segment counts and last segment host, codec, live input rate over 10 s and 60 s, and stream-endpoint round trip measured by 5 TCP handshakes to the exact stream IP, with no HTTP request;
-  - **the output**: Opus target, the voice channel's setting (not a cap), the Ogg Opus rate pulled by the voice player, packets per second (about 50) and packets sent to Discord, and late packets (sent more than 40 ms after the one before while playing) with the longest gap, and silence the voice player filled in because no audio was ready;
+  - **the output**: Opus target, the voice channel's setting (not a cap), the Ogg Opus rate read from the encoder, packets per second (about 50) and packets sent to Discord, and late packets (sent more than 40 ms after the one before while playing) with the longest gap, silence the voice player filled in because no audio was ready, and the live delay (§8.4: the live queue's depth and cushion, audio dropped to stay live, network gaps and clock drift);
   - **the Discord connection**: voice endpoint host with region hint and resolved IP, the channel's RTC region, voice WebSocket ping with jitter (`@discordjs/voice` 0.19 no longer measures a UDP round trip), gateway ping, encryption/DAVE mode, failovers, reconnects and encoder PID, and FFmpeg warnings;
   - **bot health**: process, FFmpeg, User-Agent, per-pack coverage, incidents, and the event-loop delay (typical, 99th percentile and worst over the last minute), with the garbage-collection pauses, CPU use, involuntary context switches and (Linux) CPU steal of the same minute. A delay of 20 ms or more is flagged, because voice packets are sent every 20 ms from that loop; the delay is also in the diagnostics endpoint, and a minute with a delay or a garbage-collection pause of 50 ms or more is logged as a warning that lists that minute's late packets (other minutes at debug level). At debug level every interaction is also logged with its type, subcommand, time taken and the process's CPU time meanwhile, so a delay can be matched to its cause.
 - No telemetry. An optional diagnostics endpoint listens only on 127.0.0.1.
@@ -410,9 +410,11 @@ Known evidence is reused with its timestamp. A playback request probes in the fo
 ```text
 Approved stream URL
   ↓ safe HTTP client (validated, address-pinned) — direct stream or HLS segments
-FFmpeg (stdin only): decode → 48 kHz stereo → libopus, one encode → Ogg Opus on stdout
+FFmpeg (stdin only): decode → 48 kHz stereo → libopus, one encode → Ogg Opus on stdout (20 ms pages)
   ↓
-@discordjs/voice: Ogg demux only → DAVE-capable voice connection
+live queue: Ogg demux only → Opus packets, a short cushion, any backlog past it dropped (§8.4)
+  ↓
+@discordjs/voice: Opus packets as they are → DAVE-capable voice connection
   ↓
 Discord voice channel
 ```
@@ -427,7 +429,17 @@ As in FR-007. `maximum` encodes at the source's own bitrate, up to `MAX_OPUS_BIT
 
 ### 8.4 Buffering and live delay
 
-Buffers are bounded (HLS reader 512 KB high-water mark, 16 MB segment cap). HLS starts three segments from the live edge and resynchronises if it falls out of the live window or sequence numbers reset. A playlist that is only a little behind what was already sent (a stale copy from another server of the same CDN) is ignored until the next poll, so no audio is sent twice. Each segment, and each fMP4 start-up (init) section, is tried twice before it counts as failed. If playback drifts more than 45 s behind live, the stream restarts at the live edge.
+Buffers are bounded (HLS reader 512 KB high-water mark, 16 MB segment cap). HLS starts three segments from the live edge and resynchronises if it falls out of the live window or sequence numbers reset. A playlist that is only a little behind what was already sent (a stale copy from another server of the same CDN) is ignored until the next poll, so no audio is sent twice. Each segment, and each fMP4 start-up (init) section, is tried twice before it counts as failed.
+
+Every station is live, so the delay from the station to the listener is kept as small as possible and must never grow during a session (NFR-16). Every buffer is sized in time and has a stated reason. FFmpeg writes one Ogg page per 20 ms Opus packet, and the packets go straight into one live queue in front of the voice player, so a backlog can only build up where it is measured:
+
+- **Start.** The burst of audio a station's server sends on connect (about 4 s with Icecast's defaults at 128 kbps) is dropped down to a cushion before playback begins, once the burst has landed, so a direct stream starts about 1 s behind live, plus Discord's own buffering (about 0.1 s). A second look shortly after the start (settle: 1 s for a direct stream, the segment length plus 1 s for HLS) is a backstop that drops any late part of the burst.
+- **Cushion.** The chunk that arrives in one go (nothing for a direct stream; for HLS, the segment length, counted at up to 12 s) plus a 1 s safety margin. The margin grows by 0.5 s after each network gap, up to 3 s, and eases back after 30 minutes without one, at the next catch-up (for example the next voice resume). After a gap, playback goes on once the margin is back in hand (for HLS, with the next segment), as at the start.
+- **Catch-up.** A backlog past the cushion is dropped where a break was just heard: after a network gap, and after the voice connection resumes. A break that has already happened is never paid for again with lasting delay. Without such a break, a backlog is dropped once the queue's lowest point stays 3 s above the margin. Each catch-up has a reason: start, settle, gap, resume, limit or cap.
+- **No altered audio.** Nothing is resampled or time-stretched to stay live. Clock drift between the station and the host is measured, in ppm, and reported, not corrected.
+- **Visible.** `/radio stats` shows the live delay (queue depth, cushion, audio dropped to stay live, network gaps, drift), and each catch-up is logged.
+
+If playback still drifts more than 45 s behind live (audio already dropped to stay live doesn't count), the stream restarts at the live edge.
 
 ### 8.5 Process lifecycle
 
@@ -448,7 +460,7 @@ Each server has at most one authoritative pipeline. A process registry owns ever
 - Same-source retries at about 1, 3 and 8 s (±25 % jitter), then failover.
 - A source playing stably for 30 s resets its failure streak.
 - Voice reconnects at about 2, 5, 10, 30 and 60 s, then a visible error, then every 2 minutes while playback is wanted.
-- While the voice connection is briefly not ready (for example while Discord's voice WebSocket resumes), playback holds its place for up to 1 s, so no audio is skipped; after that it plays on to stay at the live edge.
+- While the voice connection is briefly not ready (for example while Discord's voice WebSocket resumes), the audio that can't be sent is dropped, so playback stays at the live edge; when the connection is ready again, the live queue drops any backlog past its cushion (§8.4). Holding the audio instead would leave the stream behind live for the rest of the session.
 - With no eligible source, retry after 15, 30 and 60 s, then every 2 minutes while playback is wanted.
 - After `/radio stop`, leave the channel after 5 minutes unless the idle mode is 24/7.
 
@@ -664,6 +676,7 @@ These are engineering targets, not guarantees about broadcasters or Discord.
 | NFR-13 | Bounded resources | Stream, probe, buffer and process limits enforced |
 | NFR-14 | Accessibility | Usable on Discord mobile, with text labels alongside any icons |
 | NFR-15 | Stream priority | Voice packets leave on time while the bot does other work: database checkpoints, the heartbeat write, catalogue parsing and station pack checks run off the voice thread, and a pack installed while the bot plays is written in short slices; automatic background work waits until a new stream has played for 3 minutes; optionally (`VOICE_THREAD=worker`) the voice connections and their packet timer run on a worker thread of their own; the bot's background worker threads run at the lowest CPU priority (Linux); stream checks run at the lowest CPU and disk priority and are the first to go if memory runs out; the supported deployments give the bot a high CPU weight and protect it from the out-of-memory killer, with no CPU quota or memory limit |
+| NFR-16 | Live delay | A direct stream starts about 1 s behind live, plus Discord's own buffering (about 0.1 s); the delay doesn't build up during a session: the cushion is at most 3 s on a direct stream (for HLS, the segment length plus at most 3 s), and a backlog past it is dropped at the next break, or once it stays 3 s above the margin; a break is never repaid with lasting delay; the delay is shown in `/radio stats`; nothing is resampled or time-stretched to achieve this |
 
 Diagnostics attribute faults to upstream, Discord, the bot, the operator or the user.
 
@@ -673,11 +686,11 @@ Diagnostics attribute faults to upstream, Discord, the bot, the operator or the 
 
 ### 17.1 Unit tests (automated)
 
-Station IDs, search and alias collisions; eligibility, fidelity comparison, pin/prefer/fallback; URL policy across IPv4, IPv6, IPv4-mapped, NAT64, 6to4, redirects, DNS rebinding and internal names; permission matrix; signed components; desired-state transitions and boot policy; migrations, backups and retention; import/export validation and redaction; identity rules and audio correlation; the session state machine with simulated failures (recovery, failover, stalls, kicks, idle modes, overlapping requests); the HLS reader (retries, stale playlists, resynchronisation); catalogue-sync scheduling; the bot status, voice channel status and late-packet count. `pnpm test:coverage` reports how much of `src/` and `scripts/` the tests run, file by file.
+Station IDs, search and alias collisions; eligibility, fidelity comparison, pin/prefer/fallback; URL policy across IPv4, IPv6, IPv4-mapped, NAT64, 6to4, redirects, DNS rebinding and internal names; permission matrix; signed components; desired-state transitions and boot policy; migrations, backups and retention; import/export validation and redaction; identity rules and audio correlation; the session state machine with simulated failures (recovery, failover, stalls, kicks, idle modes, overlapping requests); the HLS reader (retries, stale playlists, resynchronisation); catalogue-sync scheduling; the live queue (the start trim, the cushion, catch-ups and the drift estimate, with steady and segment-sized (HLS) delivery); the bot status, voice channel status and late-packet count. `pnpm test:coverage` reports how much of `src/` and `scripts/` the tests run, file by file.
 
 ### 17.2 Stream integration tests (automated)
 
-A local test radio serves **synthetic, rights-free audio**: direct MP3 and AAC, Ogg Opus, mono and low sample rates, ICY metadata, redirects, PLS, HTML and 404 responses, and a multi-variant HLS master with an audio+video decoy. The tests check measured codec, bitrate, sample rate and channels; HLS rendition choice; Ogg Opus output (48 kHz stereo header, 20 ms frames, one encoder process); that `@discordjs/voice` only demuxes; that stopped pipelines leave no FFmpeg process; and that two offset copies of one programme match while different programmes do not.
+A local test radio serves **synthetic, rights-free audio**: direct MP3 and AAC, Ogg Opus, mono and low sample rates, ICY metadata, redirects, PLS, HTML and 404 responses, and a multi-variant HLS master with an audio+video decoy. The tests check measured codec, bitrate, sample rate and channels; HLS rendition choice; Ogg Opus output (48 kHz stereo header, 20 ms frames, one encoder process); that the Ogg stream is only demuxed, never decoded again; that stopped pipelines leave no FFmpeg process; and that two offset copies of one programme match while different programmes do not.
 
 ### 17.3 Discord end-to-end tests (manual, per release)
 

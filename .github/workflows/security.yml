@@ -49,6 +49,9 @@ jobs:
           load: true
           tags: radio-bot:scan
           cache-from: type=gha
+          # Rebuild the base stage, so its `apt-get upgrade` takes Debian's latest fixes: a cached
+          # layer would keep the packages of the day it was first built, and the scan would fail.
+          no-cache-filters: base
       # Pinned by commit: this action's version tags were once rewritten by an attacker.
       - name: Scan the image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

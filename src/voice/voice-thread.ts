@@ -7,7 +7,7 @@ import { type Logger, safeErr } from '../observability/logger.ts';
 import { backoffDelayMs } from '../shared/backoff.ts';
 import { RadioError } from '../shared/errors.ts';
 import { ownBuffer, siblingModule } from '../shared/workers.ts';
-import type { VoiceLink, VoiceLinkEvents, VoiceLinkFactory, VoiceLinkStats } from './link.ts';
+import type { PlayOptions, VoiceLink, VoiceLinkEvents, VoiceLinkFactory, VoiceLinkStats } from './link.ts';
 import {
   deserializeError,
   type FromWorker,
@@ -442,6 +442,7 @@ export class VoiceThread {
       case 'connectionError':
       case 'interrupted':
       case 'restored':
+      case 'caughtUp':
       case 'flow':
         gen.links.get(msg.linkId)?.receive(msg);
         return;
@@ -525,7 +526,17 @@ export class VoiceThread {
 
 type LinkMessage = Extract<
   FromWorker,
-  { t: 'lost' | 'audioEnded' | 'reconnected' | 'connectionError' | 'interrupted' | 'restored' | 'flow' }
+  {
+    t:
+      | 'lost'
+      | 'audioEnded'
+      | 'reconnected'
+      | 'connectionError'
+      | 'interrupted'
+      | 'restored'
+      | 'caughtUp'
+      | 'flow';
+  }
 >;
 
 const noop = () => {};
@@ -533,9 +544,10 @@ const noop = () => {};
 /**
  * The main thread's stand-in for a voice link that runs in the worker. It behaves like
  * `DiscordVoiceLink` to the session: the same events, and getters answered from the latest
- * snapshot the worker pushed (every second and on every change). `play()` passes the encoder's
- * Ogg pages over as they come and pauses the encoder's output while the worker's buffer is full,
- * so backpressure still reaches FFmpeg.
+ * snapshot the worker pushed (every second and on every change), the live queue's figures among
+ * them. `play()` passes the encoder's Ogg pages over as they come; the live queue that keeps the
+ * delay small runs in the worker, next to the player. The encoder's output is paused only if the
+ * worker's buffer ever fills (a safety net: the queue reads it eagerly).
  */
 export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
   readonly linkId: number;
@@ -567,12 +579,12 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
     return this.#snap.streamId === this.#streamId;
   }
 
-  play(stream: Readable): void {
+  play(stream: Readable, options?: PlayOptions): void {
     this.#unhook();
     const streamId = this.#ch.nextStreamId();
     this.#streamId = streamId;
     if (this.#done) return;
-    this.#ch.post({ t: 'play', linkId: this.linkId, streamId });
+    this.#ch.post({ t: 'play', linkId: this.linkId, streamId, chunkMs: options?.chunkMs });
     // Each of these removes all of them, so only the first is passed on.
     const finish = (how: 'end' | 'error' | 'close', message?: string) => {
       this.#ch.post({ t: 'audioEnd', linkId: this.linkId, streamId, how, message });
@@ -627,7 +639,9 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
   }
 
   stats(): VoiceLinkStats {
-    return this.#snap.stats;
+    // The live queue's figures, like the playback ones, belong to the stream playing now only.
+    if (this.#current() || this.#snap.stats.live === null) return this.#snap.stats;
+    return { ...this.#snap.stats, live: null };
   }
 
   /** A newer snapshot from the worker. */
@@ -659,6 +673,10 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
         return;
       case 'restored':
         this.emit('restored', msg.info);
+        return;
+      case 'caughtUp':
+        // A catch-up of a stream the session has since replaced or stopped is old news.
+        if (msg.streamId !== 0 && msg.streamId === this.#streamId) this.emit('caughtUp', msg.event);
         return;
       case 'flow':
         if (this.#hook?.streamId !== msg.streamId) return;

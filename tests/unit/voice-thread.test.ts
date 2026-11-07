@@ -18,6 +18,7 @@ const baseStats = (): VoiceLinkStats => ({
   silenceMs: null,
   encryptionMode: null,
   status: 'ready',
+  live: null,
 });
 
 /** A voice link as the worker's host sees it: what `DiscordVoiceLink` does, without any network. */
@@ -27,6 +28,7 @@ class FakeLink extends EventEmitter {
   status = 'idle';
   ms = 0;
   played: PassThrough[] = [];
+  playOptions: unknown[] = [];
   stops = 0;
   detached = false;
   destroyed = false;
@@ -35,8 +37,9 @@ class FakeLink extends EventEmitter {
     super();
     this.channelId = channelId;
   }
-  play(stream: PassThrough) {
+  play(stream: PassThrough, options?: unknown) {
     this.played.push(stream);
+    this.playOptions.push(options);
     this.status = 'buffering';
   }
   stopAudio() {
@@ -495,11 +498,73 @@ describe('VoiceThread: audio', () => {
     const seen: unknown[] = [];
     link.on('interrupted', (info) => seen.push(info));
     link.on('restored', (info) => seen.push(info));
-    const interruption = { status: 'connecting', resuming: true, closeCode: 1006, held: true };
-    const restore = { afterMs: 140, heldMs: 140, skippedMs: 0 };
+    const interruption = { status: 'connecting', resuming: true, closeCode: 1006 };
+    const restore = { afterMs: 140, skippedMs: 140, caughtUpMs: 200 };
     h.links[0]!.emit('interrupted', interruption);
     h.links[0]!.emit('restored', restore);
     await vi.waitFor(() => expect(seen).toEqual([interruption, restore]));
+  });
+
+  it('tells the worker’s live queue how much audio arrives in one go', async () => {
+    const h = harness();
+    const t = thread(h);
+    await t.start();
+    const link = await t.factory()(channel().channel);
+    link.play(new PassThrough(), { chunkMs: 6_000 });
+    link.play(new PassThrough());
+    await vi.waitFor(() => expect(h.links[0]!.playOptions).toEqual([{ chunkMs: 6_000 }, undefined]));
+  });
+
+  it('passes on the live queue’s catch-ups for the stream playing now only', async () => {
+    const h = harness();
+    const t = thread(h);
+    await t.start();
+    const link = await t.factory()(channel().channel);
+    const seen: unknown[] = [];
+    link.on('caughtUp', (event) => seen.push(event));
+    const fake = h.links[0]!;
+    // Nothing playing: nothing to pass on.
+    fake.emit('caughtUp', { reason: 'gap', droppedMs: 100, cushionMs: 1_000 });
+    link.play(new PassThrough());
+    await vi.waitFor(() => expect(fake.played).toHaveLength(1));
+    const start = { reason: 'start', droppedMs: 2_400, cushionMs: 1_000 };
+    fake.emit('caughtUp', start);
+    await vi.waitFor(() => expect(seen).toEqual([start]));
+    // One the worker sent for a stream the session has since replaced is old news.
+    link.play(new PassThrough());
+    h.workers[0]!.emit('message', {
+      t: 'caughtUp',
+      linkId: 1,
+      streamId: 1,
+      event: { reason: 'resume', droppedMs: 300, cushionMs: 1_000 },
+    } satisfies FromWorker);
+    expect(seen).toEqual([start]);
+  });
+
+  it('reports the live queue’s figures from the worker, for the stream playing now only', async () => {
+    const h = harness();
+    const t = thread(h);
+    await t.start();
+    const link = await t.factory()(channel().channel);
+    link.play(new PassThrough());
+    await vi.waitFor(() => expect(h.links[0]!.played).toHaveLength(1));
+    const fake = h.links[0]!;
+    const live = {
+      depthMs: 1_020,
+      floorMs: 980,
+      cushionMs: 1_000,
+      startDroppedMs: 2_400,
+      caughtUpMs: 0,
+      catchUps: 0,
+      gaps: 0,
+      driftPpm: null,
+    };
+    fake.statsValue = { ...baseStats(), live };
+    // Pushed every second (every 20 ms here) as well as on every change.
+    await vi.waitFor(() => expect(link.stats().live).toEqual(live));
+    link.play(new PassThrough());
+    expect(link.stats().live).toBeNull();
+    expect(link.stats().wsPingMs).toBe(5);
   });
 });
 

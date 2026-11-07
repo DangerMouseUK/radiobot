@@ -3,6 +3,7 @@
 Thank you for helping. Radio Bot is a small, self-hosted Discord radio bot. Its core rules:
 
 - **the stream comes first:** nothing the bot does may cause a hiccup in the live stream, even on a 1-vCPU host (see [the coding rules below](#the-stream-comes-first));
+- **live means live:** the delay from the station to the listener stays as small as possible and never grows (see [below](#live-means-live));
 - play the **correct** station before the highest bitrate;
 - make **no claim without evidence**;
 - **encode once**;
@@ -88,10 +89,20 @@ Voice packets go out every 20 ms from Node's main thread. That's the same thread
    - Back off when they fail.
    - Let anything a listener is waiting for interrupt them.
    - When in doubt, do less and do it later.
-4. **Keep the audio path minimal.** Per-packet code is constant-time, with no logging, I/O, `await` or per-packet allocation of its own. Add no buffering, no extra latency, no second encode and no processing.
+4. **Keep the audio path minimal.** Per-packet code is constant-time, with no logging, I/O, `await` or per-packet allocation of its own. Add no buffering, no extra latency, no second encode and no processing (see [Live means live](#live-means-live)).
 5. **Bound memory.** Every cache, history and queue has a limit. The bot and one FFmpeg encoder must fit comfortably in 1 GB alongside the operating system.
 6. **Measure, don't guess.** Say in the pull request what new main-thread work costs and how you measured it. On a running bot, the event-loop delay and the late-packet count in `/radio stats` show the effect.
 7. **Logging costs nothing when it's off.** Never log per packet, and guard costly debug entries with `logger.isLevelEnabled('debug')`.
+
+## Live means live
+
+Every station is live, so the delay from the station to the listener must be as small as possible, and must never grow during a session. Only "The stream comes first" ranks above this: a cushion that stops the network's unevenness being heard is worth its delay, so don't shrink one just to make the delay look better.
+
+1. **Every buffer earns its place, sized in time.** Give each buffer on the audio path a reason and a size in milliseconds. Today the only deliberate one is the cushion of the live queue (`src/voice/live-queue.ts`): a 1 s safety margin (for HLS, the segment length plus that margin, with segments counted at up to 12 s). The margin grows by 0.5 s after each network gap up to 3 s, and eases back after 30 calm minutes, at the next catch-up (for example the next voice resume). After a gap, playback goes on once the margin is back in hand (for HLS, with the next segment), as at the start. FFmpeg writes one 20 ms packet per Ogg page, and the queue takes each one as soon as it is written.
+2. **No hidden backlog.** Audio may only wait where it is measured. The live queue's depth, cushion, catch-ups, network gaps and drift are shown in `/radio stats`, and each drop is logged (`caught up with live`, or at the start, `started behind live by the cushion; dropped the connect burst`). A new buffer on the audio path is either measured there too or kept to a few packets.
+3. **Correct it as quietly as possible.** The station's connect burst is dropped before anything is heard, once it has landed, so a direct stream starts about 1 s behind live, plus Discord's own buffering (about 0.1 s), and a second look shortly after the start is a backstop for any late part of it. A backlog is dropped where listeners have just heard a break anyway (after a network gap or a voice resume), or, with no such break, once the queue's lowest point stays 3 s above the margin.
+4. **Never pay for a break twice.** Don't hold audio back to avoid skipping it after an interruption: the stream would stay behind live for the rest of the session. When Discord's voice connection resumes, the audio that couldn't be sent is dropped.
+5. **Never alter the audio to stay live.** No resampling or time-stretching. Clock drift is measured and reported, not corrected.
 
 ## Rules for particular areas
 

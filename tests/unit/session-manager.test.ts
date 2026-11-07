@@ -149,6 +149,7 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
       silenceMs: null,
       encryptionMode: null,
       status: 'ready',
+      live: null,
     };
   }
   detach(): void {}

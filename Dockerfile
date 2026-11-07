@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-# Radio Bot — reproducible multi-stage build. Pin the base image; bump deliberately.
+# Radio Bot — multi-stage build. Pin the base image; bump deliberately. (Debian's packages are
+# brought up to date at build time, so two builds of the same commit can differ in those.)
 # The base image is written out in both FROM lines (not an ARG) so Dependabot can propose bumps;
 # keep the two the same.
 FROM node:24.22.2-trixie-slim AS build
@@ -22,7 +23,11 @@ FROM node:24.22.2-trixie-slim AS base
 # Debian's FFmpeg includes libopus (required) and is LGPL/GPL-licensed; see docs/rights-and-disclaimer.md.
 # `upgrade` applies Debian's security fixes to the base image's own packages (zlib, for example),
 # which can come out before a new base image does; the image scan fails on any with a fix available.
-RUN apt-get update \
+# A cached copy of this layer keeps the packages of the day it was built, so the security scan and
+# releases rebuild this stage every time (`no-cache-filters: base` in their workflows); CI reuses it.
+# DEBIAN_FRONTEND only for this command: an upgrade must never stop to ask about a config file.
+RUN export DEBIAN_FRONTEND=noninteractive \
+  && apt-get update \
   && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*

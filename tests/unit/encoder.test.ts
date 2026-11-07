@@ -91,4 +91,18 @@ describe('encoder plan reporting', () => {
     expect(args[args.indexOf('-vbr') + 1]).toBe('on');
     expect(args.at(-1)).toBe('pipe:1');
   });
+
+  it('writes one Ogg page per 20 ms Opus packet and flushes it at once', () => {
+    const plan = planEncoder(base);
+    const args = buildEncodeArgs(plan);
+    const value = (flag: string) => args[args.indexOf(flag) + 1];
+    // A page that spans one frame leaves the muxer one frame later: no 100–200 ms page hold.
+    expect(Number(value('-page_duration'))).toBe(plan.frameMs * 1000);
+    expect(value('-frame_duration')).toBe(String(plan.frameMs));
+    expect(value('-flush_packets')).toBe('1');
+    // Packets read while probing are kept for the encoder (the live queue trims the start itself).
+    expect(value('-fflags')).toBe('+discardcorrupt');
+    expect(value('-analyzeduration')).toBe('3000000');
+    expect(value('-probesize')).toBe('1000000');
+  });
 });

@@ -97,6 +97,8 @@ jobs:
           tags: radio-bot:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # A release always takes Debian's latest fixes (the base stage's `apt-get upgrade`), never a cached layer.
+          no-cache-filters: base
       - name: Smoke test image (FFmpeg with libopus, config validation)
         run: |
           docker run --rm --entrypoint ffmpeg radio-bot:ci -hide_banner -encoders | grep -q libopus
@@ -173,6 +175,8 @@ jobs:
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # As above, and for the arm64 image too, which the scanned build doesn't make.
+          no-cache-filters: base
       - uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE }}

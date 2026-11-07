@@ -23,6 +23,8 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
   sentMs = () => 0;
   packets = () => null as number | null;
   silence = () => null as number | null;
+  /** Audio the live queue has dropped mid-stream to stay live, ms. */
+  caughtUp = () => 0;
   readonly channelId: string;
   constructor(channelId: string) {
     super();
@@ -52,6 +54,16 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
       silenceMs: this.silence(),
       encryptionMode: null,
       status: 'ready',
+      live: {
+        depthMs: 1_000,
+        floorMs: null,
+        cushionMs: 1_000,
+        startDroppedMs: 0,
+        caughtUpMs: this.caughtUp(),
+        catchUps: 0,
+        gaps: 0,
+        driftPpm: null,
+      },
     };
   }
   detach(): void {}
@@ -263,17 +275,46 @@ describe('GuildSession: connection state', () => {
     const logs: Array<Record<string, unknown>> = [];
     const t = setup({ logs });
     await t.session.play('mypack:my-station', 'voice-1', 'u1');
-    t.links[0]!.emit('interrupted', { status: 'connecting', resuming: true, closeCode: 1006, held: true });
-    t.links[0]!.emit('restored', { afterMs: 120, heldMs: 120, skippedMs: 0 });
-    t.links[0]!.emit('interrupted', { status: 'signalling', resuming: false, closeCode: 4006, held: false });
+    t.links[0]!.emit('interrupted', { status: 'connecting', resuming: true, closeCode: 1006 });
+    t.links[0]!.emit('restored', { afterMs: 120, skippedMs: 100, caughtUpMs: 240 });
+    t.links[0]!.emit('interrupted', { status: 'signalling', resuming: false, closeCode: 4006 });
     const voice = logs.filter((l) => String(l.msg).startsWith('voice connection'));
     expect(voice).toMatchObject([
-      { level: 30, msg: 'voice connection resuming', closeCode: 1006, held: true, guildId: 'g1' },
-      { level: 30, msg: 'voice connection ready again', afterMs: 120, heldMs: 120, skippedMs: 0 },
+      { level: 30, msg: 'voice connection resuming', closeCode: 1006, guildId: 'g1' },
+      { level: 30, msg: 'voice connection ready again', afterMs: 120, skippedMs: 100, caughtUpMs: 240 },
       { level: 30, msg: 'voice connection interrupted; reconnecting', closeCode: 4006, resuming: false },
     ]);
+    // A resume drops audio now; nothing is held.
+    for (const line of voice) expect(Object.keys(line)).not.toContain('held');
+    expect(Object.keys(voice[1]!)).not.toContain('heldMs');
     expect(t.metrics.get('voice.interrupted')).toBe(2);
     // Brief interruptions are the link's to ride out: playback carries on.
+    expect(t.session.state).toBe('PLAYING');
+  });
+
+  it('logs each catch-up with live at info level, and counts it', async () => {
+    const logs: Array<Record<string, unknown>> = [];
+    const t = setup({ logs });
+    await t.session.play('mypack:my-station', 'voice-1', 'u1');
+    t.links[0]!.emit('caughtUp', { reason: 'start', droppedMs: 3_200, cushionMs: 1_000 });
+    t.links[0]!.emit('caughtUp', { reason: 'settle', droppedMs: 300, cushionMs: 1_000 });
+    t.links[0]!.emit('caughtUp', { reason: 'gap', droppedMs: 4_500, cushionMs: 1_500 });
+    t.links[0]!.emit('caughtUp', { reason: 'resume', droppedMs: 400, cushionMs: 1_500 });
+    const caught = logs.filter((l) => l.reason !== undefined && typeof l.droppedMs === 'number');
+    expect(caught).toEqual([
+      expect.objectContaining({
+        level: 30,
+        msg: 'started behind live by the cushion; dropped the connect burst',
+        reason: 'start',
+        droppedMs: 3_200,
+        cushionMs: 1_000,
+        guildId: 'g1',
+      }),
+      expect.objectContaining({ level: 30, msg: 'caught up with live', reason: 'settle', droppedMs: 300 }),
+      expect.objectContaining({ level: 30, msg: 'caught up with live', reason: 'gap', droppedMs: 4_500 }),
+      // A resume's catch-up is logged once, in 'voice connection ready again' (its caughtUpMs).
+    ]);
+    expect(t.metrics.get('playback.caught_up')).toBe(4);
     expect(t.session.state).toBe('PLAYING');
   });
 
@@ -462,6 +503,29 @@ describe('GuildSession: watchdog', () => {
     await until(() => t.pipelines.length >= 2 && t.session.state === 'PLAYING');
     expect(t.pipelines[0]!.stopped).toBe(true);
     expect(t.failures).toEqual([]);
+  });
+
+  it('does not count audio the live queue dropped to stay live as lag', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const t = setup({ timings: { lagMs: 45_000, stallMs: 600_000, watchdogIntervalMs: 1_000 } });
+    const playing = t.session.play('mypack:my-station', 'voice-1', 'u1');
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await playing).ok).toBe(true);
+    const link = t.links[0]!;
+    const since = Date.now();
+    // 45 s of network gaps: the player sent nothing for them. The server then sent what it held
+    // back, and the queue dropped it (45 s caught up): playback is back at live.
+    let silentMs = 45_000;
+    link.sentMs = () => Date.now() - since - silentMs;
+    link.caughtUp = () => 45_000;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.metrics.get('playback.resync')).toBe(0);
+    expect(t.pipelines).toHaveLength(1);
+    // A little more silence with nothing caught up is past 45 s behind live: the safety net acts.
+    silentMs = 46_000;
+    link.caughtUp = () => 0;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(t.metrics.get('playback.resync')).toBe(1);
   });
 
   it('does not count the gap an HLS skip to the live edge left as drift', async () => {

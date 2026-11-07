@@ -8,6 +8,7 @@
 - **The voice channel's bitrate setting doesn't limit the bot.** That setting is for people's voices. The bot sends its stream at its own target and shows the channel setting for information only.
 - **Admins can choose a different quality** in `/radio config`: `balanced` (at most 128 kbps, to save bandwidth) or `manual` (a fixed bitrate).
 - **`/radio quality` shows exactly what is happening:** the station's format and bitrate, how sure the bot is of each figure, and what it sends to Discord.
+- **It plays close to live.** A direct stream plays about 1 s behind the station, plus Discord's own buffering (about 0.1 s), and the delay doesn't build up while it plays (see [Staying live](#staying-live)).
 - **If the stream fails, the bot tries to recover by itself:** first by reconnecting to the same stream, then by switching to another verified stream of the same station. It never plays a different station instead.
 
 Radio Bot is unofficial and is not affiliated with or endorsed by any broadcaster; see [rights-and-disclaimer.md](rights-and-disclaimer.md). The rest of this page explains each point in detail.
@@ -25,12 +26,16 @@ FFmpeg, reading only from its standard input  (-protocol_whitelist pipe -i pipe:
    │  -ac 2 -ar 48000      two channels, 48 kHz (Discord requires 48 kHz)
    │  -c:a libopus -b:a <target>k -vbr on -compression_level 10
    │  -application audio -frame_duration 20
-   │  -f ogg -page_duration 100000 -flush_packets 1
+   │  -f ogg -page_duration 20000 -flush_packets 1   (one 20 ms packet per Ogg page)
    ▼
 Ogg Opus on FFmpeg's standard output
    ▼
-@discordjs/voice: createAudioResource(…, { inputType: StreamType.OggOpus, inlineVolume: false })
-   │  unpacks the Ogg container into Opus packets; no decoding, no second encode
+Live queue (src/voice/live-queue.ts)
+   │  unpacks the Ogg container into Opus packets as soon as they are written; keeps a
+   │  short cushion and drops any backlog past it (see "Staying live"); no decoding
+   ▼
+@discordjs/voice: createAudioResource(…, { inputType: StreamType.Opus, inlineVolume: false })
+   │  sends the Opus packets as they are, one every 20 ms; no decoding, no second encode
    ▼
 Discord voice connection (self-deafened; DAVE end-to-end encryption where Discord negotiates it)
 ```
@@ -55,11 +60,40 @@ The bot reads HLS itself; FFmpeg only ever sees the audio bytes.
 - **Falling behind:** if a long pause leaves the bot behind the playlist, it skips ahead to near the live edge.
 - **Encrypted HLS** is refused (`HLS_ENCRYPTED`). The bot never bypasses encryption.
 
+## Staying live
+
+Every station is live, so the bot keeps the delay between the station and the listener as small as it can, and doesn't let it grow while a stream plays. It never alters the audio to do this: nothing is resampled, sped up or slowed down. The rule behind it is "Live means live" in [AGENTS.md](../AGENTS.md#live-means-live).
+
+Where the delay comes from:
+
+- **The station's connect burst.** When the bot connects, a station's server usually sends several seconds of audio at once, so that ordinary players can fill their buffers. Icecast's default is 64 KB, about 4 s at 128 kbps. Played as it came, that burst would leave the whole stream about 4 s behind live.
+- **The cushion.** A little audio has to be kept in hand, so that the ordinary unevenness of the network isn't heard as cuts.
+- **Discord.** Discord's own buffering adds about 0.1 s, which the bot can't change.
+
+How the bot keeps it small (`src/voice/live-queue.ts`):
+
+- **One queue, where it can be seen.** Between FFmpeg and the voice player there is a single queue of Opus packets, the live queue. Nothing before it holds audio back for long: FFmpeg writes an Ogg page for every 20 ms packet (`-page_duration 20000`). Its Ogg muxer keeps each finished page until the next one begins, so short pages matter: the 100 ms pages used before added about 80–160 ms of delay. Each packet is taken into the queue as soon as FFmpeg writes it. Any backlog can only build up in the live queue, where it is measured.
+- **Start.** Before the first packet goes out, the queue waits until the connect burst has landed (audio no longer arriving faster than real time for 0.2 s, or 1 s for HLS, whose first segments come with a fetch between them), so it doesn't trim in the middle of it, then drops the burst down to the cushion. A direct stream therefore starts about 1 s behind live, plus Discord's own buffering (about 0.1 s), instead of about 4 s.
+- **Settle.** As a backstop for any late part of the burst, the queue looks again shortly after the start (1 s later for a direct stream, the segment length plus 1 s for HLS) and drops anything past the cushion, so it can't stay on as extra delay.
+- **The cushion** is the chunk plus a safety margin. The chunk is how much audio arrives in one go: nothing for a direct stream, which arrives as the station sends it, and a whole segment for HLS (the playlist's target duration, counted at up to 12 s). The margin is 1 s, like VLC's default network cache, so a direct stream keeps 1 s and HLS the segment length plus 1 s. Each time the queue runs dry (a network gap: the station's audio stopped arriving for a moment and listeners heard a break), the margin grows by 0.5 s, up to 3 s, so an unsteady connection breaks up less often; the most any stream keeps is 12 s + 3 s = 15 s. After 30 minutes without a gap the margin eases back by 0.5 s at a time; each step takes effect at the next catch-up, for example the next voice resume, not at once. After a gap, playback goes on once the margin is back in hand (for HLS, as soon as the next segment arrives), as at the start (VLC rebuffers the same way): listeners are already hearing the gap, and playing on from an empty queue would make every later hiccup audible. The delay comes back to the cushion, never more.
+- **Catch-up.** Audio that piles up past the cushion is dropped where the listener has just heard a break anyway: as soon as the refill after a network gap is done, and again shortly after (1 s later, or the segment length plus 1 s for HLS: by then the server has sent what it held back), and as soon as Discord's voice connection is ready again after a resume. A break that has already happened is never paid for again with lasting delay. Less than 0.2 s past the cushion is left alone. Only when the queue's floor (its lowest point over the last few seconds) has stayed 3 s above the margin with no break to hide it (a station whose clock runs fast) is the excess dropped on its own, as one short jump. The queue never holds more than 30 s, whatever happens.
+- **Drift.** The station's clock and the host's never run at exactly the same speed. The queue estimates the difference in parts per million (1 ppm is 3.6 ms an hour) from how its lowest level moves over 10 minutes. The estimate is reported, not corrected: correcting it would mean resampling, which alters the audio.
+
+The start is logged at info level as `started behind live by the cushion; dropped the connect burst`, and each later catch-up as `caught up with live`. Both carry `reason` (`start`; then `settle`, `gap`, `resume`, `limit`, or `cap` when the 30 s limit was reached), `droppedMs` (the audio dropped) and `cushionMs` (the cushion kept), and each counts towards the `playback.caught_up` metric.
+
+`/radio stats` shows a **Live delay** line under Output to Discord, for example:
+
+```text
+Live delay: 1.0 s waiting (cushion 1.5 s) · dropped to stay live: 3.2 s at the start, 4.5 s since in 1 catch-up · 1 network gap · station clock 42 ppm fast
+```
+
+That is: how much audio is waiting to be sent, and the cushion; how much was dropped at the start (the connect burst) and since, in how many catch-ups ("none since" when there were none); how many network gaps there were; and the station's clock against the host's ("fast", "slow", or "in step"). The clock part is left out until it is known, which takes 10 minutes of steady play. When nothing is playing the line reads `Live delay: —`.
+
 ## Why there is no double encode
 
 A common mistake in Discord music bots is to decode the source and then let the voice library encode Opus, after FFmpeg has already transcoded it once. That adds a second lossy step for nothing. (*Lossy* means some detail is thrown away to save space; each lossy step loses a little more.)
 
-Radio Bot does the encoding inside FFmpeg (`libopus`) and hands the voice library a finished **Ogg Opus** stream, marked as such with `StreamType.OggOpus`. For this input type, `@discordjs/voice` only unpacks the Ogg container into Opus packets and sends them as they are. With `inlineVolume: false` it has no reason to decode them. A typical AAC or MP3 station therefore goes through exactly one lossy encode by the bot: source codec → Opus.
+Radio Bot does the encoding inside FFmpeg (`libopus`), which writes a finished **Ogg Opus** stream. The live queue only unpacks the Ogg container into the Opus packets FFmpeg encoded, and hands them to the voice library marked as such with `StreamType.Opus`. For this input type, `@discordjs/voice` sends the packets as they are. With `inlineVolume: false` it has no reason to decode them. A typical AAC or MP3 station therefore goes through exactly one lossy encode by the bot: source codec → Opus.
 
 A source that is already Opus is still decoded and encoded again at the target bitrate. There is no pass-through without re-encoding in this version. The PRD lists that as a possible later optimisation, only if framing, DAVE and stability can be guaranteed.
 
@@ -137,11 +171,12 @@ Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20
 
 `/radio now` shows a short form of the same information. `/radio stats` (admins only, private) adds the live view:
 
-- the input rate and the Ogg Opus output rate over the last 10 s and 60 s;
+- the input rate and the Ogg Opus output rate from the encoder (before the live queue drops anything to stay live) over the last 10 s and 60 s;
 - for HLS, how many segments were fetched, failed and skipped;
 - packets per second to Discord, which should be about 50 with 20 ms frames;
 - late packets: how many left more than 40 ms after the one before since the bot joined, and the longest gap (about 55 ms or more is enough to hear);
 - silence the voice player filled in because no audio was ready, for this stream and in the last minute;
+- the live delay: how much audio is waiting in the live queue, the cushion it keeps, how much it has dropped to stay live (the connect burst, then catch-ups), how many network gaps there were, and how fast or slow the station's clock runs once that is known (see [Staying live](#staying-live));
 - the round trip to the stream's server, the voice connection's WebSocket ping and the gateway ping;
 - source failovers, voice reconnects, the encoder's process ID and the last FFmpeg warnings;
 - the main thread's event-loop delay, with its garbage-collection pauses, CPU use and (on Linux) host steal over the same minute, memory use and the number of FFmpeg processes;
@@ -161,11 +196,11 @@ These defaults are in `DEFAULT_TIMINGS` in `src/voice/session.ts`. They are the 
 | Recovery, second stage | **Fail over.** The failed source is set aside and the next eligible (usable) source of the same station is chosen. The now-playing card says it is playing from a fallback. |
 | A source keeps failing for more than a minute (at least 4 failures in a row) | Circuit breaker: the bot rests (*cools down*) the source for 10 min, then 20 and 40 min, up to 2 h, on repeated trips. A cooling source is not eligible, but when nothing else can play, the bot checks it again every 2 min, and a good check ends the cooldown. A short blip that uses up the quick retries within seconds doesn't trip it, and several servers hearing the same blip at the same moment count as one failure. |
 | No eligible source at all | `ERROR` (`NO_ELIGIBLE_SOURCE`), a notice is sent, and the bot looks again after 15, 30 and 60 s, then every 2 min while playback is still wanted. |
-| Playback more than 45 s behind live | Reopens the same source at the live edge. A gap the HLS reader left when it skipped forward to the live edge doesn't count, because it is already back at live. |
+| Playback more than 45 s behind live | Reopens the same source at the live edge. This is a last resort: the live queue normally keeps the delay to its cushion (see [Staying live](#staying-live)). Audio the live queue dropped to stay live, and a gap the HLS reader left when it skipped forward to the live edge, don't count, because playback is already back at live. |
 | A better source works again | **Move back.** Once a minute, a steady stream that isn't on its station's best source checks whether that source has worked again since it failed (a background check shows this). If it has, and it is a real step up (a direct stream instead of HLS, clearly better measured quality, or the source an admin chose), the bot moves back to it. That is a brief cut, so it happens at most once every 10 minutes, and never when a listener chose the source that is playing. If the better source fails again before it has played steadily for 30 s, the bot goes straight back to the source that was working, without retrying, and waits twice as long before trying that source again (20 min, then 40 min, up to 4 h). |
 | A new check measures the playing source clearly higher | The bot re-encodes at the new rate (more than 5 % higher), at most once every 10 minutes. The playing source isn't checked in the background, so this follows a check an admin starts (**Check sources again**) or one made for another server. |
 | 30 s of steady playback | The source's health score goes up and its failure count is reset. |
-| Voice connection briefly not ready (Discord's voice WebSocket closed and is resuming, usually for a fraction of a second) | Nothing can be sent until it is ready again, so listeners hear a short pause. The player holds its place in the stream meanwhile and plays on from the next frame, so no music is skipped. After 1 s it stops holding and plays on (dropping what it can't send), so a longer outage doesn't leave playback behind live. Each interruption and its recovery is logged at info level. |
+| Voice connection briefly not ready (Discord's voice WebSocket closed and is resuming, usually for a fraction of a second) | Nothing can be sent until it is ready again, so listeners hear a short gap. The player reads on meanwhile and drops that audio, so playback stays at the live edge: when the sound comes back, the music has moved on by the length of the gap. Holding the audio instead would leave the stream that much further behind live for the rest of the session. When the connection is ready again, the live queue also drops any backlog past its cushion, where the gap just heard hides the cut. Each interruption is logged at info level (`voice connection resuming`, or `voice connection interrupted; reconnecting`), and so is its recovery (`voice connection ready again`, with how long it took, the audio skipped and the audio caught up). |
 | Voice connection dropped | The voice library rejoins up to 5 times. If that fails, the bot rebuilds the connection after 2, 5, 10, 30 and 60 s, then says so once and keeps trying every 2 min while playback is still wanted (`/radio stop` ends it). |
 | Disconnected by a moderator | The bot remembers it was kicked. It doesn't rejoin and doesn't autostart until someone plays a station again. |
 
@@ -178,5 +213,6 @@ Each source change, stop, leave, server removal and shutdown closes the old pipe
 - **HLS is not "HD", and it is a last resort.** HLS is only a way of delivering audio. Segmented delivery makes live playback start more slowly and recover less smoothly, so the bot plays HLS only when no direct stream of the station is eligible, even if the HLS version measures higher. On the streams of the first library pack (the pack that shipped with the bot up to 1.1.0), measured on 31 October 2026, the direct streams were MP3 at 128 kbps (and AAC-LC at 128 kbps for one station's extra stream), and the HLS versions were AAC-LC at 128 kbps. Each check reports what a source carries.
 - **Above-channel bitrates are not verified.** The encoder target is what the bot sends. Whether Discord passes a bot's stream on above the channel's bitrate setting, and what each listener's app actually receives, has **not** been measured.
 - **DAVE.** The bot asks for DAVE end-to-end encryption (`@snazzah/davey` is bundled). Whether it is used depends on the call and on Discord's rollout, and `/radio quality` shows which. DAVE was negotiated in the one live test so far, and has **not** been tested on any other call.
-- **Start-up and switching time** depend on the station's server. HLS usually takes longer than a direct stream, because the bot starts three segments behind the live edge; that is one reason it is the last resort. No latency benchmarks have been published.
+- **Start-up and switching time** depend on the station's server. HLS usually takes longer than a direct stream, because the bot starts three segments behind the live edge and keeps the segment length plus 1 s in hand; that is one reason it is the last resort.
+- **Delay behind live.** A direct stream plays about 1 s behind what the station sends, plus Discord's own buffering (about 0.1 s), and more after network gaps (up to 3 s of cushion); HLS keeps the segment length plus 1 s, growing to plus 3 s; see [Staying live](#staying-live). These figures come from the bot's design and its tests. The delay a listener hears on a live Discord call has **not** been measured, and no latency benchmarks have been published.
 - **CPU use** depends on the FFmpeg and libopus build, the target bitrate, `compression_level 10` and the number of servers playing at once. Measured on a small cloud server, one 128 kbps stream used about 8% of one CPU core in total (see the README's Requirements). Measure it on your own hardware; other set-ups haven't been measured.

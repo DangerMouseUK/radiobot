@@ -19,6 +19,7 @@ import {
   type SelectionResult,
 } from '../../streams/ranking.ts';
 import { isPaused, nextAutomaticCheck } from '../../streams/source-service.ts';
+import type { LiveQueueStats } from '../../voice/live-queue.ts';
 import type { SessionStatus } from '../../voice/session.ts';
 import { isAudioActive, type PlaybackState, STATE_LABEL } from '../../voice/state-machine.ts';
 import type { VoiceThreadStats } from '../../voice/voice-thread.ts';
@@ -521,6 +522,29 @@ export function silenceLine(total: number | null | undefined, recent: number | n
   if (total == null) return 'Silence filled in: —';
   const last = recent != null ? ` · ${recent} ms in the last minute` : '';
   return `Silence filled in (no audio ready): ${total} ms this stream${last}`;
+}
+
+/**
+ * One stats line for the live queue: how much audio waits to be sent (how far playback is behind
+ * the newest audio received), the cushion it keeps, the audio dropped to stay live (the connect
+ * burst at the start, then any catch-ups), network gaps, and how fast the station's clock runs
+ * against ours, once measured.
+ */
+export function liveDelayLine(live: LiveQueueStats | null | undefined): string {
+  if (!live) return 'Live delay: —';
+  const s = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
+  const since = live.catchUps
+    ? `${s(live.caughtUpMs)} since in ${live.catchUps} catch-up${live.catchUps === 1 ? '' : 's'}`
+    : 'none since';
+  const gaps = `${live.gaps} network gap${live.gaps === 1 ? '' : 's'}`;
+  const ppm = live.driftPpm;
+  const clock =
+    ppm === null
+      ? ''
+      : ppm === 0
+        ? ' · station clock in step'
+        : ` · station clock ${Math.abs(ppm)} ppm ${ppm > 0 ? 'fast' : 'slow'}`;
+  return `Live delay: ${s(live.depthMs)} waiting (cushion ${s(live.cushionMs)}) · dropped to stay live: ${s(live.startDroppedMs)} at the start, ${since} · ${gaps}${clock}`;
 }
 
 /** One stats line for voice packets that went out late (more than 40 ms after the one before). */

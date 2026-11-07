@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
+import { PassThrough, type Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /** A stand-in for @discordjs/voice's VoiceConnection: a state plus status events. */
@@ -54,21 +54,29 @@ vi.mock('@discordjs/voice', async (importOriginal) => {
     },
     createAudioPlayer: (options: unknown) => {
       voice.playerOptions = options;
+      type Player = InstanceType<typeof Emitter> & { state: { status: string } };
+      // Like the real player, every change of status is announced as it happens.
+      const move = (player: Player, status: string) => {
+        const old = player.state;
+        player.state = { status };
+        player.emit('stateChange', old, player.state);
+      };
       return Object.assign(new Emitter(), {
         state: { status: 'idle' } as { status: string },
-        pause(this: { state: { status: string } }) {
+        pause(this: Player) {
           if (this.state.status !== 'playing') return false;
-          this.state = { status: 'paused' };
+          move(this, 'paused');
           return true;
         },
-        unpause(this: { state: { status: string } }) {
+        unpause(this: Player) {
           if (this.state.status !== 'paused') return false;
-          this.state = { status: 'playing' };
+          move(this, 'playing');
           return true;
         },
-        stop() {
+        stop(this: Player) {
           voice.stops++;
           if (voice.stopThrows) throw new Error('player already gone');
+          if (this.state.status !== 'idle') move(this, 'idle');
         },
         play(resource: unknown) {
           voice.played.push(resource);
@@ -80,16 +88,11 @@ vi.mock('@discordjs/voice', async (importOriginal) => {
 // The reconnect loop waits between attempts; tests don't need the real delays.
 vi.mock('../../src/shared/async.ts', () => ({ delay: () => Promise.resolve() }));
 
-const {
-  DiscordVoiceLink,
-  MAX_MISSED_FRAMES,
-  VOICE_HOLD_MS,
-  discordVoiceLinkFactory,
-  guardConnection,
-  timePackets,
-} = await import('../../src/voice/link.ts');
+const { DiscordVoiceLink, MAX_MISSED_FRAMES, discordVoiceLinkFactory, guardConnection, timePackets } =
+  await import('../../src/voice/link.ts');
 const { NetworkingStatusCode } = await import('@discordjs/voice');
 const { DEFAULT_TIMINGS } = await import('../../src/voice/session.ts');
+const { LiveQueue } = await import('../../src/voice/live-queue.ts');
 
 const adapterCreator = () => ({}) as never;
 const target = { guildId: 'g1', channelId: 'voice-1', adapterCreator };
@@ -100,6 +103,33 @@ async function connect() {
   const link = await DiscordVoiceLink.connect(target);
   return { connection, link };
 }
+
+/** One Ogg page carrying `packets`, one segment each (the demuxer doesn't check the CRC). */
+function oggPage(packets: Buffer[]): Buffer {
+  const header = Buffer.alloc(27);
+  header.write('OggS', 0, 'latin1');
+  header.writeUInt32LE(1, 14);
+  header.writeUInt8(packets.length, 26);
+  return Buffer.concat([header, Buffer.from(packets.map((p) => p.length)), ...packets]);
+}
+
+/** An encoder's Ogg Opus output: the headers, then `frames()` adds numbered 20 ms packets. */
+function oggStream() {
+  const output = new PassThrough();
+  let next = 0;
+  output.write(oggPage([Buffer.concat([Buffer.from('OpusHead'), Buffer.alloc(11)])]));
+  output.write(oggPage([Buffer.concat([Buffer.from('OpusTags'), Buffer.alloc(8)])]));
+  const frames = (n: number) => {
+    const packets = Array.from({ length: n }, () => Buffer.from([0xfc, next++ & 0xff]));
+    for (let i = 0; i < packets.length; i += 50) output.write(oggPage(packets.slice(i, i + 50)));
+  };
+  return { output, frames };
+}
+
+/** Lets the stream machinery move the pages along (these fake timers leave setImmediate alone). */
+const flush = () => new Promise((r) => setImmediate(r));
+const fakeClock = () =>
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
 
 afterEach(() => {
   vi.useRealTimers();
@@ -263,14 +293,19 @@ describe('DiscordVoiceLink: joining', () => {
 });
 
 describe('DiscordVoiceLink: audio', () => {
-  it('plays Ogg Opus as it is, and reports how much it has sent', async () => {
+  it('plays Ogg Opus as it is, through a live queue, and reports how much it has sent', async () => {
     const { link } = await connect();
     expect(link.playbackMs()).toBe(0);
     link.play(new PassThrough());
     expect(voice.played).toHaveLength(1);
-    const resource = voice.played[0] as { edges: Array<{ type: string }>; playbackDuration: number };
-    // Only a demuxer: no second encode, no volume transform.
-    expect(resource.edges.map((e) => e.type)).toEqual(['ogg/opus demuxer']);
+    const resource = voice.played[0] as {
+      edges: Array<{ type: string }>;
+      playStream: Readable;
+      playbackDuration: number;
+    };
+    // The live queue's demuxer only: the library adds no step (no second encode, no volume transform).
+    expect(resource.playStream).toBeInstanceOf(LiveQueue);
+    expect(resource.edges).toEqual([]);
     resource.playbackDuration = 1_240;
     expect(link.playbackMs()).toBe(1_240);
     expect(link.playerStatus()).toBe('idle');
@@ -304,6 +339,68 @@ describe('DiscordVoiceLink: audio', () => {
     link.player.emit('stateChange', { status: 'playing' }, { status: 'idle' });
     link.player.emit('error', new Error('after stop'));
     expect(ended).toEqual([]);
+  });
+
+  it('hands the player the Opus packets of the Ogg stream, from the cushion behind the newest', async () => {
+    fakeClock();
+    const { link } = await connect();
+    const caughtUp: unknown[] = [];
+    link.on('caughtUp', (event) => caughtUp.push(event));
+    expect(link.stats().live).toBeNull();
+    const station = oggStream();
+    link.play(station.output);
+    station.frames(80);
+    await flush();
+    // Not yet: the start waits for the connect burst to land.
+    expect(link.stats().live).toMatchObject({ depthMs: 1_600, startDroppedMs: 0 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    // The burst beyond the 1 s cushion is dropped before anything is heard.
+    expect(caughtUp).toEqual([{ reason: 'start', droppedMs: 600, cushionMs: 1_000 }]);
+    expect(link.stats().live).toMatchObject({ depthMs: 1_000, cushionMs: 1_000, startDroppedMs: 600 });
+    const resource = voice.played[0] as { read(): Buffer | null };
+    expect(resource.read()).toEqual(Buffer.from([0xfc, 30]));
+    expect(resource.read()).toEqual(Buffer.from([0xfc, 31]));
+  });
+
+  it('keeps a cushion of the chunk it is told about plus the margin', async () => {
+    const { link } = await connect();
+    link.play(new PassThrough(), { chunkMs: 6_000 });
+    expect(link.stats().live).toMatchObject({ cushionMs: 7_000 });
+  });
+
+  it('lets go of the stream it reads when it is stopped, replaced, detached or destroyed', async () => {
+    const { link } = await connect();
+    const first = new PassThrough();
+    const second = new PassThrough();
+    link.play(first);
+    link.play(second);
+    await vi.waitFor(() => expect(first.destroyed).toBe(true));
+    expect(second.destroyed).toBe(false);
+    link.stopAudio();
+    await vi.waitFor(() => expect(second.destroyed).toBe(true));
+    expect(link.stats().live).toBeNull();
+    for (const end of ['detach', 'destroy'] as const) {
+      const { link: other } = await connect();
+      const stream = new PassThrough();
+      other.play(stream);
+      other[end]();
+      await vi.waitFor(() => expect(stream.destroyed).toBe(true));
+    }
+  });
+
+  it('passes on only the catch-ups of the stream playing now, and never throws for an old one', async () => {
+    fakeClock();
+    const { link } = await connect();
+    const caughtUp: unknown[] = [];
+    link.on('caughtUp', (event) => caughtUp.push(event));
+    const old = oggStream();
+    link.play(old.output);
+    link.play(new PassThrough());
+    old.frames(80);
+    await flush();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(caughtUp).toEqual([]);
+    expect(() => old.output.destroy(new Error('late failure'))).not.toThrow();
   });
 });
 
@@ -386,9 +483,13 @@ describe('DiscordVoiceLink: losing the connection', () => {
 });
 
 describe('DiscordVoiceLink: brief interruptions', () => {
-  type PlayerLike = { state: { status: string } };
-  const playing = (link: { player: unknown }) => {
-    (link.player as PlayerLike).state = { status: 'playing' };
+  type PlayerLike = EventEmitter & { state: { status: string } };
+  /** Moves the fake player to `status`, announcing it as the real one does. */
+  const move = (link: { player: unknown }, status: string) => {
+    const player = link.player as PlayerLike;
+    const old = player.state;
+    player.state = { status };
+    player.emit('stateChange', old, player.state);
   };
   const status = (link: { player: unknown }) => (link.player as PlayerLike).state.status;
   /** The networking state of a voice WebSocket resume, with the socket that replaced the closed one. */
@@ -397,12 +498,12 @@ describe('DiscordVoiceLink: brief interruptions', () => {
     networking: { state: { code: NetworkingStatusCode.Resuming, ws: new EventEmitter() } },
   });
 
-  it('holds its place while the voice WebSocket resumes, then plays on with nothing skipped', async () => {
+  it('plays on while the voice WebSocket resumes, and reports the audio it dropped', async () => {
     vi.useFakeTimers();
     const { connection, link } = await connect();
     const ws = new EventEmitter();
     connection.setState({ status: 'ready', networking: { state: { code: NetworkingStatusCode.Ready, ws } } });
-    playing(link);
+    move(link, 'playing');
     const interrupted: unknown[] = [];
     const restored: unknown[] = [];
     link.on('interrupted', (info) => interrupted.push(info));
@@ -410,40 +511,21 @@ describe('DiscordVoiceLink: brief interruptions', () => {
     // The library hears the close first and moves the connection on from inside it.
     ws.once('close', () => connection.setState(resuming()));
     ws.emit('close', { code: 1006 });
-    expect(status(link)).toBe('paused');
-    expect(interrupted).toEqual([{ status: 'connecting', resuming: true, closeCode: 1006, held: true }]);
+    // Nothing is held: the player is never paused, and the link sets no timer of its own.
+    expect(status(link)).toBe('playing');
+    expect(vi.getTimerCount()).toBe(0);
+    expect(interrupted).toEqual([{ status: 'connecting', resuming: true, closeCode: 1006 }]);
     await vi.advanceTimersByTimeAsync(120);
     connection.setState({ status: 'ready', networking: { state: { code: NetworkingStatusCode.Ready } } });
     expect(status(link)).toBe('playing');
-    expect(restored).toEqual([{ afterMs: 120, heldMs: 120, skippedMs: 0 }]);
-    // The hold's own timer is gone: nothing unpauses the player later.
-    (link.player as PlayerLike).state = { status: 'paused' };
-    await vi.advanceTimersByTimeAsync(VOICE_HOLD_MS * 2);
-    expect(status(link)).toBe('paused');
+    // No stream through the link here, so no queue to catch up.
+    expect(restored).toEqual([{ afterMs: 120, skippedMs: 120, caughtUpMs: 0 }]);
   });
 
-  it('stops holding after a second, so a long outage cannot leave playback far behind live', async () => {
-    vi.useFakeTimers();
-    const { connection, link } = await connect();
-    playing(link);
-    const restored: unknown[] = [];
-    link.on('restored', (info) => restored.push(info));
-    connection.setState({ status: 'connecting' });
-    expect(status(link)).toBe('paused');
-    await vi.advanceTimersByTimeAsync(VOICE_HOLD_MS - 1);
-    expect(status(link)).toBe('paused');
-    await vi.advanceTimersByTimeAsync(1);
-    // Playing again without the connection: it reads on and drops, as the library always did.
-    expect(status(link)).toBe('playing');
-    await vi.advanceTimersByTimeAsync(3_000);
-    connection.setState({ status: 'ready' });
-    expect(restored).toEqual([{ afterMs: VOICE_HOLD_MS + 3_000, heldMs: VOICE_HOLD_MS, skippedMs: 3_000 }]);
-  });
-
-  it('holds nothing when nothing is playing, and says why the connection went', async () => {
+  it('skips nothing when nothing is playing, and says why the connection went', async () => {
     const { connection, link } = await connect();
     const interrupted: unknown[] = [];
-    const restored: Array<{ heldMs: number; skippedMs: number }> = [];
+    const restored: unknown[] = [];
     link.on('interrupted', (info) => interrupted.push(info));
     link.on('restored', (info) => restored.push(info));
     connection.setState({ status: 'signalling' });
@@ -451,23 +533,77 @@ describe('DiscordVoiceLink: brief interruptions', () => {
     // Still not ready: one interruption, not one per state.
     connection.setState({ status: 'connecting' });
     connection.setState({ status: 'ready' });
-    expect(interrupted).toEqual([{ status: 'signalling', resuming: false, closeCode: null, held: false }]);
-    expect(restored).toMatchObject([{ heldMs: 0, skippedMs: 0 }]);
+    expect(interrupted).toEqual([{ status: 'signalling', resuming: false, closeCode: null }]);
+    expect(restored).toMatchObject([{ skippedMs: 0, caughtUpMs: 0 }]);
     // Destroyed is not an interruption: the link is lost.
     connection.setState({ status: 'destroyed' });
     expect(interrupted).toHaveLength(1);
   });
 
-  it('lets go of a hold when it is detached or destroyed', async () => {
+  it('has the live queue catch up as the connection comes back, and reports it', async () => {
+    fakeClock();
+    const { connection, link } = await connect();
+    const caughtUp: unknown[] = [];
+    const restored: unknown[] = [];
+    link.on('caughtUp', (event) => caughtUp.push(event));
+    link.on('restored', (info) => restored.push(info));
+    const station = oggStream();
+    link.play(station.output);
+    station.frames(50);
+    await flush();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(link.stats().live).toMatchObject({ depthMs: 1_000, startDroppedMs: 0 });
+    // A backlog builds up past the cushion (the fake player reads nothing).
+    station.frames(20);
+    await flush();
+    connection.setState({ status: 'connecting' });
+    connection.setState({ status: 'ready', networking: { state: {} } });
+    expect(caughtUp).toEqual([{ reason: 'resume', droppedMs: 400, cushionMs: 1_000 }]);
+    expect(restored).toEqual([{ afterMs: 0, skippedMs: 0, caughtUpMs: 400 }]);
+    expect(link.stats().live).toMatchObject({ depthMs: 1_000, caughtUpMs: 400, catchUps: 1 });
+  });
+
+  it('reports what really happened when Stop cuts the outage short, or playback starts mid-outage', async () => {
     vi.useFakeTimers();
-    for (const end of ['detach', 'destroy'] as const) {
-      const { connection, link } = await connect();
-      playing(link);
-      connection.setState({ status: 'connecting' });
-      expect(status(link)).toBe('paused');
-      link[end]();
-      expect(vi.getTimerCount()).toBe(0);
-    }
+    const { connection, link } = await connect();
+    const restored: unknown[] = [];
+    link.on('restored', (info) => restored.push(info));
+    // Stop pressed 300 ms into the outage: 300 ms skipped, however long the outage runs.
+    move(link, 'playing');
+    connection.setState({ status: 'connecting' });
+    await vi.advanceTimersByTimeAsync(300);
+    link.stopAudio();
+    await vi.advanceTimersByTimeAsync(2_000);
+    connection.setState({ status: 'ready' });
+    expect(restored.at(-1)).toEqual({ afterMs: 2_300, skippedMs: 300, caughtUpMs: 0 });
+    // Still buffering when the outage began, then playing: only the playing part was dropped.
+    move(link, 'buffering');
+    connection.setState({ status: 'connecting' });
+    await vi.advanceTimersByTimeAsync(200);
+    move(link, 'playing');
+    await vi.advanceTimersByTimeAsync(500);
+    connection.setState({ status: 'ready' });
+    expect(restored.at(-1)).toEqual({ afterMs: 700, skippedMs: 500, caughtUpMs: 0 });
+  });
+
+  it('ignores a close from a voice WebSocket the library has already replaced', async () => {
+    const { connection, link } = await connect();
+    const interrupted: Array<{ closeCode: number | null }> = [];
+    link.on('interrupted', (info) => interrupted.push(info));
+    const first = new EventEmitter();
+    const second = new EventEmitter();
+    connection.setState({
+      status: 'ready',
+      networking: { state: { code: NetworkingStatusCode.Ready, ws: first } },
+    });
+    connection.setState({
+      status: 'ready',
+      networking: { state: { code: NetworkingStatusCode.Ready, ws: second } },
+    });
+    // The library tidies the old socket away (code 1000) after it has moved on to the new one.
+    first.emit('close', { code: 1000 });
+    connection.setState({ status: 'signalling' });
+    expect(interrupted).toEqual([expect.objectContaining({ closeCode: null })]);
   });
 });
 
@@ -521,6 +657,7 @@ describe('DiscordVoiceLink: stats', () => {
       silenceMs: null,
       encryptionMode: 'aead_aes256_gcm_rtpsize',
       status: 'ready',
+      live: null,
     });
     connection.state = {
       status: 'ready',
