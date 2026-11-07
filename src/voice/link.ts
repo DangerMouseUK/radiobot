@@ -220,6 +220,8 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     this.connection = connection;
     this.#initialChannelId = channelId;
     this.player = createAudioPlayer({
+      // Off: with it on, every player state change builds two JSON strings that nothing reads.
+      debug: false,
       behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: MAX_MISSED_FRAMES },
     });
     this.#subscription = connection.subscribe(this.player);

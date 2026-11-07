@@ -40,6 +40,7 @@ import { FullSourceCheck } from './streams/full-check.ts';
 import { SafeHttpClient } from './streams/safe-fetch.ts';
 import { SourceService } from './streams/source-service.ts';
 import { UrlPolicy } from './streams/url-policy.ts';
+import { checkVoiceEncryption } from './voice/encryption.ts';
 import { discordVoiceLinkFactory } from './voice/link.ts';
 import { SessionManager } from './voice/session-manager.ts';
 import { VoiceThread } from './voice/voice-thread.ts';
@@ -315,7 +316,16 @@ export function createApp(
         'FFmpeg/FFprobe not available — install FFmpeg or set FFMPEG_PATH/FFPROBE_PATH',
       );
     }
-    logger.debug({ report: generateDependencyReport() }, 'voice dependency report');
+    const encryption = await checkVoiceEncryption();
+    if (encryption.xchacha20) logger.info(encryption, 'voice encryption available');
+    else
+      logger.error(
+        encryption,
+        'XChaCha20-Poly1305 is unavailable; a voice server that does not offer AES-256-GCM cannot be used',
+      );
+    if (logger.isLevelEnabled('debug')) {
+      logger.debug({ report: generateDependencyReport() }, 'voice dependency report');
+    }
     // Before logging in, so it is ready before any join. A worker that can't load the voice
     // libraries (or make a DAVE session) is a reason to fall back, not to stay silent.
     if (voiceThread) {

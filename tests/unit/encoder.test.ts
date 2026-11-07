@@ -92,6 +92,14 @@ describe('encoder plan reporting', () => {
     expect(args.at(-1)).toBe('pipe:1');
   });
 
+  it('feeds libopus float samples whatever the source decodes to', () => {
+    const args = buildEncodeArgs(planEncoder(base));
+    // An output option: it must come after the input and before the encoder is chosen.
+    expect(args[args.indexOf('-sample_fmt') + 1]).toBe('flt');
+    expect(args.indexOf('-sample_fmt')).toBeGreaterThan(args.indexOf('-i'));
+    expect(args.indexOf('-sample_fmt')).toBeLessThan(args.indexOf('-c:a'));
+  });
+
   it('writes one Ogg page per 20 ms Opus packet and flushes it at once', () => {
     const plan = planEncoder(base);
     const args = buildEncodeArgs(plan);

@@ -174,6 +174,11 @@ export function buildEncodeArgs(plan: EncoderPlan): string[] {
     String(plan.channels),
     '-ar',
     String(plan.sampleRateHz),
+    // libopus takes 16-bit or float input. FFmpeg picks float when the decoder outputs float (MP3,
+    // AAC, Opus, Vorbis) but 16-bit for 16-bit FLAC or PCM, which it would then resample in integers
+    // and round back without dither, clipping any overshoot. Float keeps every source on one path.
+    '-sample_fmt',
+    'flt',
     '-c:a',
     'libopus',
     '-b:a',

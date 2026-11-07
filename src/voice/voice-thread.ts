@@ -117,7 +117,7 @@ interface LinkChannel {
  * one packet every 20 ms from a timer on whichever thread runs it; on the main thread every
  * command, database query, gateway message and garbage collection could hold that timer up. In the
  * worker it has an event loop and a heap of its own. FFmpeg, the station input and the session
- * state machine stay here; only the encoded Ogg pages cross over (about ten a second), and the
+ * state machine stay here; only the encoded Ogg pages cross over (one 20 ms page per packet, so about fifty a second), and the
  * worker's gateway traffic comes back through the main thread's Discord connection.
  */
 export class VoiceThread {

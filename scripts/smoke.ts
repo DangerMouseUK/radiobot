@@ -29,6 +29,7 @@ import { Db, loadMigrations } from '../src/persistence/db.ts';
 import { StationRepository } from '../src/persistence/repositories/stations.ts';
 import { rootPath } from '../src/shared/paths.ts';
 import { siblingModule } from '../src/shared/workers.ts';
+import { checkVoiceEncryption } from '../src/voice/encryption.ts';
 import { VoiceThread } from '../src/voice/voice-thread.ts';
 
 const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
@@ -120,6 +121,13 @@ try {
     } finally {
       await voice.stop();
     }
+  });
+
+  await step('voice encryption: AES-256-GCM and XChaCha20-Poly1305', async () => {
+    const support = await checkVoiceEncryption();
+    check(support.aes256gcm, 'OpenSSL has no aes-256-gcm');
+    check(support.xchacha20, `XChaCha20-Poly1305 is unavailable: ${support.error ?? 'no reason given'}`);
+    return '';
   });
 
   await step('FFmpeg with libopus', async () => {
