@@ -129,7 +129,7 @@ If you don't have a Linux machine to hand, Radio Bot can run inside WSL, the Lin
    bash ~/radio-bot/scripts/radio-bot.sh install
    ```
 
-   Two optional settings for the one-line installer: put `RADIO_BOT_DIR=/some/folder` before `bash` to install somewhere other than `~/radio-bot`, or `RADIO_BOT_VERSION=v1.3.0` to install that release instead of the newest. `RADIO_BOT_VERSION` only counts when the folder doesn't exist yet. (It also takes the name of a branch, for testing changes that aren't released yet; see [Trying an unreleased branch](install-docker.md#trying-an-unreleased-branch).) For example: `curl -fsSL https://raw.githubusercontent.com/DangerMouseUK/radiobot/main/install.sh | RADIO_BOT_DIR=~/bots/radio bash`.
+   Two optional settings for the one-line installer: put `RADIO_BOT_DIR=/some/folder` before `bash` to install somewhere other than `~/radio-bot`, or `RADIO_BOT_VERSION=v1.3.1` to install that release instead of the newest. `RADIO_BOT_VERSION` only counts when the folder doesn't exist yet. (It also takes the name of a branch, for testing changes that aren't released yet; see [Trying an unreleased branch](install-docker.md#trying-an-unreleased-branch).) For example: `curl -fsSL https://raw.githubusercontent.com/DangerMouseUK/radiobot/main/install.sh | RADIO_BOT_DIR=~/bots/radio bash`.
 
 2. **Only on Linux, if Docker isn't installed yet,** the installer asks `Install Docker now with Docker's official script (get.docker.com)?`. Type `y` and press **Enter**, then type your computer password if asked. If you just press **Enter**, the answer is no, and the installer stops and tells you where to get Docker.
 3. When it asks for the **Application ID**, paste the number you copied in step 1 and press **Enter**.
@@ -235,7 +235,7 @@ Type these commands in a terminal on the computer where you installed Radio Bot.
 **`radio-bot status`** prints something like this:
 
 ```text
-Version:  v1.3.0
+Version:  v1.3.1
 Folder:   /home/you/radio-bot
 State:    running
 Health:   healthy: ok

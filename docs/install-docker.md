@@ -44,7 +44,7 @@ Open it, choose your server and authorise. You can do this before or after start
 ```sh
 git clone https://github.com/DangerMouseUK/radiobot.git
 cd radiobot
-git checkout v1.3.0          # the newest release; the default branch may hold unreleased changes
+git checkout v1.3.1          # the newest release; the default branch may hold unreleased changes
 cp .env.example .env
 chmod 600 .env
 ```
@@ -92,7 +92,7 @@ docker compose up -d
 docker compose logs -f radio-bot
 ```
 
-The image is published as `ghcr.io/dangermouseuk/radio-bot`, with version tags; `compose.yaml` defaults to `ghcr.io/dangermouseuk/radio-bot:1.3.0`. To use another image or tag, set `RADIO_BOT_IMAGE` in your shell or in the `.env` file next to `compose.yaml`, for example `RADIO_BOT_IMAGE=ghcr.io/dangermouseuk/radio-bot:1.2` (the release workflow also publishes `<major>.<minor>` tags). If the image hasn't been published yet, or you want to build from source, build it locally from the `Dockerfile`:
+The image is published as `ghcr.io/dangermouseuk/radio-bot`, with version tags; `compose.yaml` defaults to `ghcr.io/dangermouseuk/radio-bot:1.3.1`. To use another image or tag, set `RADIO_BOT_IMAGE` in your shell or in the `.env` file next to `compose.yaml`, for example `RADIO_BOT_IMAGE=ghcr.io/dangermouseuk/radio-bot:1.2` (the release workflow also publishes `<major>.<minor>` tags). If the image hasn't been published yet, or you want to build from source, build it locally from the `Dockerfile`:
 
 ```sh
 docker compose build
@@ -303,10 +303,10 @@ curl -fsSL https://raw.githubusercontent.com/DangerMouseUK/radiobot/main/install
 Things to know while you are on a branch:
 
 - **Test with a separate Discord application and a private server** if you can. A branch is unreleased work and may have bugs.
-- **The image is named after the release in that branch's `compose.yaml`** (for example `radio-bot:1.3.0`), although it was built from the branch. `radio-bot status` shows the branch's name as the version, and says the newest release "is available", because you aren't on it.
+- **The image is named after the release in that branch's `compose.yaml`** (for example `radio-bot:1.3.1`), although it was built from the branch. `radio-bot status` shows the branch's name as the version, and says the newest release "is available", because you aren't on it.
 - **Commands are registered again when the bot starts,** so a branch that changes `/radio` shows its version in Discord. If a Discord app still shows the old options, restart that app.
 
-To go back, run `radio-bot update` on its own, which switches to the newest release and downloads its published image, or name a release (`radio-bot update v1.3.0`). If the branch added a database migration, the release refuses to open the newer database: put back the `radio-bot-pre-v<N>-…` backup taken just before the migration ran (see [Backups](#backups)). The [CHANGELOG](../CHANGELOG.md)'s *Unreleased* section, or the pull request, says whether a branch adds one.
+To go back, run `radio-bot update` on its own, which switches to the newest release and downloads its published image, or name a release (`radio-bot update v1.3.1`). If the branch added a database migration, the release refuses to open the newer database: put back the `radio-bot-pre-v<N>-…` backup taken just before the migration ran (see [Backups](#backups)). The [CHANGELOG](../CHANGELOG.md)'s *Unreleased* section, or the pull request, says whether a branch adds one.
 
 ## Backups
 
