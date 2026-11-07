@@ -400,6 +400,10 @@ describe('background checks stay out of the way', () => {
     // the deadline is ahead, as it can by a millisecond on a busy host. The first in line used to
     // give its turn up then, and wait again, while the next went ahead.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    // A clock the test moves by hand. With the real one, the two stream starts below could land in
+    // the same millisecond on a fast machine, giving the second the same deadline as the first.
+    let clock = Date.now();
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
     try {
       const t = harness([{ id: 'a', host: 'a.example.net' }], 1);
       t.service.settleBackground(60_000);
@@ -416,6 +420,7 @@ describe('background checks stay out of the way', () => {
       expect(checksBeforeAuto).toBe(1);
       await auto;
       // A later stream start still makes automatic work wait again.
+      clock += 61_000;
       t.service.settleBackground(60_000);
       let ran = false;
       const later = t.service.runInBackground(
@@ -430,6 +435,7 @@ describe('background checks stay out of the way', () => {
       await later;
       expect(ran).toBe(true);
     } finally {
+      now.mockRestore();
       vi.useRealTimers();
     }
   });
