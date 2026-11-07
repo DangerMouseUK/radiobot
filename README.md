@@ -92,7 +92,7 @@ You need a computer that stays on (Linux, a Raspberry Pi 4 or 5, a cloud server,
    It downloads the newest release into `~/radio-bot`, sets up Docker if needed (on Linux, with your permission), asks for your Application ID and token, starts the bot and waits until it is online. To read the script before running it, this does the same: `git clone https://github.com/DangerMouseUK/radiobot.git ~/radio-bot && bash ~/radio-bot/scripts/radio-bot.sh install`.
 3. **Add some stations.** The bot comes with none. On a first install, the installer offers to show the pack library and add the packs you pick. You can add more at any time (see [Station packs](#station-packs)).
 4. **Invite the bot** with the link the installer prints (or `radio-bot invite`).
-5. **In your server,** join a voice channel, run `/radio play` and pick a station. Admins can run `/radio config` to choose channels and DJ roles.
+5. **In your server,** join a voice channel, run `/radio play` and pick a station. Admins can run `/radio config` and press **Set up** to choose a voice channel, a default station and more.
 
 From then on, the `radio-bot` command looks after it:
 
@@ -227,7 +227,7 @@ Pack changes are limited to 10 an hour for the whole installation.
 
 | Command | Level | What it does |
 |---|---|---|
-| `/radio config [default_station] [manual_bitrate]` | Admin | The server's settings: allowed text and voice channels, DJ roles, idle mode, listener control, quality mode, preferred voice channel, channel lock, autostart, resume after restart, the notice channel, and the voice channel status |
+| `/radio config` | Admin | Opens the server's settings card: an overview of every setting with a **Change** button per group (who can use it, playing, sound and empty channel, notices, control panel), **Set up** for a new server, and **Reset…**. See [the settings card](#the-settings-card) |
 | `/radio add <name> <url> [website] [description] [category] [language]` | Admin | Adds a custom station for this server. The URL must be public (private and local addresses are refused) and must pass a live check first. The reply has a **Play now** button |
 | `/radio edit <station> [name] [url] [website] [description] [category] [language]` | Admin | Edits a custom station. A new URL is checked first, and the old one kept if the check fails |
 | `/radio remove <station>` | Admin | Removes a custom station for good, with its favourites and queue entries. Pack stations can't be removed |
@@ -247,7 +247,24 @@ Pack changes are limited to 10 an hour for the whole installation.
 The now-playing card and the control panel have buttons in rows that fit a phone screen: **Previous** and **Next** (through the pack, or through your favourites), **Browse** and **Favourite**, **Sources** and **Inspect**, then **Refresh**, **Stop** and **Leave**. **Skip** appears when the queue isn't empty, and is always on the panel.
 
 - **Favourites** are this server's shortlist. Anyone who can control the radio adds one with **Favourite** under a playing station. They come first in `/radio play` suggestions, have their own list (**Show favourites** in Browse, or `/radio list scope:favourites`), and Next and Previous step through them.
-- **The default station** is the one station the bot starts by itself, set by an admin with `/radio config default_station`. `/radio join` and autostart play it.
+- **The default station** is the one station the bot starts by itself, set by an admin in `/radio config` → Playing. `/radio join` and autostart play it.
+
+### The settings card
+
+`/radio config` shows a card only to the admin who ran it. Changes save as soon as they are made.
+
+| Group | Settings |
+|---|---|
+| Who can use it | Channels where `/radio` works · voice channels the radio may play in · DJ roles · what listeners may control |
+| Playing | Default station (picked from a menu or typed) · preferred voice channel · **Autostart** · **Channel lock** · **Resume after a restart** |
+| Sound and empty channel | Quality (Maximum, Balanced or Manual, with its bitrate) · what happens when everyone leaves |
+| Notices | The channel for problem notices · the voice channel status |
+| Control panel | Where the panel is · post or move it · remove it |
+
+- **Set up** walks a new server through the main settings in four short steps on one screen at a time, which suits a phone.
+- **Autostart** and **Channel lock** can only be switched on once they can work: autostart needs a default station and a preferred voice channel, and channel lock needs a preferred voice channel.
+- **Reset…** puts every setting back to its default after a confirmation. Favourites, source choices, custom stations and the control panel are kept.
+- Installation-wide choices (`DEFAULT_QUALITY_MODE`, `MAX_OPUS_BITRATE_KBPS`, packs and so on) stay in the configuration file: they apply to every server, so only the bot's operator sets them.
 
 ## Discord application setup
 
@@ -369,7 +386,8 @@ Version **1.2.4** is the current release; 1.0.0 was the first public release. Li
 
 - **Only one live Discord test so far.** On 1 November 2026, the bot was invited to a private test server with the minimum permissions and played a station from the pack that then shipped with the bot, heard in the Discord client: the direct MP3 source at 128 kbps, one Opus encode at 128 kbps, with DAVE end-to-end encryption negotiated and the Discord-side figures in `/radio stats` shown live. Not yet tested on a live call: the owner, DJ and member permission scenarios, station switching, and kick, move and channel-delete handling.
 - **The voice worker (`VOICE_THREAD=worker`) hasn't been on a live Discord call yet.** Its tests run a real worker thread that loads the voice libraries, makes a DAVE session and joins through a stand-in Discord gateway, and CI's smoke test starts it from the built image. Joining a real voice channel, DAVE with real listeners, moves, kicks, voice server changes and recovery after the worker stops have not been tried, and nor has the difference it makes to late packets on a one-core host. It is off by default until it has.
-- **The performance pass of this release** (the 3-minute settle period, the batched clean-up, the cached catalogue views, the memory clean-up figures) is measured by the main-thread budget test on CI only, not yet on a one-core host.
+- **The new settings card (`/radio config`) hasn't been seen in a Discord app yet.** It uses Discord's newer message layout and forms with menus. Its layout, its limits and every change it makes are covered by tests, but how it looks on desktop and on a phone hasn't been checked, and nor has how a settings card from an older version behaves when one of its buttons is pressed (it should open a new card).
+- **The performance pass of 1.2.4** (the 3-minute settle period, the batched clean-up, the cached catalogue views, the memory clean-up figures) is measured by the main-thread budget test on CI only, not yet on a one-core host.
 - **Holding playback while Discord's voice connection resumes** (unreleased) is tested against the voice library's own audio player with a stand-in connection, not yet on a live Discord call.
 - **No 72-hour soak test** (a long unattended run) yet, so long-run memory growth and FFmpeg process clean-up over days are unmeasured.
 - **Pack stations are only partly probed.** On 31 October 2026, live probes confirmed 3 of the 63 stations of the pack that used to ship with the bot (now in the library): direct MP3 and AAC-LC, and HLS AAC-LC, all at 128 kbps, 44.1 kHz stereo. The other 60 use the same host and address pattern but haven't been probed. One HLS address timed out, and one station's direct stream refuses access and is disabled. The evidence is in the pack's `evidence/` folder in the library.

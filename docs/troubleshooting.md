@@ -42,7 +42,7 @@ Installed with the installer? Start with `radio-bot status` and `radio-bot logs`
 
 ## "Radio commands are only allowed in #…"
 
-An admin has limited radio commands to some text channels (`/radio config` → Access). Use one of the channels the message names, or the text chat of an approved voice channel. Admins aren't affected by this limit.
+An admin has limited radio commands to some text channels (`/radio config` → Who can use it). Use one of the channels the message names, or the text chat of an approved voice channel. Admins aren't affected by this limit.
 
 ## "Only DJs and administrators…" / "Join a voice channel first…" / "The radio is in use in #…"
 
@@ -52,7 +52,7 @@ These mean the server limits who can control the radio (the *listener control mo
 
 | Reason code | Meaning | What to do |
 |---|---|---|
-| `VOICE_PERMISSION` | The bot can't use that voice channel. The message says which of these it is: it isn't a standard voice channel (stage channels aren't supported); it isn't on the server's list of approved voice channels; the bot lacks View Channel, Connect or Speak there; or the channel is full. | Give the bot's role View Channel, Connect and Speak in that channel (channel settings → Permissions), add the channel to the approved list in `/radio config` → Access, or pick another channel. |
+| `VOICE_PERMISSION` | The bot can't use that voice channel. The message says which of these it is: it isn't a standard voice channel (stage channels aren't supported); it isn't on the server's list of approved voice channels; the bot lacks View Channel, Connect or Speak there; or the channel is full. | Give the bot's role View Channel, Connect and Speak in that channel (channel settings → Permissions), add the channel to the approved list in `/radio config` → Who can use it, or pick another channel. |
 | `VOICE_CONNECT_TIMEOUT` | The voice connection wasn't ready within 20 s. | Usually a network problem on the bot's host: outgoing **UDP** traffic to Discord voice is blocked, a firewall or VPN is in the way, or the host has no IPv4 connection. Check the host's (or VM's) firewall. For more detail, run with `LOG_LEVEL=debug`. |
 | `VOICE_CHANNEL_GONE` | The channel was deleted, or the bot is no longer in that server. | Choose another channel. |
 | `VOICE_KICKED` | A moderator disconnected the bot. | Deliberate: the bot won't rejoin or autostart. Use `/radio play` to start again. |
@@ -139,7 +139,7 @@ A custom station is only saved if the bot's check of its stream succeeds. Otherw
 
 - "The radio is now playing from a fallback source (…)", and "Playing from a fallback" in `/radio now`, mean the best source failed and another verified source of the same station is playing. The bot moves back to the usual source by itself once a check shows that it works again (see [audio-quality.md → Recovery and continuity](audio-quality.md#recovery-and-continuity)).
 - If a notification channel is set, the first notice of each kind is posted, and repeats within 5 minutes are summarised in one follow-up message.
-- **The voice channel status doesn't show what's playing:** the bot needs **Set Voice Channel Status** in that voice channel. Invites made with the current link include it; for an older invite, re-invite the bot with `radio-bot invite` or give its role the permission. Check that `/radio config` → Notices shows **Voice channel status: on**. The status follows the stream's titles, so it shows only the station during adverts or on stations that send no titles.
+- **The voice channel status doesn't show what's playing:** the bot needs **Set Voice Channel Status** in that voice channel. Invites made with the current link include it; for an older invite, re-invite the bot with `radio-bot invite` or give its role the permission. Check that the `/radio config` overview shows **Channel status: on** under Notices. The status follows the stream's titles, so it shows only the station during adverts or on stations that send no titles.
 - **Short drops followed by a speed-up, with no error logged:** voice packets reached Discord late, and Discord's player is catching up. To find out why:
   1. In `/radio stats`, look at **Late packets** under Output to Discord. A longest gap of about 55 ms or more is enough to hear.
   2. Then look at the event-loop delay under Bot health. If the worst delay is 20 ms or more (flagged in the panel, and logged as a warning at 50 ms), the bot couldn't send packets on time. The line below it says why, as does the warning in the log, which also lists that minute's late packets with their times. A long **memory clean-up** pause (garbage collection) means the bot's own memory work held it up. High **preempted** counts or **host steal** mean the host was too busy: other programs on it, or other machines on the same physical server. Give it more CPU, or run fewer streams. On a one-core host, most of these come from other scheduled jobs (stats collectors, `docker stats` loggers, backups): move them to another machine, run them less often, or use a lighter tool. To match a delay to its cause, set `LOG_LEVEL=debug`: each minute's worst delay is logged, and so is every interaction, with the CPU time used while it ran. On a systemd install the unit already gives the bot a higher CPU priority (`Nice=-5`).
@@ -203,10 +203,10 @@ A custom station is only saved if the bot's check of its stream succeeds. Otherw
 
 ## After a restart nothing plays
 
-That is normal: after a restart the bot stays silent unless one of these is switched on for the server in `/radio config`:
+That is normal: after a restart the bot stays silent unless one of these is switched on for the server in `/radio config` → Playing:
 
-- With *Resume after restart* on, the station that was playing (or paused in an empty channel) starts again.
-- With *Autostart* on, plus a default station and a preferred voice channel, the default station starts.
+- With *Resume after a restart* on, the station that was playing (or paused in an empty channel) starts again.
+- With *Autostart* on, the default station starts in the preferred voice channel. Autostart can only be switched on once both are set; if one is cleared later, the overview says what autostart still needs.
 
 A `/radio stop`, a `/radio leave` or a moderator disconnecting the bot always prevents automatic playback. `/radio status` says when the bot didn't resume.
 

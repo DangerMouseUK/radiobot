@@ -35,7 +35,7 @@ const streamText = (text: string) =>
  *
  * Buttons follow the same idea, one meaning per colour:
  * - Blurple (Primary): the recommended next step, at most one per row (Discord: "Use only one
- *   Primary button per group"). Also the current settings page's tab, shown dimmed.
+ *   Primary button per group"), such as Set up on a new server's settings card.
  * - Red (Danger): removes, overwrites or ends something for everyone, and takes more than one
  *   click to get back (Leave, Remove, Apply import, Stop the check). At most one per message.
  * - Green (Success): "on", and nothing else (a settings switch that is on, matching the green

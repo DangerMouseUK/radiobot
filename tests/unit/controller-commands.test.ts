@@ -504,7 +504,7 @@ describe('/radio join', () => {
     expect(i.ephemeral).toBe(false);
     expect(lastEmbed(i).color).toBe(COLOR.ok);
     expect(i.lastText).toMatch(/press \*\*Browse\*\* or use `\/radio play` to pick one/);
-    expect(i.lastText).toMatch(/Admins can set one with `\/radio config default_station`/);
+    expect(i.lastText).toMatch(/Admins can set one in `\/radio config`/);
     // Browse finishes the job without typing another command.
     expect(i.componentIds.map((id) => decode(t.ids, id)?.action)).toEqual(
       expect.arrayContaining(['obrowse', 'next', 'stop']),
@@ -1361,54 +1361,104 @@ describe('/radio sync', () => {
 });
 
 describe('/radio config', () => {
-  it('sets the default station by name and a manual bitrate, which applies at once', async () => {
+  it('opens the overview card, privately and in the newer layout, and only for admins', async () => {
+    const t = setup();
+    const i = await t.command(t.people.admin, { sub: 'config' });
+    expect(i.violations).toEqual([]);
+    expect(i.calls[0]!.payload.flags).toEqual([MessageFlags.Ephemeral, MessageFlags.IsComponentsV2]);
+    expect(i.text).toMatch(/## Radio Bot settings/);
+    expect(i.text).toMatch(/Getting started:.*⬜ Voice channel · ⬜ Default station/);
+    // Every group has its Change button, and a new server is pointed at Set up.
+    const args = i.cardControls.map((c) => decode(t.ids, c.custom_id ?? '')?.arg);
+    expect(args).toEqual(
+      expect.arrayContaining(['go:access', 'go:playing', 'go:sound', 'go:notices', 'go:panel', 'go:setup1']),
+    );
+    const member = await t.command(t.people.member, { sub: 'config' });
+    expect(member.text).toMatch(/Only the server owner/);
+  });
+});
+
+describe('the settings forms', () => {
+  const form = (t: Harness, arg: string) => t.ids.make(GUILD, 'cfgm', arg, 30 * 60_000);
+
+  it('sets the default station from a typed name, which wins over the menu', async () => {
     const { t, st } = customServer();
-    const s = playingIn(t, V1, st.id);
-    const i = await t.command(t.people.admin, {
-      sub: 'config',
-      strings: { default_station: 'My Station' },
-      ints: { manual_bitrate: 256 },
+    const other = t.stations.listStations(GUILD)[0]!;
+    const i = await t.submit(t.people.admin, form(t, 'station:playing'), { name: 'My Station' }, true, {
+      pick: [other.id],
     });
-    expect(i.ephemeral).toBe(true);
-    expect(t.guilds.getSettings(GUILD)).toMatchObject({ defaultStationId: st.id, manualBitrateKbps: 256 });
-    expect(s.encoderRefreshes).toBe(1);
-    expect(i.text).toMatch(/The station restarts for a moment to use the new quality\./);
-    // The options are playback settings, so the Playback page opens and shows them.
-    expect(i.text).toMatch(/Default station: My Station/);
-    expect(i.text).toMatch(/Radio Bot settings: Playback/);
+    expect(i.violations).toEqual([]);
+    expect(methods(i)).toEqual(['update']);
+    expect(t.guilds.getSettings(GUILD).defaultStationId).toBe(st.id);
+    expect(i.text).toMatch(/\*\*Default station\*\*\nMy Station/);
   });
 
-  it('clears the default station when "none" is typed, in any case', async () => {
-    const { t, st } = customServer();
-    t.guilds.updateSettings(GUILD, { defaultStationId: st.id });
-    await t.command(t.people.admin, { sub: 'config', strings: { default_station: ' None ' } });
+  it('never guesses a typed name: several matches are listed and nothing changes (FR-001)', async () => {
+    const t = setup();
+    const i = await t.submit(t.people.admin, form(t, 'station:setup2'), { name: 'dance' }, true, {
+      pick: [],
+    });
+    expect(t.guilds.getSettings(GUILD).defaultStationId).toBeNull();
+    expect(i.text).toMatch(/⚠️ Several stations match “dance”: .+, .+\. Type more of the name/);
+    // Back on the setup step it came from.
+    expect(i.text).toMatch(/Step 2 of 4/);
+    const none = await t.submit(
+      t.people.admin,
+      form(t, 'station:playing'),
+      { name: 'Nothing Like It' },
+      true,
+      {
+        pick: [],
+      },
+    );
+    expect(none.text).toMatch(/No station matches “Nothing Like It”, so the default station is unchanged/);
+  });
+
+  it('ignores a menu choice for a station this server can’t see', async () => {
+    const t = setup();
+    const i = await t.submit(t.people.admin, form(t, 'station:playing'), { name: '' }, true, {
+      pick: ['custom:someone-elses'],
+    });
+    expect(t.guilds.getSettings(GUILD).defaultStationId).toBeNull();
+    expect(i.text).toMatch(/no longer available/);
+    // Nothing chosen and nothing typed changes nothing.
+    const empty = await t.submit(t.people.admin, form(t, 'station:playing'), { name: '' }, true, {
+      pick: [],
+    });
+    expect(empty.violations).toEqual([]);
     expect(t.guilds.getSettings(GUILD).defaultStationId).toBeNull();
   });
 
-  it('changes nothing for an unknown default station, and does not touch the encoder', async () => {
+  it('sets a manual bitrate, which applies at once, and refuses anything out of range', async () => {
     const { t, st } = customServer();
     const s = playingIn(t, V1, st.id);
-    t.guilds.updateSettings(GUILD, { defaultStationId: st.id });
-    const i = await t.command(t.people.admin, {
-      sub: 'config',
-      strings: { default_station: 'Nothing Like It' },
-    });
-    expect(i.text).toMatch(/No station matches/);
-    expect(t.guilds.getSettings(GUILD).defaultStationId).toBe(st.id);
-    await t.command(t.people.admin, { sub: 'config' });
-    expect(s.encoderRefreshes).toBe(0);
+    t.guilds.updateSettings(GUILD, { qualityMode: 'manual' });
+    const i = await t.submit(t.people.admin, form(t, 'bitrate:sound'), { kbps: ' 256 ' });
+    expect(t.guilds.getSettings(GUILD).manualBitrateKbps).toBe(256);
+    expect(s.encoderRefreshes).toBe(1);
+    expect(i.text).toMatch(/The station restarts for a moment to use the new quality\./);
+    expect(i.text).toMatch(/\*\*Manual bitrate\*\*\n256 kbps/);
+    for (const bad of ['31', '511', '12a', '-64', '1e2']) {
+      const r = await t.submit(t.people.admin, form(t, 'bitrate:sound'), { kbps: bad });
+      expect(r.text).toMatch(/isn’t a whole number from 32 to 510, so the bitrate is unchanged/);
+    }
+    expect(t.guilds.getSettings(GUILD).manualBitrateKbps).toBe(256);
+    expect(s.encoderRefreshes).toBe(1);
   });
 
-  it('says a manual bitrate waits for Manual quality, so it does not look ignored', async () => {
+  it('is for admins only, like the card', async () => {
     const t = setup();
-    const i = await t.command(t.people.admin, { sub: 'config', ints: { manual_bitrate: 256 } });
-    expect(t.guilds.getSettings(GUILD).manualBitrateKbps).toBe(256);
-    expect(i.calls[0]!.payload.content).toBe(
-      'Manual bitrate saved (256 kbps). It is used once Quality is set to Manual.',
-    );
-    t.guilds.updateSettings(GUILD, { qualityMode: 'manual' });
-    const manual = await t.command(t.people.admin, { sub: 'config', ints: { manual_bitrate: 192 } });
-    expect(manual.calls[0]!.payload.content).toBeUndefined();
+    const i = await t.submit(t.people.member, form(t, 'bitrate:sound'), { kbps: '256' });
+    expect(i.text).toMatch(/Only the server owner/);
+    expect(t.guilds.getSettings(GUILD).manualBitrateKbps).toBeNull();
+  });
+
+  it('answers a form sent without its card with a new card', async () => {
+    const t = setup();
+    const i = await t.submit(t.people.admin, form(t, 'bitrate:sound'), { kbps: '192' }, false);
+    expect(methods(i)).toEqual(['reply']);
+    expect(i.ephemeral).toBe(true);
+    expect(i.calls[0]!.payload.flags).toEqual([MessageFlags.Ephemeral, MessageFlags.IsComponentsV2]);
   });
 });
 
@@ -1791,7 +1841,7 @@ describe('/radio browse and /radio help', () => {
     t.guilds.updateSettings(GUILD, { allowedTextChannelIds: [TEXT] });
     const i = await t.command(t.people.member, { sub: 'help' }, '800000000000000099');
     expect(i.ephemeral).toBe(true);
-    expect(i.text).toMatch(/🛠 Settings\nServer admins choose channels and DJ roles/);
+    expect(i.text).toMatch(/🛠 Settings\nServer admins choose channels, DJ roles and the default station/);
     expect(i.text).not.toMatch(/🛠 Admin/);
     // Help is the one command that answers there, so it says where the others work.
     expect(i.text).toMatch(/Radio commands are only allowed in <#800000000000000001>\. Try there instead\./);
@@ -1804,7 +1854,9 @@ describe('/radio browse and /radio help', () => {
     const i = await t.command(t.people.admin, { sub: 'help' });
     expect(i.text).toContain('(320 kbps at most)');
     // The admin commands are grouped by job, setup first.
-    expect(i.text).toMatch(/🛠 Admin\n`\/radio config`: channels, DJ roles and quality/);
+    expect(i.text).toMatch(
+      /🛠 Admin\n`\/radio config`: every server setting, with \*\*Set up\*\* for the main ones/,
+    );
     expect(i.text).toMatch(/Custom stations: `\/radio add` · `\/radio edit` · `\/radio remove`/);
   });
 });

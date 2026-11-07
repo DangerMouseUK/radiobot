@@ -83,7 +83,7 @@ describe('address classification', () => {
 
 describe('URL validation', () => {
   it('accepts normal public stream URLs', () => {
-    expect(policy.validateUrl('https://stream.example.net/live/abc123').host).toBe('stream.example.net');
+    expect(policy.validateUrl('https://stream.example.org/my-station').host).toBe('stream.example.org');
     expect(policy.validateUrl('http://ice.example.org:8000/live.mp3').port).toBe('8000');
   });
 

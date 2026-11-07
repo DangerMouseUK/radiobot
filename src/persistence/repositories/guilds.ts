@@ -131,6 +131,34 @@ export class GuildRepository {
     this.#defaults = defaults;
   }
 
+  /** The installation's starting values for a new server (DEFAULT_QUALITY_MODE and friends). */
+  get defaults(): GuildDefaults {
+    return this.#defaults;
+  }
+
+  /**
+   * Every setting a server admin can change, at its default: the installation's defaults where it
+   * has them, else the table's own. The control panel isn't a setting, so it is left out.
+   */
+  defaultSettings(): Required<Omit<SettingsPatch, 'panelChannelId' | 'panelMessageId'>> {
+    return {
+      allowedTextChannelIds: [],
+      allowedVoiceChannelIds: [],
+      djRoleIds: [],
+      memberControlMode: 'same_channel',
+      defaultStationId: null,
+      preferredVoiceChannelId: null,
+      voiceLock: false,
+      qualityMode: this.#defaults.qualityMode,
+      manualBitrateKbps: null,
+      idleMode: this.#defaults.idleMode,
+      autostart: false,
+      resumeOnRestart: this.#defaults.resumeOnRestart,
+      voiceChannelStatus: true,
+      notificationChannelId: null,
+    };
+  }
+
   /** Servers that have a control panel message to keep up to date. */
   guildsWithPanel(): string[] {
     return this.#db

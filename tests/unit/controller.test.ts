@@ -182,11 +182,16 @@ describe('buttons and menus are authorised again on every click', () => {
   it('lets an administrator switch the voice channel status off and on', async () => {
     const t = setup();
     expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(true);
-    const off = await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus'));
+    const off = await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus:notices'));
     expect(off.violations).toEqual([]);
     expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(false);
-    expect(off.text).toMatch(/Voice channel status: off/);
-    await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus'));
+    // The switch shows its state: grey and "Off" now.
+    expect(
+      off.cardControls.find((c) => decode(t.ids, c.custom_id ?? '')?.arg === 'vstatus:notices'),
+    ).toMatchObject({
+      label: 'Off',
+    });
+    await t.click(t.people.admin, t.ids.make(GUILD, 'cfg', 'vstatus:notices'));
     expect(t.ctx.guilds.getSettings(GUILD).voiceChannelStatus).toBe(true);
     const denied = await t.click(t.people.member, t.ids.make(GUILD, 'cfg', 'vstatus'));
     expect(denied.text).toMatch(/Only the server owner/);
@@ -573,16 +578,13 @@ describe('favourites and the default station', () => {
     expect(choices.filter((x) => x.value === a!.id)).toHaveLength(1);
   });
 
-  it('lets an admin clear the default station', async () => {
+  it('lets an admin set and clear the default station with the settings form', async () => {
     const t = setup();
     const station = t.stations.listStations(GUILD)[0]!;
-    await t.command(t.people.owner, { sub: 'config', strings: { default_station: station.id } });
+    const form = t.ids.make(GUILD, 'cfgm', 'station:playing');
+    await t.submit(t.people.owner, form, { name: '' }, true, { pick: [station.id] });
     expect(t.guilds.getSettings(GUILD).defaultStationId).toBe(station.id);
-    expect((await suggest(t, 'config', 'default_station'))[0]).toEqual({
-      name: 'No default station (clear it)',
-      value: 'none',
-    });
-    await t.command(t.people.owner, { sub: 'config', strings: { default_station: 'none' } });
+    await t.submit(t.people.owner, form, { name: '' }, true, { pick: ['none'] });
     expect(t.guilds.getSettings(GUILD).defaultStationId).toBeNull();
   });
 
@@ -793,10 +795,10 @@ describe('choosing another source while a station plays', () => {
 });
 
 describe('settings with long channel and role lists', () => {
-  it('stays within Discord’s field limit however many are chosen', async () => {
+  it('keeps the overview short however many are chosen', async () => {
     const t = setup();
     const ids = (start: number) =>
-      Array.from({ length: 25 }, (_, n) => `7${String(start + n).padStart(17, '0')}`);
+      Array.from({ length: 50 }, (_, n) => `7${String(start + n).padStart(17, '0')}`);
     t.guilds.updateSettings(GUILD, {
       allowedTextChannelIds: ids(100),
       allowedVoiceChannelIds: ids(200),
@@ -804,9 +806,15 @@ describe('settings with long channel and role lists', () => {
     });
     const view = await t.command(t.people.owner, { sub: 'config' });
     expect(view.violations).toEqual([]);
-    const fields = view.calls[0]!.payload.embeds![0]!.toJSON().fields!;
-    for (const f of fields) expect(f.value.length).toBeLessThanOrEqual(1024);
-    expect(fields[0]!.value).toMatch(/and 19 more/);
+    expect(view.text).toMatch(/Commands: .* and 47 more/);
+    expect(view.text.length).toBeLessThan(2000);
+    // The menus preselect what fits in them: Discord's 25.
+    const access = await t.click(t.people.owner, t.ids.make(GUILD, 'cfg', 'go:access'));
+    expect(access.violations).toEqual([]);
+    const menus = access.cardControls.filter((c) => c.type === 6 || c.type === 8) as Array<{
+      default_values?: unknown[];
+    }>;
+    expect(menus.map((m) => m.default_values?.length)).toEqual([25, 25, 25]);
   });
 });
 

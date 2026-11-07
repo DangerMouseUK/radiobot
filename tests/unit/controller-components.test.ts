@@ -11,6 +11,7 @@ import {
   OWNER,
   setup,
   signedId,
+  TEXT,
   V1,
   V2,
 } from './controller-harness.ts';
@@ -469,34 +470,47 @@ describe('choosing another source', () => {
   });
 });
 
-describe('settings menus and buttons', () => {
-  const cfg = (t: Harness, field: string) => t.ids.make(GUILD, 'cfg', field, 30 * 60_000);
-  const page = (i: FakeInteraction) => firstEmbed(i).title?.replace('Radio Bot settings: ', 'Page: ');
+describe('the settings card', () => {
+  const cfg = (t: Harness, arg: string) => t.ids.make(GUILD, 'cfg', arg, 30 * 60_000);
+  /** The button or menu on the card with this argument. */
+  const control = (t: Harness, i: FakeInteraction, arg: string) =>
+    i.cardControls.find((c) => decode(t.ids, c.custom_id ?? '')?.arg === arg);
+  const PANEL = '800000000000000010';
+  const OLD_PANEL = '800000000000000011';
 
-  it('the page buttons switch pages without changing anything', async () => {
+  it('Change, Back and the setup steps move between screens in place, changing nothing', async () => {
     const t = setup();
     const before = t.guilds.getSettings(GUILD);
-    for (const [field, label] of [
-      ['page-access', 'Page: Access'],
-      ['page-playback', 'Page: Playback'],
-      ['page-notify', 'Page: Notices'],
+    for (const [to, heading] of [
+      ['access', '## Who can use it'],
+      ['playing', '## Playing'],
+      ['sound', '## Sound and empty channel'],
+      ['notices', '## Notices'],
+      ['panel', '## Control panel'],
+      ['reset', '## Reset all settings?'],
+      ['setup1', 'Step 1 of 4'],
+      ['setup5', 'Finished'],
+      ['home', '## Radio Bot settings'],
     ] as const) {
-      const i = await t.click(t.people.admin, cfg(t, field));
+      const i = await t.click(t.people.admin, cfg(t, `go:${to}`));
+      expect(i.violations).toEqual([]);
       expect(methods(i)).toEqual(['update']);
-      expect(page(i)).toBe(label);
+      expect(i.text).toContain(heading);
     }
+    // A screen that doesn't exist opens the overview.
+    expect((await t.click(t.people.admin, cfg(t, 'go'))).text).toContain('## Radio Bot settings');
     expect(t.guilds.getSettings(GUILD)).toEqual(before);
   });
 
-  it('the channel menus set the command, voice, preferred and notice channels', async () => {
+  it('the channel menus set the command, voice, preferred and notice channels, and stay on their screen', async () => {
     const t = setup();
-    const text = await t.click(t.people.admin, cfg(t, 'text'), 'channel', ['800000000000000021']);
-    expect(page(text)).toBe('Page: Access');
-    await t.click(t.people.admin, cfg(t, 'voice'), 'channel', [V1, V2]);
-    const pvoice = await t.click(t.people.admin, cfg(t, 'pvoice'), 'channel', [V2]);
-    expect(page(pvoice)).toBe('Page: Playback');
-    const notify = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', ['800000000000000022']);
-    expect(page(notify)).toBe('Page: Notices');
+    const text = await t.click(t.people.admin, cfg(t, 'text:access'), 'channel', ['800000000000000021']);
+    expect(text.text).toContain('## Who can use it');
+    await t.click(t.people.admin, cfg(t, 'voice:access'), 'channel', [V1, V2]);
+    const pvoice = await t.click(t.people.admin, cfg(t, 'pvoice:setup1'), 'channel', [V2]);
+    expect(pvoice.text).toContain('Step 1 of 4');
+    const notify = await t.click(t.people.admin, cfg(t, 'notify:notices'), 'channel', ['800000000000000022']);
+    expect(notify.text).toContain('## Notices');
     expect(t.guilds.getSettings(GUILD)).toMatchObject({
       allowedTextChannelIds: ['800000000000000021'],
       allowedVoiceChannelIds: [V1, V2],
@@ -504,8 +518,8 @@ describe('settings menus and buttons', () => {
       notificationChannelId: '800000000000000022',
     });
     // Emptying a single-choice menu clears the setting.
-    await t.click(t.people.admin, cfg(t, 'pvoice'), 'channel', []);
-    await t.click(t.people.admin, cfg(t, 'notify'), 'channel', []);
+    await t.click(t.people.admin, cfg(t, 'pvoice:playing'), 'channel', []);
+    await t.click(t.people.admin, cfg(t, 'notify:notices'), 'channel', []);
     expect(t.guilds.getSettings(GUILD)).toMatchObject({
       preferredVoiceChannelId: null,
       notificationChannelId: null,
@@ -517,32 +531,35 @@ describe('settings menus and buttons', () => {
     t.guild.members.me = { id: '900000000000000099' };
     const muted = t.textChannel('800000000000000022');
     muted.canSend = false;
-    const i = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', [muted.id]);
-    expect(i.calls[0]!.payload.content).toBe(
+    const i = await t.click(t.people.admin, cfg(t, 'notify:setup4'), 'channel', [muted.id]);
+    expect(i.text).toContain(
       '⚠️ I can’t post in <#800000000000000022> yet. Give me View Channel and Send Messages there.',
     );
     // The setting is saved anyway: the admin may be about to fix the channel's permissions.
     expect(t.guilds.getSettings(GUILD).notificationChannelId).toBe(muted.id);
     muted.canSend = true;
-    const fine = await t.click(t.people.admin, cfg(t, 'notify'), 'channel', [muted.id]);
-    expect(fine.calls[0]!.payload.content).toBe('');
+    const fine = await t.click(t.people.admin, cfg(t, 'notify:setup4'), 'channel', [muted.id]);
+    expect(fine.text).not.toMatch(/I can’t post/);
   });
 
   it('the DJ role menu never stores @everyone', async () => {
     const t = setup();
     // @everyone has the server's own ID.
-    await t.click(t.people.admin, cfg(t, 'djs'), 'role', [DJ_ROLE, GUILD]);
+    await t.click(t.people.admin, cfg(t, 'djs:access'), 'role', [DJ_ROLE, GUILD]);
     expect(t.guilds.getSettings(GUILD).djRoleIds).toEqual([DJ_ROLE]);
   });
 
-  it('a menu for an unknown field changes nothing', async () => {
+  it('a button or menu for an unknown field changes nothing', async () => {
     const t = setup();
     const before = t.guilds.getSettings(GUILD);
-    await t.click(t.people.admin, cfg(t, 'mystery'), 'channel', [V1]);
+    await t.click(t.people.admin, cfg(t, 'mystery:access'), 'channel', [V1]);
     await t.click(t.people.admin, cfg(t, 'mystery'), 'role', [DJ_ROLE]);
     await t.click(t.people.admin, cfg(t, 'mystery'), 'string', ['any']);
     const button = await t.click(t.people.admin, cfg(t, 'mystery'));
-    expect(page(button)).toBe('Page: Playback');
+    expect(button.text).toContain('## Radio Bot settings');
+    // A form button pressed as a menu, or a panel menu pressed as a button, does nothing either.
+    await t.click(t.people.admin, cfg(t, 'station:playing'), 'string', ['x']);
+    await t.click(t.people.admin, cfg(t, 'panel:panel'));
     expect(t.guilds.getSettings(GUILD)).toEqual(before);
   });
 
@@ -552,19 +569,19 @@ describe('settings menus and buttons', () => {
     t.guild.voiceStates.cache.set('900000000000000011', { channelId: V1, member: { user: { bot: false } } });
     t.guild.voiceStates.cache.set('900000000000000012', { channelId: V1, member: { user: { bot: true } } });
     t.guild.voiceStates.cache.set('900000000000000013', { channelId: V2, member: { user: { bot: false } } });
-    const i = await t.click(t.people.admin, cfg(t, 'idle'), 'string', ['24x7']);
-    expect(page(i)).toBe('Page: Playback');
+    const i = await t.click(t.people.admin, cfg(t, 'idle:sound'), 'string', ['24x7']);
+    expect(i.text).toContain('## Sound and empty channel');
     expect(t.guilds.getSettings(GUILD).idleMode).toBe('24x7');
     expect(s.listenerCounts).toEqual([1]);
     expect(s.encoderRefreshes).toBe(0);
-    await t.click(t.people.admin, cfg(t, 'idle'), 'string', ['sometimes']);
+    await t.click(t.people.admin, cfg(t, 'idle:sound'), 'string', ['sometimes']);
     expect(t.guilds.getSettings(GUILD).idleMode).toBe('24x7');
   });
 
   it('the idle menu has nobody to recheck when the bot is not in a channel', async () => {
     const t = setup();
     const s = t.sessions.ensure(GUILD);
-    await t.click(t.people.admin, cfg(t, 'idle'), 'string', ['pause_when_empty']);
+    await t.click(t.people.admin, cfg(t, 'idle:setup3'), 'string', ['pause_when_empty']);
     expect(t.guilds.getSettings(GUILD).idleMode).toBe('pause_when_empty');
     expect(s.listenerCounts).toEqual([]);
   });
@@ -572,52 +589,254 @@ describe('settings menus and buttons', () => {
   it('the member and quality menus take only known values; quality applies to the stream at once', async () => {
     const { t, st } = customServer();
     const s = playingIn(t, V1, st.id);
-    await t.click(t.people.admin, cfg(t, 'member'), 'string', ['any']);
-    await t.click(t.people.admin, cfg(t, 'member'), 'string', ['everyone']);
+    await t.click(t.people.admin, cfg(t, 'member:access'), 'string', ['any']);
+    await t.click(t.people.admin, cfg(t, 'member:access'), 'string', ['everyone']);
     expect(t.guilds.getSettings(GUILD).memberControlMode).toBe('any');
-    const changed = await t.click(t.people.admin, cfg(t, 'quality'), 'string', ['balanced']);
+    const changed = await t.click(t.people.admin, cfg(t, 'quality:sound'), 'string', ['balanced']);
     expect(t.guilds.getSettings(GUILD).qualityMode).toBe('balanced');
     expect(s.encoderRefreshes).toBe(1);
     expect(changed.text).toMatch(/restarts for a moment/);
     s.reencodes = false;
-    const same = await t.click(t.people.admin, cfg(t, 'quality'), 'string', ['balanced']);
+    const same = await t.click(t.people.admin, cfg(t, 'quality:sound'), 'string', ['balanced']);
     expect(same.text).not.toMatch(/restarts for a moment/);
-    await t.click(t.people.admin, cfg(t, 'quality'), 'string', ['lossless']);
+    await t.click(t.people.admin, cfg(t, 'quality:sound'), 'string', ['lossless']);
     expect(t.guilds.getSettings(GUILD).qualityMode).toBe('balanced');
     expect(s.encoderRefreshes).toBe(2);
   });
 
-  it('the switches menu turns on exactly the ticked switches, and stays on the Playback page', async () => {
+  it('choosing Manual with no bitrate yet asks for one at once; with one, it just shows it', async () => {
     const t = setup();
-    t.guilds.updateSettings(GUILD, { autostart: false, resumeOnRestart: true, voiceLock: false });
-    const on = await t.click(t.people.admin, cfg(t, 'switches'), 'string', ['autostart', 'lock']);
-    expect(page(on)).toBe('Page: Playback');
-    expect(t.guilds.getSettings(GUILD)).toMatchObject({
-      autostart: true,
-      resumeOnRestart: false,
-      voiceLock: true,
-    });
-    // Unticking everything turns every switch off.
-    await t.click(t.people.admin, cfg(t, 'switches'), 'string', []);
-    expect(t.guilds.getSettings(GUILD)).toMatchObject({
-      autostart: false,
-      resumeOnRestart: false,
-      voiceLock: false,
-    });
+    const ask = await t.click(t.people.admin, cfg(t, 'quality:sound'), 'string', ['manual']);
+    expect(methods(ask)).toEqual(['showModal']);
+    expect(t.guilds.getSettings(GUILD).qualityMode).toBe('manual');
+    const modal = ask.calls[0]!.payload.modal as { custom_id: string; title: string };
+    expect(modal.title).toBe('Manual bitrate');
+    expect(decode(t.ids, modal.custom_id)).toEqual({ action: 'cfgm', arg: 'bitrate:sound' });
+    t.guilds.updateSettings(GUILD, { qualityMode: 'maximum', manualBitrateKbps: 192 });
+    const shown = await t.click(t.people.admin, cfg(t, 'quality:sound'), 'string', ['manual']);
+    expect(methods(shown)).toEqual(['update']);
+    expect(shown.text).toMatch(/\*\*Manual bitrate\*\*\n192 kbps/);
   });
 
-  it('the switch buttons of settings pages sent before the menu still work', async () => {
+  it('the Change buttons open the forms, with the current values filled in', async () => {
     const t = setup();
-    const before = t.guilds.getSettings(GUILD);
-    for (const field of ['autostart', 'resume', 'lock']) {
-      const i = await t.click(t.people.admin, cfg(t, field));
-      expect(page(i)).toBe('Page: Playback');
-    }
-    expect(t.guilds.getSettings(GUILD)).toMatchObject({
-      autostart: !before.autostart,
-      resumeOnRestart: !before.resumeOnRestart,
-      voiceLock: !before.voiceLock,
+    const [a, b, c] = t.stations.listStations(GUILD).slice(-3);
+    t.guilds.updateSettings(GUILD, { defaultStationId: c!.id, manualBitrateKbps: 256 });
+    t.guilds.toggleFavourite(GUILD, a!.id);
+    t.guilds.toggleFavourite(GUILD, b!.id);
+    const station = await t.click(t.people.admin, cfg(t, 'station:playing'));
+    expect(methods(station)).toEqual(['showModal']);
+    const form = JSON.stringify(station.calls[0]!.payload.modal);
+    const options = JSON.parse(form).components[0].component.options as Array<{
+      value: string;
+      description?: string;
+      default?: boolean;
+    }>;
+    // "No default station", then the default, then the favourites, then the rest: 25 at most.
+    expect(options.slice(0, 4).map((o) => o.value)).toEqual(['none', c!.id, a!.id, b!.id]);
+    expect(options[1]).toMatchObject({ description: 'the default now', default: true });
+    expect(options[2]!.description).toBe('favourite');
+    expect(options.length).toBeLessThanOrEqual(25);
+    const bitrate = await t.click(t.people.admin, cfg(t, 'bitrate:sound'));
+    expect(JSON.stringify(bitrate.calls[0]!.payload.modal)).toContain('"value":"256"');
+  });
+
+  it('switches turn on only once they can work, and always turn off', async () => {
+    const t = setup();
+    const refused = await t.click(t.people.admin, cfg(t, 'autostart:playing'));
+    expect(refused.text).toContain(
+      '⚠️ Autostart needs a default station and a preferred voice channel first.',
+    );
+    const lockRefused = await t.click(t.people.admin, cfg(t, 'lock:playing'));
+    expect(lockRefused.text).toContain('⚠️ Channel lock needs a preferred voice channel first.');
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({ autostart: false, voiceLock: false });
+    // The card greys them out for the same reason.
+    expect(control(t, refused, 'autostart:playing')).toMatchObject({ label: 'Off', disabled: true });
+    t.guilds.updateSettings(GUILD, {
+      defaultStationId: t.stations.listStations(GUILD)[0]!.id,
+      preferredVoiceChannelId: V1,
     });
+    const on = await t.click(t.people.admin, cfg(t, 'autostart:playing'));
+    await t.click(t.people.admin, cfg(t, 'lock:playing'));
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({ autostart: true, voiceLock: true });
+    expect(control(t, on, 'autostart:playing')).toMatchObject({ label: 'On', style: 3, disabled: false });
+    // Without the channel they stay on (the card says they do nothing yet), and still turn off.
+    t.guilds.updateSettings(GUILD, { preferredVoiceChannelId: null });
+    const card = await t.click(t.people.admin, cfg(t, 'go:playing'));
+    expect(card.text).toContain('⚠️ It does nothing yet: it needs a preferred voice channel first.');
+    await t.click(t.people.admin, cfg(t, 'autostart:playing'));
+    await t.click(t.people.admin, cfg(t, 'lock:playing'));
+    const resume = await t.click(t.people.admin, cfg(t, 'resume:playing'));
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({
+      autostart: false,
+      voiceLock: false,
+      resumeOnRestart: !t.ctx.guilds.defaults.resumeOnRestart,
+    });
+    expect(resume.text).toContain('## Playing');
+  });
+
+  it('the last setup step offers autostart once it can work', async () => {
+    const t = setup();
+    const early = await t.click(t.people.admin, cfg(t, 'go:setup5'));
+    expect(control(t, early, 'autostart:setup5')).toBeUndefined();
+    t.guilds.updateSettings(GUILD, {
+      defaultStationId: t.stations.listStations(GUILD)[0]!.id,
+      preferredVoiceChannelId: V1,
+    });
+    const ready = await t.click(t.people.admin, cfg(t, 'go:setup5'));
+    expect(ready.text).toContain('**Start playing by itself?**');
+    const on = await t.click(t.people.admin, cfg(t, 'autostart:setup5'));
+    expect(on.text).toContain('Finished');
+    expect(t.guilds.getSettings(GUILD).autostart).toBe(true);
+  });
+
+  it('Reset everything puts every setting back, keeping favourites and the control panel', async () => {
+    const { t, st } = customServer();
+    const s = playingIn(t, V1, st.id);
+    t.guilds.toggleFavourite(GUILD, st.id);
+    t.guilds.updateSettings(GUILD, {
+      allowedTextChannelIds: [TEXT],
+      allowedVoiceChannelIds: [V1],
+      djRoleIds: [DJ_ROLE],
+      memberControlMode: 'none',
+      defaultStationId: st.id,
+      preferredVoiceChannelId: V1,
+      voiceLock: true,
+      qualityMode: 'manual',
+      manualBitrateKbps: 64,
+      idleMode: '24x7',
+      autostart: true,
+      resumeOnRestart: !t.ctx.guilds.defaults.resumeOnRestart,
+      voiceChannelStatus: false,
+      notificationChannelId: TEXT,
+      panelChannelId: PANEL,
+      panelMessageId: PANEL_MESSAGE,
+    });
+    const i = await t.click(t.people.admin, cfg(t, 'reset:home'));
+    expect(i.violations).toEqual([]);
+    expect(i.text).toContain('Every setting is back to its default.');
+    expect(i.text).toMatch(/restarts for a moment/);
+    expect(s.encoderRefreshes).toBe(1);
+    const after = t.guilds.getSettings(GUILD);
+    expect(after).toMatchObject({
+      ...t.guilds.defaultSettings(),
+      panelChannelId: PANEL,
+      panelMessageId: PANEL_MESSAGE,
+    });
+    expect(t.guilds.listFavourites(GUILD)).toEqual([st.id]);
+  });
+
+  it('Reset is for admins only', async () => {
+    const t = setup();
+    t.guilds.updateSettings(GUILD, { idleMode: '24x7' });
+    const i = await t.click(t.people.member, cfg(t, 'reset:home'));
+    expect(i.text).toMatch(/Only the server owner/);
+    expect(t.guilds.getSettings(GUILD).idleMode).toBe('24x7');
+  });
+
+  it('posts or moves the control panel from its page, deleting the old one', async () => {
+    const t = setup();
+    const panel = t.textChannel(PANEL);
+    const old = t.textChannel(OLD_PANEL);
+    t.guilds.updateSettings(GUILD, { panelChannelId: OLD_PANEL, panelMessageId: '500000000000000099' });
+    const i = await t.click(t.people.admin, cfg(t, 'panel:panel'), 'channel', [PANEL]);
+    expect(i.violations).toEqual([]);
+    expect(methods(i)).toEqual(['deferUpdate', 'editReply']);
+    expect(panel.sent).toHaveLength(1);
+    expect(old.deleted).toEqual(['500000000000000099']);
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({
+      panelChannelId: PANEL,
+      panelMessageId: '500000000000000001',
+    });
+    expect(i.text).toContain('Posted in <#800000000000000010>. The old panel was deleted.');
+    expect(i.text).toContain('**Now:** posted in <#800000000000000010>');
+  });
+
+  it('refuses a panel channel the bot can’t use, and changes nothing', async () => {
+    const t = setup();
+    const voice = await t.click(t.people.admin, cfg(t, 'panel:panel'), 'channel', [V2]);
+    expect(voice.text).toContain('⚠️ Pick a text channel for the control panel.');
+    t.guild.members.me = { id: '900000000000000099' };
+    const muted = t.textChannel(PANEL);
+    muted.canSend = false;
+    const denied = await t.click(t.people.admin, cfg(t, 'panel:panel'), 'channel', [PANEL]);
+    expect(methods(denied)).toEqual(['update']);
+    expect(denied.text).toContain(
+      'I need View Channel, Send Messages and Embed Links in <#800000000000000010>.',
+    );
+    expect(muted.sent).toEqual([]);
+    expect(t.guilds.getSettings(GUILD).panelChannelId).toBeNull();
+  });
+
+  it('removes the control panel, even when its message is already gone', async () => {
+    const t = setup();
+    const panel = t.textChannel(PANEL);
+    t.guilds.updateSettings(GUILD, { panelChannelId: PANEL, panelMessageId: PANEL_MESSAGE });
+    const page = await t.click(t.people.admin, cfg(t, 'go:panel'));
+    expect(control(t, page, 'go:unpanel')).toMatchObject({ label: 'Remove…', style: 4 });
+    const i = await t.click(t.people.admin, cfg(t, 'unpanel:panel'));
+    expect(methods(i)).toEqual(['deferUpdate', 'editReply']);
+    expect(panel.deleted).toEqual([PANEL_MESSAGE]);
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({ panelChannelId: null, panelMessageId: null });
+    expect(i.text).toContain('The control panel was removed.');
+    // Nothing left to remove.
+    const again = await t.click(t.people.admin, cfg(t, 'unpanel:panel'));
+    expect(again.text).toContain('There is no control panel to remove.');
+    // Already deleted by hand: removed all the same.
+    t.guilds.updateSettings(GUILD, { panelChannelId: PANEL, panelMessageId: PANEL_MESSAGE });
+    panel.deleteError = 10008;
+    const gone = await t.click(t.people.admin, cfg(t, 'unpanel:panel'));
+    expect(gone.text).toContain('The control panel was removed.');
+    // Not allowed to delete it: stops updating it, and says so.
+    t.guilds.updateSettings(GUILD, { panelChannelId: PANEL, panelMessageId: PANEL_MESSAGE });
+    panel.deleteError = 50013;
+    const stuck = await t.click(t.people.admin, cfg(t, 'unpanel:panel'));
+    expect(stuck.text).toContain(
+      'I couldn’t delete its message in <#800000000000000010>. Delete it by hand.',
+    );
+    expect(t.guilds.getSettings(GUILD).panelMessageId).toBeNull();
+  });
+
+  it('answers a card from before 1.3 with a new card, and its old controls still work', async () => {
+    const t = setup();
+    t.guilds.updateSettings(GUILD, { autostart: false, resumeOnRestart: true, voiceLock: false });
+    const old = (field: string, kind: 'button' | 'string' = 'button', values: string[] = []) =>
+      t.click(t.people.admin, cfg(t, field), kind, values, undefined, false);
+    for (const [field, heading] of [
+      ['page-access', '## Who can use it'],
+      ['page-playback', '## Playing'],
+      ['page-notify', '## Notices'],
+    ] as const) {
+      const i = await old(field);
+      expect(methods(i)).toEqual(['reply']);
+      expect(i.ephemeral).toBe(true);
+      expect(i.text).toContain(heading);
+    }
+    // The menu that held all three switches: ticked is on.
+    await old('switches', 'string', ['resume', 'lock']);
+    expect(t.guilds.getSettings(GUILD)).toMatchObject({
+      autostart: false,
+      resumeOnRestart: true,
+      voiceLock: true,
+    });
+    await old('resume');
+    expect(t.guilds.getSettings(GUILD).resumeOnRestart).toBe(false);
+  });
+
+  it('every control on every screen is signed for this server and admin-only', async () => {
+    for (const screen of ['home', 'access', 'playing', 'sound', 'notices', 'panel', 'setup2']) {
+      // A new server each time, so the member's clicks stay under the click rate limit.
+      const t = setup();
+      t.guilds.updateSettings(GUILD, { panelChannelId: PANEL, qualityMode: 'manual' });
+      const i = await t.click(t.people.admin, cfg(t, `go:${screen}`));
+      for (const c of i.cardControls) {
+        const p = decode(t.ids, c.custom_id ?? '');
+        expect(p?.action === 'cfg' || p?.action === 'close').toBe(true);
+        if (p?.action !== 'cfg') continue;
+        const denied = await t.click(t.people.member, c.custom_id!, c.type === 2 ? 'button' : 'string', []);
+        expect(denied.text).toMatch(/Only the server owner/);
+      }
+    }
   });
 });
 
