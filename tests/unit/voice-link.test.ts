@@ -54,21 +54,29 @@ vi.mock('@discordjs/voice', async (importOriginal) => {
     },
     createAudioPlayer: (options: unknown) => {
       voice.playerOptions = options;
+      type Player = InstanceType<typeof Emitter> & { state: { status: string } };
+      // Like the real player, every change of status is announced as it happens.
+      const move = (player: Player, status: string) => {
+        const old = player.state;
+        player.state = { status };
+        player.emit('stateChange', old, player.state);
+      };
       return Object.assign(new Emitter(), {
         state: { status: 'idle' } as { status: string },
-        pause(this: { state: { status: string } }) {
+        pause(this: Player) {
           if (this.state.status !== 'playing') return false;
-          this.state = { status: 'paused' };
+          move(this, 'paused');
           return true;
         },
-        unpause(this: { state: { status: string } }) {
+        unpause(this: Player) {
           if (this.state.status !== 'paused') return false;
-          this.state = { status: 'playing' };
+          move(this, 'playing');
           return true;
         },
-        stop() {
+        stop(this: Player) {
           voice.stops++;
           if (voice.stopThrows) throw new Error('player already gone');
+          if (this.state.status !== 'idle') move(this, 'idle');
         },
         play(resource: unknown) {
           voice.played.push(resource);
@@ -83,6 +91,7 @@ vi.mock('../../src/shared/async.ts', () => ({ delay: () => Promise.resolve() }))
 const {
   DiscordVoiceLink,
   MAX_MISSED_FRAMES,
+  VOICE_HOLD_BUDGET_MS,
   VOICE_HOLD_MS,
   discordVoiceLinkFactory,
   guardConnection,
@@ -468,6 +477,87 @@ describe('DiscordVoiceLink: brief interruptions', () => {
       link[end]();
       expect(vi.getTimerCount()).toBe(0);
     }
+  });
+
+  it('holds a stream for ten seconds in all, so the holds can never add up to a resync', async () => {
+    vi.useFakeTimers();
+    const { connection, link } = await connect();
+    playing(link);
+    const interrupted: Array<{ held: boolean }> = [];
+    const restored: Array<{ heldMs: number; skippedMs: number }> = [];
+    link.on('interrupted', (info) => interrupted.push(info));
+    link.on('restored', (info) => restored.push(info));
+    const outage = async (ms: number) => {
+      connection.setState({ status: 'connecting' });
+      await vi.advanceTimersByTimeAsync(ms);
+      connection.setState({ status: 'ready' });
+    };
+    // Nine full holds and a short one: 9.6 s of the allowance used.
+    for (let n = 0; n < 9; n++) await outage(VOICE_HOLD_MS);
+    await outage(600);
+    expect(restored.reduce((sum, r) => sum + r.heldMs, 0)).toBe(9_600);
+    // The next hold gets only what is left, then plays on and drops as before.
+    await outage(1_000);
+    expect(restored.at(-1)).toEqual({ afterMs: 1_000, heldMs: VOICE_HOLD_BUDGET_MS - 9_600, skippedMs: 600 });
+    // Allowance spent: a resume no longer holds at all.
+    connection.setState({ status: 'connecting' });
+    expect(status(link)).toBe('playing');
+    expect(interrupted.at(-1)).toMatchObject({ held: false });
+    await vi.advanceTimersByTimeAsync(200);
+    connection.setState({ status: 'ready' });
+    expect(restored.at(-1)).toEqual({ afterMs: 200, heldMs: 0, skippedMs: 200 });
+    // A new stream (another station, a source switch or a resync) starts at live with all of it.
+    link.play(new PassThrough());
+    playing(link);
+    connection.setState({ status: 'connecting' });
+    expect(status(link)).toBe('paused');
+    expect(interrupted.at(-1)).toMatchObject({ held: true });
+  });
+
+  it('reports what really happened when a hold is cut short, or playback starts mid-outage', async () => {
+    vi.useFakeTimers();
+    const { connection, link } = await connect();
+    const restored: unknown[] = [];
+    link.on('restored', (info) => restored.push(info));
+    // Stop pressed 300 ms into a hold: 300 ms held, nothing skipped, however long the outage runs.
+    playing(link);
+    connection.setState({ status: 'connecting' });
+    await vi.advanceTimersByTimeAsync(300);
+    link.stopAudio();
+    await vi.advanceTimersByTimeAsync(2_000);
+    connection.setState({ status: 'ready' });
+    expect(restored.at(-1)).toEqual({ afterMs: 2_300, heldMs: 300, skippedMs: 0 });
+    // Still buffering when the outage began (so not held), then playing: that part was dropped.
+    (link.player as PlayerLike).state = { status: 'buffering' };
+    connection.setState({ status: 'connecting' });
+    await vi.advanceTimersByTimeAsync(200);
+    const player = link.player as unknown as EventEmitter & PlayerLike;
+    const old = player.state;
+    player.state = { status: 'playing' };
+    player.emit('stateChange', old, player.state);
+    await vi.advanceTimersByTimeAsync(500);
+    connection.setState({ status: 'ready' });
+    expect(restored.at(-1)).toEqual({ afterMs: 700, heldMs: 0, skippedMs: 500 });
+  });
+
+  it('ignores a close from a voice WebSocket the library has already replaced', async () => {
+    const { connection, link } = await connect();
+    const interrupted: Array<{ closeCode: number | null }> = [];
+    link.on('interrupted', (info) => interrupted.push(info));
+    const first = new EventEmitter();
+    const second = new EventEmitter();
+    connection.setState({
+      status: 'ready',
+      networking: { state: { code: NetworkingStatusCode.Ready, ws: first } },
+    });
+    connection.setState({
+      status: 'ready',
+      networking: { state: { code: NetworkingStatusCode.Ready, ws: second } },
+    });
+    // The library tidies the old socket away (code 1000) after it has moved on to the new one.
+    first.emit('close', { code: 1000 });
+    connection.setState({ status: 'signalling' });
+    expect(interrupted).toEqual([expect.objectContaining({ closeCode: null })]);
   });
 });
 
