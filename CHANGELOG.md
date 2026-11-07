@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **`/radio config` is a new settings card.** It opens on an overview of every setting in five groups (Who can use it, Playing, Sound and empty channel, Notices, Control panel), each with a **Change** button that opens that group's page. Each setting says what it does for listeners, and its menu marks the default choice. The card uses Discord's newer message layout and is still shown only to the admin who opened it.
+  - **The default station and the manual bitrate are on the card**, each set with a short form. The default station can be picked from a menu (the current default, what is playing and the favourites come first) or typed by name; a name that matches several stations lists them and changes nothing.
+  - **`/radio config` has no options any more.** `default_station` and `manual_bitrate` made the command look as if it needed them, so it was easy to miss that sending it bare opens the settings.
+  - **Autostart, Resume after a restart and Channel lock are separate on/off switches**, green when on. Autostart and Channel lock stay greyed out until what they need is set (a default station and a preferred voice channel), and the card says what is missing.
+  - Choosing **Manual** quality with no bitrate set asks for one straight away.
+- `/radio panel`'s reply says the panel can be moved or removed from `/radio config`.
+
+### Added
+
+- **Set up** on the settings card: four short steps for a new server (voice channel, default station, what happens when everyone leaves, problem notices), then an offer to turn on autostart. The overview recommends it while the server has no preferred voice channel or default station.
+- **Reset everything** on the settings card puts every server setting back to its default after a confirmation. Favourites, source choices, custom stations and the control panel are kept.
+- **Control panel** on the settings card shows where the panel is, posts or moves it to another channel, and removes it after a confirmation. Before, a panel could only be removed by deleting its message.
+- [install-docker.md](docs/install-docker.md#trying-an-unreleased-branch) explains how to try an unreleased branch with `radio-bot update <branch>` (or `RADIO_BOT_VERSION=<branch>` for a new install), and how to go back to a release.
+
 ## [1.2.4] - 2026-11-04
 
 A performance and quality pass. The stream comes first: everything else the bot does now does less on the thread that sends voice packets, and does it later.

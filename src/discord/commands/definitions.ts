@@ -209,25 +209,12 @@ export function buildRadioCommand(): RESTPostAPIChatInputApplicationCommandsJSON
             ),
         ),
     )
+    // No options: every setting is on the card, and options made the command look as if it needed them.
     .addSubcommand((s) =>
       s
         .setName('config')
         .setDescription(
-          'Server settings: channels, DJ roles, quality and what happens when everyone leaves (admins)',
-        )
-        .addStringOption((o) =>
-          o
-            .setName('default_station')
-            .setDescription('Station to play when the bot joins without one')
-            .setAutocomplete(true)
-            .setMaxLength(100),
-        )
-        .addIntegerOption((o) =>
-          o
-            .setName('manual_bitrate')
-            .setDescription('Bitrate in kbps for the Manual quality mode')
-            .setMinValue(32)
-            .setMaxValue(510),
+          'Open the server settings: access, default station, quality, notices, setup (admins)',
         ),
     )
     .addSubcommand((s) =>

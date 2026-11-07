@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { OPUS_ENCODER_MAX_KBPS, OPUS_MIN_KBPS } from '../../src/audio/encoder.ts';
 import { buildRadioCommand } from '../../src/discord/commands/definitions.ts';
 import { commandsHash } from '../../src/discord/register.ts';
+import { MANUAL_KBPS_MAX, MANUAL_KBPS_MIN } from '../../src/discord/ui/settings-view.ts';
 import { parseListArg } from '../../src/discord/ui/views.ts';
 import { MAX_QUEUE_LENGTH } from '../../src/persistence/repositories/guilds.ts';
 import { MAX_URL_LENGTH } from '../../src/streams/url-policy.ts';
@@ -126,10 +127,14 @@ describe('/radio command definition (Discord limits)', () => {
 });
 
 describe('/radio option ranges agree with the code that consumes them', () => {
-  it('manual_bitrate spans the Opus encoder range', () => {
-    const o = find('config manual_bitrate');
-    expect(o.min_value).toBe(OPUS_MIN_KBPS);
-    expect(o.max_value).toBe(OPUS_ENCODER_MAX_KBPS);
+  it('the settings card’s manual bitrate spans the Opus encoder range', () => {
+    expect(MANUAL_KBPS_MIN).toBe(OPUS_MIN_KBPS);
+    expect(MANUAL_KBPS_MAX).toBe(OPUS_ENCODER_MAX_KBPS);
+  });
+
+  it('config has no options, so the picker shows it as one plain command', () => {
+    // Every setting is on its card; options made people think the command needed them.
+    expect(find('config').options ?? []).toEqual([]);
   });
 
   it('queue remove positions cover the whole queue', () => {

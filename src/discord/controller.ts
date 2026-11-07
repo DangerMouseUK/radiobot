@@ -11,15 +11,18 @@ import {
   DiscordAPIError,
   EmbedBuilder,
   embedLength,
+  escapeMarkdown,
   type Guild,
   type Interaction,
   type InteractionEditReplyOptions,
   type MessageActionRowComponentBuilder,
   type MessageComponentInteraction,
   MessageFlags,
+  type MessageFlagsBitField,
   type ModalSubmitInteraction,
   PermissionFlagsBits,
   RESTJSONErrorCodes,
+  type SendableChannels,
   StringSelectMenuBuilder,
 } from 'discord.js';
 import type { LibraryIndex } from '../catalogue/pack-library.ts';
@@ -87,12 +90,23 @@ import {
   packsLibraryView,
 } from './ui/packs-view.ts';
 import {
+  BITRATE_INPUT,
+  bitrateModal,
+  isSettingsScreen,
+  MANUAL_KBPS_MAX,
+  MANUAL_KBPS_MIN,
+  NO_DEFAULT_STATION,
+  type SettingsScreen,
+  STATION_NAME,
+  STATION_PICK,
+  settingsCard,
+  stationModal,
+} from './ui/settings-view.ts';
+import {
   ambiguityView,
   type BrowseState,
   browseSearchModal,
   browseView,
-  type ConfigPage,
-  configView,
   controlRows,
   type ListScope,
   listView,
@@ -131,9 +145,6 @@ const MAX_BROWSE_LISTS = 500;
 /** Availabilities that Next and Previous may move to. */
 const PLAYABLE: ReadonlySet<string> = new Set(['available', 'degraded', 'unverified']);
 
-/** The `default_station` choice that clears the default (not a valid station ID). */
-const NO_DEFAULT_STATION = 'none';
-
 type Cmd = ChatInputCommandInteraction<'cached'>;
 type Comp = MessageComponentInteraction<'cached'>;
 type Modal = ModalSubmitInteraction<'cached'>;
@@ -165,17 +176,19 @@ export function describeInteraction(i: Interaction): string {
 }
 
 /**
- * With nothing typed yet: the default station, then the favourites, then everything else in
- * `stations` (custom stations only when `customOnly`). Each default or favourite is looked up by
- * ID, and the walk stops at 25, so a long favourites list never meets a big catalogue head on.
+ * With nothing typed yet: the stations in `firstIds` (the default station, say), then the
+ * favourites, then everything else in `stations` (custom stations only when `customOnly`), up to
+ * `limit`. Each named station or favourite is looked up by ID, and the walk stops at `limit`, so a
+ * long favourites list never meets a big catalogue head on.
  */
 function defaultSuggestions(
   ctx: AppContext,
   guildId: string,
   stations: readonly Station[],
-  defaultId: string | null,
+  firstIds: readonly (string | null)[],
   favourites: readonly string[],
   customOnly: boolean,
+  limit = 25,
 ): Station[] {
   const top: Station[] = [];
   const shown = new Set<string>();
@@ -186,17 +199,41 @@ function defaultSuggestions(
     shown.add(id);
     top.push(s);
   };
-  offer(defaultId);
+  for (const id of firstIds) offer(id);
   for (const id of favourites) {
-    if (top.length >= 25) break;
+    if (top.length >= limit) break;
     offer(id);
   }
   for (const s of stations) {
-    if (top.length >= 25) break;
+    if (top.length >= limit) break;
     if (!shown.has(s.id)) top.push(s);
   }
-  return top.slice(0, 25);
+  return top.slice(0, limit);
 }
+
+/** Which page of the settings card a button or menu of a card from before 1.3 belongs to. */
+const LEGACY_SETTINGS_SCREEN: Record<string, SettingsScreen> = {
+  'page-access': 'access',
+  'page-playback': 'playing',
+  'page-notify': 'notices',
+  text: 'access',
+  voice: 'access',
+  djs: 'access',
+  member: 'access',
+  pvoice: 'playing',
+  switches: 'playing',
+  autostart: 'playing',
+  resume: 'playing',
+  lock: 'playing',
+  idle: 'sound',
+  quality: 'sound',
+  notify: 'notices',
+  vstatus: 'notices',
+};
+
+/** Was this message sent in Discord's newer layout (Components V2)? */
+const isCard = (m: { flags: Readonly<MessageFlagsBitField> } | null | undefined) =>
+  m?.flags.has(MessageFlags.IsComponentsV2) ?? false;
 
 /** An open browse list; `before` is the category to go back to from the Favourites filter. */
 type OpenBrowse = BrowseState & { expires: number; before?: string | null };
@@ -399,7 +436,14 @@ export class RadioController {
     const favourites = this.#ctx.guilds.listFavourites(i.guildId);
     const hits = q
       ? searchStations(stations, q, 25).map((h) => h.station)
-      : defaultSuggestions(this.#ctx, i.guildId, stations, settings.defaultStationId, favourites, customOnly);
+      : defaultSuggestions(
+          this.#ctx,
+          i.guildId,
+          stations,
+          [settings.defaultStationId],
+          favourites,
+          customOnly,
+        );
     const fav = new Set(favourites);
     const choices = hits.map((s) => {
       const marks = [
@@ -415,9 +459,6 @@ export class RadioController {
         value: s.id,
       };
     });
-    // `/radio config default_station` can also clear the default.
-    if (focused.name === 'default_station' && (!q || 'no default station'.includes(q.toLowerCase())))
-      choices.unshift({ name: 'No default station (clear it)', value: NO_DEFAULT_STATION });
     await i.respond(choices.slice(0, 25));
   }
 
@@ -752,7 +793,7 @@ export class RadioController {
       embeds: [
         infoEmbed(
           'Joined',
-          `Joined <#${target}>. There is no default station, so press **Browse** or use \`/radio play\` to pick one. Admins can set one with \`/radio config default_station\`.`,
+          `Joined <#${target}>. There is no default station, so press **Browse** or use \`/radio play\` to pick one. Admins can set one in \`/radio config\`.`,
           COLOR.ok,
         ),
       ],
@@ -1796,26 +1837,8 @@ export class RadioController {
   async #cmdConfig(i: Cmd): Promise<void> {
     const a = this.#auth(i, 'admin');
     if (!a.ok) return this.#deny(i, a.reason);
-    const patch: SettingsPatch = {};
-    const def = i.options.getString('default_station');
-    if (def === NO_DEFAULT_STATION || def?.trim().toLowerCase() === 'none') patch.defaultStationId = null;
-    else if (def) patch.defaultStationId = this.#station(i.guildId, def).id;
-    const manual = i.options.getInteger('manual_bitrate');
-    if (manual !== null) patch.manualBitrateKbps = manual;
-    const settings = this.#ctx.guilds.updateSettings(i.guildId, patch);
-    const restarted = 'manualBitrateKbps' in patch && this.#ctx.sessions.get(i.guildId)?.refreshEncoder();
-    // A manual bitrate is kept but unused until Quality is Manual: say so, or it looks ignored.
-    const note = restarted
-      ? REENCODE_NOTE
-      : manual !== null && settings.qualityMode !== 'manual'
-        ? `Manual bitrate saved (${manual} kbps). It is used once Quality is set to Manual.`
-        : '';
-    await i.reply({
-      // Both options are playback settings, so the page that shows them opens when one is given.
-      ...configView(this.#ctx, i.guildId, settings, Object.keys(patch).length ? 'playback' : 'access'),
-      ...(note ? { content: note } : {}),
-      flags: EPHEMERAL,
-    });
+    const card = settingsCard(this.#ctx, i.guildId, this.#ctx.guilds.getSettings(i.guildId), 'home');
+    await i.reply({ ...card, flags: [EPHEMERAL, card.flags] });
   }
 
   async #cmdExport(i: Cmd): Promise<void> {
@@ -1917,7 +1940,29 @@ export class RadioController {
     if (!channel?.isSendable() || channel.type === ChannelType.GuildVoice) {
       return this.#deny(i, 'Pick a text channel for the control panel, with the channel option.');
     }
-    const me = i.guild.members.me;
+    const refusal = this.#panelRefusal(i.guild, channel);
+    if (refusal) return this.#deny(i, refusal);
+    await i.deferReply({ flags: EPHEMERAL });
+    const removedOld = await this.#postPanel(i.guild, channel);
+    await i.editReply({
+      embeds: [
+        infoEmbed(
+          'Control panel posted',
+          [
+            `Posted in <#${channel.id}>.${removedOld ? ' The old panel was deleted.' : ''} It updates by itself and keeps working after restarts.`,
+            // Browse, Sources and Refresh are for anyone who may use the bot; the rest need control.
+            'Each button checks the access of whoever presses it.',
+            '-# To move or remove it, use **Control panel** in `/radio config`, or run `/radio panel` again in another channel.',
+          ].join('\n'),
+          COLOR.ok,
+        ),
+      ],
+    });
+  }
+
+  /** Why the control panel can't be posted in `channel`, or null when it can. */
+  #panelRefusal(guild: Guild, channel: SendableChannels): string | null {
+    const me = guild.members.me;
     // The panel is an embed, so it needs Embed Links as well: without it the post would fail.
     if (
       me &&
@@ -1929,38 +1974,28 @@ export class RadioController {
           PermissionFlagsBits.SendMessages,
           PermissionFlagsBits.EmbedLinks,
         ])
-    ) {
-      return this.#deny(i, `I need View Channel, Send Messages and Embed Links in <#${channel.id}>.`);
-    }
-    await i.deferReply({ flags: EPHEMERAL });
-    const view = this.#panelView(i.guildId);
+    )
+      return `I need View Channel, Send Messages and Embed Links in <#${channel.id}>.`;
+    return null;
+  }
+
+  /**
+   * Posts the control panel in `channel`, saves where it is, and deletes the one it replaces.
+   * Returns whether an old panel was deleted.
+   */
+  async #postPanel(guild: Guild, channel: SendableChannels): Promise<boolean> {
+    const view = this.#panelView(guild.id);
     const msg = await channel.send({ ...view, allowedMentions: { parse: [] } });
-    const old = this.#ctx.guilds.getSettings(i.guildId);
-    this.#ctx.guilds.updateSettings(i.guildId, { panelChannelId: channel.id, panelMessageId: msg.id });
-    this.#panelShown.set(i.guildId, this.#panelShows(channel.id, msg.id, view));
-    let removedOld = false;
-    if (old.panelMessageId && old.panelChannelId) {
-      const oldCh = i.guild.channels.cache.get(old.panelChannelId);
-      if (oldCh?.isTextBased())
-        removedOld = await oldCh.messages.delete(old.panelMessageId).then(
-          () => true,
-          () => false,
-        );
-    }
-    await i.editReply({
-      embeds: [
-        infoEmbed(
-          'Control panel posted',
-          [
-            `Posted in <#${channel.id}>.${removedOld ? ' The old panel was deleted.' : ''} It updates by itself and keeps working after restarts.`,
-            // Browse, Sources and Refresh are for anyone who may use the bot; the rest need control.
-            'Each button checks the access of whoever presses it.',
-            '-# To move it, run `/radio panel` again in another channel.',
-          ].join('\n'),
-          COLOR.ok,
-        ),
-      ],
-    });
+    const old = this.#ctx.guilds.getSettings(guild.id);
+    this.#ctx.guilds.updateSettings(guild.id, { panelChannelId: channel.id, panelMessageId: msg.id });
+    this.#panelShown.set(guild.id, this.#panelShows(channel.id, msg.id, view));
+    if (!old.panelMessageId || !old.panelChannelId) return false;
+    const oldCh = guild.channels.cache.get(old.panelChannelId);
+    if (!oldCh?.isTextBased()) return false;
+    return oldCh.messages.delete(old.panelMessageId).then(
+      () => true,
+      () => false,
+    );
   }
 
   #panelView(guildId: string): View {
@@ -2036,7 +2071,7 @@ export class RadioController {
           name: '⭐ Favourites and the default station',
           value: lines(
             'Press **Favourite** under a playing station. Favourites come first in the `/radio play` suggestions and have their own list in Browse (**Show favourites**). With two or more, Next and Previous step through them while one plays.',
-            'The default station (set by an admin) is what `/radio join` plays, and what **Autostart** plays when the bot starts.',
+            'The default station (set by an admin in `/radio config`) is what `/radio join` plays, and what **Autostart** plays when the bot starts.',
           ),
         },
         {
@@ -2059,7 +2094,7 @@ export class RadioController {
               name: '🛠 Admin',
               value: lines(
                 // Grouped by job, setup first, so a phone shows what to run first.
-                '`/radio config`: channels, DJ roles and quality · `/radio panel`: a control panel that stays',
+                '`/radio config`: every server setting, with **Set up** for the main ones · `/radio panel`: a control panel that stays',
                 'Custom stations: `/radio add` · `/radio edit` · `/radio remove`',
                 'Sources: `/radio source pin|prefer|auto|verify` · `/radio rescan`',
                 '-# `/radio source`: `prefer` tries a source first · `pin` also lets only admins switch it · `auto` lets the bot choose · `verify` records if a source is the right station',
@@ -2071,7 +2106,7 @@ export class RadioController {
           : {
               name: '🛠 Settings',
               value:
-                'Server admins choose channels and DJ roles with `/radio config`, and add custom stations with `/radio add`.',
+                'Server admins choose channels, DJ roles and the default station with `/radio config`, and add custom stations with `/radio add`.',
             },
         {
           name: '🔊 Sound',
@@ -2452,11 +2487,12 @@ export class RadioController {
       });
       return;
     }
-    if (parsed?.action !== 'bsearch') {
+    if (parsed?.action !== 'bsearch' && parsed?.action !== 'cfgm') {
       await i.reply({ embeds: [errorEmbed('This form is not valid here.')], flags: EPHEMERAL });
       return;
     }
     this.#rate(this.#ctx.limits.componentUser, i.user.id, 'clicks');
+    if (parsed.action === 'cfgm') return this.#configForm(i, parsed.arg);
     const a = this.#auth(i, 'read');
     if (!a.ok) return this.#deny(i, a.reason);
     const state = this.#useBrowse(parsed.arg);
@@ -2528,31 +2564,43 @@ export class RadioController {
     );
   }
 
-  async #configComponent(i: Comp, field: string): Promise<void> {
+  /**
+   * A button or menu on the settings card. Its argument is "<field>:<screen>": what it changes and
+   * the screen to show afterwards (for "go", the screen to open). Cards sent before 1.3 carry the
+   * field alone, so it falls back to the page each field used to be on.
+   */
+  async #configComponent(i: Comp, arg: string): Promise<void> {
     const a = this.#auth(i, 'admin');
     if (!a.ok) return this.#deny(i, a.reason);
     const g = i.guildId;
     const cur = this.#ctx.guilds.getSettings(g);
-    let page: ConfigPage = 'access';
+    const [field = '', at] = arg.split(':');
+    let screen: SettingsScreen = isSettingsScreen(at) ? at : (LEGACY_SETTINGS_SCREEN[field] ?? 'home');
     let patch: SettingsPatch = {};
-    if (field.startsWith('page-')) {
-      page = field.slice(5) as ConfigPage;
+    let note = '';
+    if ((field === 'station' || field === 'bitrate') && i.isButton()) {
+      await i.showModal(
+        field === 'station'
+          ? this.#stationForm(g, cur, screen)
+          : bitrateModal(this.#ctx, g, screen, cur.manualBitrateKbps),
+      );
+      return;
+    }
+    if (field === 'panel' && i.isChannelSelectMenu()) return this.#movePanel(i, i.values[0] ?? '');
+    if (field === 'unpanel' && i.isButton()) return this.#removePanel(i);
+    if (field === 'reset' && i.isButton()) {
+      patch = this.#ctx.guilds.defaultSettings();
+      note = 'Every setting is back to its default.';
     } else if (i.isChannelSelectMenu()) {
       const ids = [...i.values];
       if (field === 'text') patch = { allowedTextChannelIds: ids };
       else if (field === 'voice') patch = { allowedVoiceChannelIds: ids };
-      else if (field === 'pvoice') {
-        patch = { preferredVoiceChannelId: ids[0] ?? null };
-        page = 'playback';
-      } else if (field === 'notify') {
-        patch = { notificationChannelId: ids[0] ?? null };
-        page = 'notify';
-      }
+      else if (field === 'pvoice') patch = { preferredVoiceChannelId: ids[0] ?? null };
+      else if (field === 'notify') patch = { notificationChannelId: ids[0] ?? null };
     } else if (i.isRoleSelectMenu()) {
-      const ids = [...i.values].filter((id) => id !== g);
-      if (field === 'djs') patch = { djRoleIds: ids };
+      // @everyone is a role too, but making everyone a DJ is what "Anyone" is for.
+      if (field === 'djs') patch = { djRoleIds: [...i.values].filter((id) => id !== g) };
     } else if (i.isStringSelectMenu()) {
-      page = field === 'member' ? 'access' : 'playback';
       const v = i.values[0];
       if (field === 'idle' && (v === '24x7' || v === 'pause_when_empty' || v === 'leave_when_empty'))
         patch = { idleMode: v };
@@ -2560,22 +2608,30 @@ export class RadioController {
         patch = { memberControlMode: v };
       if (field === 'quality' && (v === 'maximum' || v === 'balanced' || v === 'manual'))
         patch = { qualityMode: v };
-      // The switches menu: a ticked option is on, an unticked one off.
+      // The one menu that held all three switches, on cards sent before 1.3: ticked is on.
       if (field === 'switches')
         patch = {
           autostart: i.values.includes('autostart'),
           resumeOnRestart: i.values.includes('resume'),
           voiceLock: i.values.includes('lock'),
         };
-    } else if (i.isButton() && field === 'vstatus') {
-      page = 'notify';
-      patch = { voiceChannelStatus: !cur.voiceChannelStatus };
     } else if (i.isButton()) {
-      // The switch buttons of settings pages sent before the switches became a menu.
-      page = 'playback';
-      if (field === 'autostart') patch = { autostart: !cur.autostart };
-      if (field === 'resume') patch = { resumeOnRestart: !cur.resumeOnRestart };
-      if (field === 'lock') patch = { voiceLock: !cur.voiceLock };
+      if (field === 'go') screen = isSettingsScreen(at) ? at : 'home';
+      else if (field === 'vstatus') patch = { voiceChannelStatus: !cur.voiceChannelStatus };
+      else if (field === 'resume') patch = { resumeOnRestart: !cur.resumeOnRestart };
+      else if (field === 'autostart' || field === 'lock') {
+        // The card greys these out until they can work; an old card or a stale one may not have.
+        const on = field === 'autostart' ? cur.autostart : cur.voiceLock;
+        const station = cur.defaultStationId ? listedStation(this.#ctx, g, cur.defaultStationId) : null;
+        const missing =
+          field === 'autostart' && (!station || !cur.preferredVoiceChannelId)
+            ? 'Autostart needs a default station and a preferred voice channel first.'
+            : field === 'lock' && !cur.preferredVoiceChannelId
+              ? 'Channel lock needs a preferred voice channel first.'
+              : null;
+        if (!on && missing) note = `⚠️ ${missing}`;
+        else patch = field === 'autostart' ? { autostart: !on } : { voiceLock: !on };
+      }
     }
     const settings: GuildSettings = Object.keys(patch).length
       ? this.#ctx.guilds.updateSettings(g, patch)
@@ -2583,6 +2639,12 @@ export class RadioController {
     const restarted =
       ('qualityMode' in patch || 'manualBitrateKbps' in patch) && this.#ctx.sessions.get(g)?.refreshEncoder();
     if ('idleMode' in patch) this.#recheckIdle(i.guild);
+    // Manual with no bitrate yet follows the station, so ask for one straight away. The form
+    // answers this click, and sending it redraws the card.
+    if (field === 'quality' && settings.qualityMode === 'manual' && settings.manualBitrateKbps === null) {
+      await i.showModal(bitrateModal(this.#ctx, g, screen, null));
+      return;
+    }
     // A notice channel the bot can't post in would fail quietly later, so say so when it is chosen.
     // Only when that menu is used, and from the cached channel and member: no request to Discord.
     const me = i.guild.members.me;
@@ -2595,13 +2657,154 @@ export class RadioController {
       noticeCh &&
       'permissionsFor' in noticeCh &&
       !noticeCh.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]);
-    // The note shows only with the change that caused it; the next update clears it.
-    const content = restarted
-      ? REENCODE_NOTE
-      : cantPost
-        ? `⚠️ I can’t post in <#${noticeCh.id}> yet. Give me View Channel and Send Messages there.`
-        : '';
-    await i.update({ ...configView(this.#ctx, g, settings, page), content });
+    if (cantPost)
+      note = `⚠️ I can’t post in <#${noticeCh.id}> yet. Give me View Channel and Send Messages there.`;
+    // The note shows only with the change that caused it; the next change clears it.
+    if (restarted) note = note ? `${note} ${REENCODE_NOTE}` : REENCODE_NOTE;
+    await this.#showCard(i, settings, screen, note);
+  }
+
+  /** A form opened from the settings card: the default station or the manual bitrate. */
+  async #configForm(i: Modal, arg: string): Promise<void> {
+    const a = this.#auth(i, 'admin');
+    if (!a.ok) return this.#deny(i, a.reason);
+    const g = i.guildId;
+    const [field, at] = arg.split(':');
+    const screen: SettingsScreen = isSettingsScreen(at) ? at : 'home';
+    const patch: SettingsPatch = {};
+    let note = '';
+    if (field === 'station') {
+      const typed = i.fields.getTextInputValue(STATION_NAME).trim();
+      const picked = i.fields.getStringSelectValues(STATION_PICK)[0] ?? null;
+      if (typed) {
+        // A typed name never guesses (FR-001): several matches are listed, and nothing changes.
+        const direct = visibleStation(this.#ctx, g, typed);
+        const r = direct
+          ? ({ kind: 'match', station: direct } as const)
+          : resolveStation(visibleStations(this.#ctx, g), typed);
+        const shown = escapeMarkdown(truncate(typed, 60));
+        if (r.kind === 'match') patch.defaultStationId = r.station.id;
+        else if (r.kind === 'ambiguous') {
+          const names = r.candidates.slice(0, 5).map((s) => s.displayName);
+          const more = r.candidates.length - names.length;
+          note = `⚠️ Several stations match “${shown}”: ${names.join(', ')}${more > 0 ? ` and ${more} more` : ''}. Type more of the name, or pick one from the menu.`;
+        } else note = `⚠️ No station matches “${shown}”, so the default station is unchanged.`;
+      } else if (picked === NO_DEFAULT_STATION) patch.defaultStationId = null;
+      else if (picked) {
+        const st = visibleStation(this.#ctx, g, picked);
+        if (st) patch.defaultStationId = st.id;
+        else note = `⚠️ ${GONE}`;
+      }
+    } else if (field === 'bitrate') {
+      const raw = i.fields.getTextInputValue(BITRATE_INPUT).trim();
+      const kbps = /^\d{1,3}$/.test(raw) ? Number(raw) : Number.NaN;
+      if (kbps >= MANUAL_KBPS_MIN && kbps <= MANUAL_KBPS_MAX) patch.manualBitrateKbps = kbps;
+      else
+        note = `⚠️ “${escapeMarkdown(truncate(raw, 10))}” isn’t a whole number from ${MANUAL_KBPS_MIN} to ${MANUAL_KBPS_MAX}, so the bitrate is unchanged.`;
+    }
+    const settings = Object.keys(patch).length
+      ? this.#ctx.guilds.updateSettings(g, patch)
+      : this.#ctx.guilds.getSettings(g);
+    if ('manualBitrateKbps' in patch && this.#ctx.sessions.get(g)?.refreshEncoder()) note = REENCODE_NOTE;
+    await this.#showCard(i, settings, screen, note);
+  }
+
+  /** The default-station form, its menu led by the current default, what is playing and the favourites. */
+  #stationForm(guildId: string, s: GuildSettings, back: SettingsScreen) {
+    const ctx = this.#ctx;
+    const playing = ctx.sessions.get(guildId)?.stationId ?? null;
+    const favourites = ctx.guilds.listFavourites(guildId);
+    const fav = new Set(favourites);
+    // 24 stations and "No default station": Discord's limit of 25 options.
+    const choices = defaultSuggestions(
+      ctx,
+      guildId,
+      visibleStations(ctx, guildId),
+      [s.defaultStationId, playing],
+      favourites,
+      false,
+      24,
+    );
+    return stationModal(ctx, guildId, back, choices, s.defaultStationId, (st) =>
+      [
+        st.id === s.defaultStationId ? 'the default now' : null,
+        st.id === playing ? 'playing now' : null,
+        fav.has(st.id) ? 'favourite' : null,
+        st.provider === 'custom' ? 'custom' : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    );
+  }
+
+  /**
+   * Shows a settings screen in place of the card that was used. A card from before 1.3 is an
+   * embed, and Discord doesn't say that one can become the newer layout, so it gets a new card.
+   */
+  async #showCard(i: Comp | Modal, s: GuildSettings, screen: SettingsScreen, note = ''): Promise<void> {
+    const card = settingsCard(this.#ctx, i.guildId, s, screen, note);
+    if (isCard(i.message)) {
+      if (i.isMessageComponent()) return void (await i.update(card));
+      if (i.isFromMessage()) return void (await i.update(card));
+    }
+    await i.reply({ ...card, flags: [EPHEMERAL, card.flags] });
+  }
+
+  /** "Post it in…" or "Move it to…" on the card's Control panel page. */
+  async #movePanel(i: Comp, channelId: string): Promise<void> {
+    const channel = i.guild.channels.cache.get(channelId);
+    let note: string | null = null;
+    if (!channel?.isSendable() || channel.type === ChannelType.GuildVoice)
+      note = '⚠️ Pick a text channel for the control panel.';
+    else note = this.#panelRefusal(i.guild, channel);
+    if (note) return this.#showCard(i, this.#ctx.guilds.getSettings(i.guildId), 'panel', note);
+    // Posting takes a request to Discord, so the click is answered first.
+    const card = isCard(i.message);
+    if (card) await i.deferUpdate();
+    else await i.deferReply({ flags: EPHEMERAL });
+    const removedOld = await this.#postPanel(i.guild, channel as SendableChannels);
+    await i.editReply({
+      ...settingsCard(
+        this.#ctx,
+        i.guildId,
+        this.#ctx.guilds.getSettings(i.guildId),
+        'panel',
+        `Posted in <#${channelId}>.${removedOld ? ' The old panel was deleted.' : ''}`,
+      ),
+    });
+  }
+
+  /** "Remove it" on the card: deletes the control panel message and stops keeping it up to date. */
+  async #removePanel(i: Comp): Promise<void> {
+    const s = this.#ctx.guilds.getSettings(i.guildId);
+    if (!s.panelChannelId || !s.panelMessageId)
+      return this.#showCard(i, s, 'panel', 'There is no control panel to remove.');
+    if (isCard(i.message)) await i.deferUpdate();
+    else await i.deferReply({ flags: EPHEMERAL });
+    const ch = i.guild.channels.cache.get(s.panelChannelId);
+    // A message that is already gone counts as removed.
+    const deleted = ch?.isTextBased()
+      ? await ch.messages.delete(s.panelMessageId).then(
+          () => true,
+          (err: { code?: number }) => err.code === RESTJSONErrorCodes.UnknownMessage,
+        )
+      : false;
+    const settings = this.#ctx.guilds.updateSettings(i.guildId, {
+      panelChannelId: null,
+      panelMessageId: null,
+    });
+    this.#panelShown.delete(i.guildId);
+    await i.editReply({
+      ...settingsCard(
+        this.#ctx,
+        i.guildId,
+        settings,
+        'panel',
+        deleted
+          ? 'The control panel was removed.'
+          : `⚠️ The control panel is no longer kept up to date, but I couldn’t delete its message in <#${s.panelChannelId}>. Delete it by hand.`,
+      ),
+    });
   }
 
   /** Re-applies the idle mode to the bot's current channel after the setting may have changed. */
