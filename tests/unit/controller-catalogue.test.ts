@@ -399,7 +399,9 @@ describe('help', () => {
     const t = setup();
     const i = await t.command(t.people.member, { sub: 'help' });
     expect(i.text).toContain('`/radio now`: what is playing · `/radio stop`: stop playing');
-    expect(i.text).toContain('**Maximum** follows the station’s own bitrate (510 kbps at most)');
+    expect(i.text).toContain(
+      '**Maximum** follows the station’s own bitrate, but never below 128 kbps (96 for mono) (510 kbps at most)',
+    );
     expect(i.text).toContain('**Balanced** uses at most 128 kbps');
     expect(i.text).toContain('**Manual** uses the bitrate an admin sets (510 kbps at most)');
   });

@@ -40,7 +40,7 @@ You choose the stations by installing **station packs**: small sets of JSON file
 
 - **Stations you choose.** Add packs from the pack library with `/radio packs library` in Discord or `radio-bot packs add` on your server. They're ready to play straight away: no restart, and no break in whatever is playing.
 - **The right station first, then the best sound.** A station can have several stream addresses (*sources*). The bot tests each one and checks it is the right station before anything else, then picks the best-sounding of those. `/radio sources` shows its reasoning.
-- **One encode, at the station's own quality.** The stream is decoded once and encoded once with `libopus`, at the source's own bitrate (up to 510 kbps, 48 kHz stereo). A 320 kbps station goes out at 320 kbps, and a 128 kbps one isn't padded out. There is no loudness normalisation, EQ or limiting.
+- **One encode, at the station's own quality.** The stream is decoded once and encoded once with `libopus`, at the source's own bitrate (up to 510 kbps, 48 kHz stereo). A 320 kbps station goes out at 320 kbps, and a 128 kbps one isn't padded out. A station below 128 kbps goes out at 128 (96 for mono), because Opus at a low bitrate would throw away stereo and treble the station still has. There is no loudness normalisation, EQ or limiting.
 - **It recovers by itself.** When audio stalls, the bot retries, then switches to another verified source, and rests sources that keep failing. It rebuilds a dropped voice connection and catches up with the live broadcast if it falls behind.
 - **Now playing everywhere.** The song or show title, when the stream sends one, appears in `/radio now`, on the control panel, in the bot's Discord status and in the voice channel's status.
 - **Queue, favourites and a control panel.** Line stations up with `/radio queue`, keep a shortlist of favourites, and post a panel of buttons that keeps working after restarts.
@@ -314,8 +314,8 @@ Settings come from environment variables, usually in `.env`; [`.env.example`](.e
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DEFAULT_QUALITY_MODE` | `maximum` | Quality for new servers: `maximum` (the source's own bitrate, up to `MAX_OPUS_BITRATE_KBPS`), `balanced` (128 kbps, or the source's rate if lower) or `manual` (an admin's value, capped at `MAX_OPUS_BITRATE_KBPS`) |
-| `MAX_OPUS_BITRATE_KBPS` | `510` | Highest Opus bitrate, 32–510. `maximum` follows each source's own bitrate up to it, and uses it when a source's bitrate is unknown. Lower it to save CPU and upload bandwidth |
+| `DEFAULT_QUALITY_MODE` | `maximum` | Quality for new servers: `maximum` (the source's own bitrate, at least 128 kbps or 96 for mono, up to `MAX_OPUS_BITRATE_KBPS`), `balanced` (128 kbps, or the source's rate if lower) or `manual` (an admin's value, capped at `MAX_OPUS_BITRATE_KBPS`) |
+| `MAX_OPUS_BITRATE_KBPS` | `510` | Highest Opus bitrate, 32–510. `maximum` follows each source's own bitrate (at least 128 kbps, or 96 for mono) up to it, and uses it when a source's bitrate is unknown. Lower it to save CPU and upload bandwidth |
 | `DEFAULT_IDLE_MODE` | `leave_when_empty` | Idle mode for new servers: `24x7`, `pause_when_empty` or `leave_when_empty` |
 | `AUTO_RESUME_DEFAULT` | `false` | "Resume after restart" for new servers |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe` | Paths to the binaries; FFmpeg must include `libopus`. Leave unset in Docker |

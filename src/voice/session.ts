@@ -140,7 +140,7 @@ export interface SessionDeps {
   onLeaving?: (channelId: string) => Promise<void> | void;
   /** Whether another stream fits MAX_ACTIVE_GUILD_STREAMS (asked before a non-streaming session starts). */
   mayStream?: () => boolean;
-  /** Opus ceiling: `maximum` follows the source's bitrate up to it (MAX_OPUS_BITRATE_KBPS). */
+  /** Opus ceiling: `maximum` follows the source's bitrate (from the re-encode floor) up to it (MAX_OPUS_BITRATE_KBPS). */
   maxOpusKbps?: number;
   notify: (notice: SessionNotice) => void;
   logger: Logger;

@@ -29,7 +29,7 @@ Anyone can run their own instance with their own Discord application token. It r
 - Each pack lists every station on its official list. Stations that cannot be played are shown honestly, never silently mapped to another feed.
 - Every station shown as playable has at least one working, identity-verified source with codec and bitrate evidence.
 - One command starts a station; a Discord-native browser makes switching easy.
-- Audio reaches Discord as 48 kHz stereo Opus from a single encode at the source's own bitrate (up to 510 kbps), without "lossless" or "HD" claims.
+- Audio reaches Discord as 48 kHz stereo Opus from a single encode at the source's own bitrate (at least 128 kbps, or 96 for mono; up to 510 kbps), without "lossless" or "HD" claims.
 - Playback recovers from stream, FFmpeg and Discord interruptions.
 - Installation needs no external database, subscription, inbound port or domain.
 - Servers can add their own legal, public streams without affecting any station pack, and operators can add packs without code changes.
@@ -216,7 +216,7 @@ Admins can choose `auto`, `prefer` (use when eligible) or `pin` (use when eligib
 - FFmpeg decodes the source and encodes **once** with libopus: 48 kHz, stereo, 20 ms frames, VBR, music mode, compression level 10, in Ogg pages of 20 ms (one packet each).
 - The live queue (§8.4) only demuxes the Ogg Opus stream, and hands its Opus packets to `@discordjs/voice` as `StreamType.Opus`, which sends them as they are: no second encode, no inline volume.
 - Target bitrate:
-  - `maximum` (default) = the source's own bitrate (measured, then codec metadata, then manifest or advertised, rounded up to a whole kbps so it is never below the source), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. An unknown source bitrate uses the cap;
+  - `maximum` (default) = the source's own bitrate (measured, then codec metadata, then manifest or advertised, rounded up to a whole kbps so it is never below the source), capped at `MAX_OPUS_BITRATE_KBPS`: 510 kbps by default (libopus's stereo maximum), configurable from 32 to 510. A source below the re-encode floor of 128 kbps (96 kbps for mono) is encoded at the floor, within the cap. An unknown source bitrate uses the cap;
   - `balanced` = 128 kbps, or the source's bitrate when lower;
   - `manual` = an admin-set value from 32 kbps up to `MAX_OPUS_BITRATE_KBPS`.
 - The voice channel's bitrate setting is **reported but not used as a cap**. The setting applies to members' voices, not to a bot's stream, and the plan notes when the target is above it. What a listener receives has **not been measured** (§18).
@@ -425,7 +425,7 @@ Discord voice channels have a bitrate setting of up to 96 kbps (no boosts), 128 
 
 ### 8.3 Encoder policy
 
-As in FR-007. `maximum` encodes at the source's own bitrate, up to `MAX_OPUS_BITRATE_KBPS` (default 510 kbps). Encoding above the source would cost bandwidth without adding detail the source lacks. Operators with limited upload bandwidth can lower `MAX_OPUS_BITRATE_KBPS` or use `balanced`. Mono sources are carried in stereo framing without inventing stereo detail. Loudness and dynamics are left untouched.
+As in FR-007. `maximum` encodes at the source's own bitrate, up to `MAX_OPUS_BITRATE_KBPS` (default 510 kbps). Encoding above the source would cost bandwidth without adding detail the source lacks. The exception is the re-encode floor: below 128 kbps (96 kbps for mono) the target is the floor, because a second encode at a low rate would throw away stereo and treble the source still has (libopus codes stereo above a bitrate-dependent frequency as one signal). Operators with limited upload bandwidth can lower `MAX_OPUS_BITRATE_KBPS` or use `balanced`. Mono sources are carried in stereo framing without inventing stereo detail. Loudness and dynamics are left untouched.
 
 ### 8.4 Buffering and live delay
 

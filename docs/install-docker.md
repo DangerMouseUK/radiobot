@@ -68,7 +68,7 @@ DISCORD_DEV_GUILD_ID=
 OPERATOR_USER_IDS=
 # How many servers may stream at once from this installation
 MAX_ACTIVE_GUILD_STREAMS=3
-# Highest Opus bitrate (32-510); 'maximum' quality matches each station's own bitrate up to it
+# Highest Opus bitrate (32-510); 'maximum' quality matches each station's own bitrate up to it (at least 128)
 MAX_OPUS_BITRATE_KBPS=510
 # The bot's Discord status while playing: track (station and song), station, or off
 PRESENCE_MODE=track

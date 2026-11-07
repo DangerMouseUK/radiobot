@@ -6,6 +6,8 @@ import {
   OPUS_ENCODER_MAX_KBPS,
   OPUS_MIN_KBPS,
   planEncoder,
+  REENCODE_FLOOR_KBPS,
+  REENCODE_FLOOR_MONO_KBPS,
 } from '../../src/audio/encoder.ts';
 
 const base: EncoderInput = {
@@ -46,6 +48,65 @@ describe('Opus target selection (§8.3)', () => {
       expect(target({ channelBitrateBps })).toBe(510);
       expect(target({ channelBitrateBps, qualityMode: 'manual', manualBitrateKbps: 320 })).toBe(320);
     }
+  });
+});
+
+describe('re-encode floor', () => {
+  const plan = (kbps: number | null, o: Partial<EncoderInput> = {}) =>
+    planEncoder({
+      ...base,
+      channelBitrateBps: null,
+      sourceBitrate: kbps === null ? null : { kbps, evidence: 'measured' },
+      ...o,
+    });
+
+  it('raises a low-rate stereo source to 128 kbps in maximum mode, whatever its codec', () => {
+    expect(REENCODE_FLOOR_KBPS).toBe(128);
+    for (const kbps of [24, 32, 48, 64, 96, 112, 127.4]) expect(plan(kbps).targetKbps).toBe(128);
+  });
+
+  it('raises a low-rate mono source to 96 kbps', () => {
+    expect(REENCODE_FLOOR_MONO_KBPS).toBe(96);
+    expect(plan(32, { sourceChannels: 1 }).targetKbps).toBe(96);
+    expect(plan(64, { sourceChannels: 1 }).targetKbps).toBe(96);
+    expect(plan(112, { sourceChannels: 1 }).targetKbps).toBe(112);
+    // Channels unknown: treated as stereo, the safer side.
+    expect(plan(64, { sourceChannels: null }).targetKbps).toBe(128);
+  });
+
+  it('leaves sources at or above the floor following their own rate', () => {
+    expect(plan(128).targetKbps).toBe(128);
+    expect(plan(128.1).targetKbps).toBe(129);
+    expect(plan(192).targetKbps).toBe(192);
+    expect(plan(320).targetKbps).toBe(320);
+    expect(plan(128).notes.join(' ')).toContain("follows the source's 128 kbps");
+  });
+
+  it("never goes above the installation's limit to reach the floor", () => {
+    const p = plan(48, { maxKbps: 96 });
+    expect(p.targetKbps).toBe(96);
+    expect(p.notes.join(' ')).toContain("this installation's limit; the usual minimum is 128 kbps");
+    expect(plan(48, { maxKbps: 64, sourceChannels: 1 }).targetKbps).toBe(64);
+  });
+
+  it('applies to manual mode before a value is set, and nowhere else', () => {
+    expect(plan(48, { qualityMode: 'manual', manualBitrateKbps: null }).targetKbps).toBe(128);
+    expect(plan(48, { qualityMode: 'manual', manualBitrateKbps: 64 }).targetKbps).toBe(64);
+    // Balanced is the explicit bandwidth saver: it never encodes above the source.
+    expect(plan(48, { qualityMode: 'balanced' }).targetKbps).toBe(48);
+    // Unknown bitrate: still the ceiling.
+    expect(plan(null).targetKbps).toBe(510);
+  });
+
+  it('says why the target is above the source, without claiming added detail', () => {
+    const notes = plan(48).notes.join(' ');
+    expect(notes).toContain('The source is 48 kbps (measured); the encoder uses 128 kbps');
+    expect(notes).toContain('keeps the stereo image and treble');
+    expect(notes).toContain('adds no detail the source lacks');
+    expect(notes).not.toMatch(/follows the source/);
+    const mono = plan(48, { sourceChannels: 1 }).notes.join(' ');
+    expect(mono).toContain('uses 96 kbps');
+    expect(mono).not.toContain('stereo image');
   });
 });
 

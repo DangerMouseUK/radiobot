@@ -70,7 +70,8 @@ describe('encoder policy (§8.3, FR-007)', () => {
     expect(at(320).targetKbps).toBe(320);
     expect(at(900).targetKbps).toBe(510);
     expect(at(320, 256).targetKbps).toBe(256);
-    expect(at(16).targetKbps).toBe(32);
+    // Below 128 kbps the re-encode floor applies (see encoder.test.ts).
+    expect(at(16).targetKbps).toBe(128);
     expect(at(128).notes.join(' ')).toContain("follows the source's 128 kbps (codec metadata)");
     expect(at(900).notes.join(' ')).toContain("this installation's limit is 510 kbps");
     expect(

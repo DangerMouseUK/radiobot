@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Low-bitrate stations are sent at 128 kbps.** In `maximum` quality, a station below 128 kbps used to be re-encoded at its own rate. At those rates Opus codes the stereo above a fixed frequency as one signal (above 3.2 kHz at 48 kbps, 5.6 kHz at 64) and drops fine detail in the treble, so a 48 kbps HE-AAC or 64 kbps MP3 station lost stereo width and treble it still had. Such stations are now sent at 128 kbps (96 kbps for mono), within `MAX_OPUS_BITRATE_KBPS`, and `/radio quality` says why. Stations at 128 kbps or more still follow their own bitrate; `balanced` and a manual bitrate are unchanged.
 - **Every source reaches the Opus encoder as float samples.** 16-bit FLAC or PCM sources used to be resampled to 48 kHz in 16-bit integers and rounded back without dither, clipping any overshoot. They now take the same float path as MP3, AAC and Opus sources. It adds no processing and costs no measurable CPU.
 - The voice player no longer builds debug strings on every state change that nothing reads.
 - The docs give the voice player's one 20 ms frame of prepare-ahead in the delay budget, say that silence the player fills in counts towards packets per second, and explain, under troubleshooting, how the first person to join an empty channel decides where Discord hosts the call, and how Region Override fixes a call hosted far from its listeners.

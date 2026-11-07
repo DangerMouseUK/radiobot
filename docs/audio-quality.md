@@ -3,7 +3,7 @@
 ## In short
 
 - **The bot passes the station's sound through as faithfully as it can.** It converts the station's stream to Opus, the format Discord uses, exactly once. It adds no volume levelling, EQ, compression or other effects.
-- **It follows the station's own bitrate.** *Bitrate* is how much data per second a stream uses; more data can carry more detail. By default (`maximum` quality) the bot sends each station at the bitrate the station itself uses, up to 510 kbps. A 128 kbps station is sent at 128 kbps. Sending it at more would use more bandwidth without adding any detail.
+- **It follows the station's own bitrate.** *Bitrate* is how much data per second a stream uses; more data can carry more detail. By default (`maximum` quality) the bot sends each station at the bitrate the station itself uses, up to 510 kbps. A 128 kbps station is sent at 128 kbps. Sending it at more would use more bandwidth without adding any detail. A station below 128 kbps is sent at 128 (96 for a mono station): see [The re-encode floor](#the-re-encode-floor).
 - **It cannot improve on the station.** Whatever detail the station's own stream has lost is gone. No setting brings it back.
 - **The voice channel's bitrate setting doesn't limit the bot.** That setting is for people's voices. The bot sends its stream at its own target and shows the channel setting for information only.
 - **Admins can choose a different quality** in `/radio config`: `balanced` (at most 128 kbps, to save bandwidth) or `manual` (a fixed bitrate).
@@ -113,7 +113,7 @@ A source that is already Opus is still decoded and encoded again at the target b
 
 | Quality mode | Target |
 |---|---|
-| `maximum` (default) | The source's own bitrate, up to `MAX_OPUS_BITRATE_KBPS`. A 128 kbps MP3 is sent at 128 kbps and a 320 kbps one at 320. If the source's bitrate is unknown, the target is `MAX_OPUS_BITRATE_KBPS` (510 kbps by default, the most libopus allows for stereo). |
+| `maximum` (default) | The source's own bitrate, up to `MAX_OPUS_BITRATE_KBPS`. A 128 kbps MP3 is sent at 128 kbps and a 320 kbps one at 320. Below the re-encode floor, the floor: a 48 kbps HE-AAC or 64 kbps MP3 stream is sent at 128 kbps, a 32 kbps mono one at 96. If the source's bitrate is unknown, the target is `MAX_OPUS_BITRATE_KBPS` (510 kbps by default, the most libopus allows for stereo). |
 | `balanced` | 128 kbps, or the source's bitrate if that is lower, and never above `MAX_OPUS_BITRATE_KBPS`. 128 kbps when the source's bitrate is unknown. Saves upload bandwidth and CPU on high-bitrate stations. |
 | `manual` | The admin's value from `/radio config` → Sound and empty channel → **Manual bitrate** (32–510), capped at `MAX_OPUS_BITRATE_KBPS`. It is used as set, even when it is higher than the source's bitrate; a higher value then only costs bandwidth. Until a value is set, `manual` behaves like `maximum`. |
 
@@ -124,11 +124,19 @@ Some details:
 - **The target is rounded up, never down,** so it is never below the source's rate: a stream that measures 128.1 kbps is encoded at 129.
 - **The target is never below 32 kbps,** even for a source with a lower bitrate.
 - **The voice channel's bitrate setting is not a cap.** That setting (up to 96 kbps without boosts, then 128, 256 and 384 kbps at boost levels 1–3) applies to members' voices. The bot encodes its stream at its own target. `/radio quality` shows the setting, and when the target is higher the plan says so: "Encoding above the voice channel's N kbps setting; the channel setting does not cap a bot's stream." What bitrate a listener's Discord app actually receives **has not been measured**.
-- **Bandwidth follows the station.** Per server that is streaming, before overhead, a 128 kbps station uses about 58 MB per hour, a 320 kbps one about 144 MB, and the 510 kbps limit (reached only by very high-bitrate or unknown-bitrate sources) about 230 MB. On a slow upload connection, lower `MAX_OPUS_BITRATE_KBPS` or use `balanced`.
-- **The plan says where its target came from,** for example "The encoder follows the source's 128 kbps (measured).", "The source's bitrate is unknown, so the encoder uses 510 kbps.", or that `balanced` or the installation's limit applies. `/radio quality` shows it.
+- **Bandwidth follows the station,** from the re-encode floor up. Per server that is streaming, before overhead, a 128 kbps station (or any station below it) uses about 58 MB per hour, a 320 kbps one about 144 MB, and the 510 kbps limit (reached only by very high-bitrate or unknown-bitrate sources) about 230 MB. On a slow upload connection, lower `MAX_OPUS_BITRATE_KBPS` or use `balanced`.
+- **The plan says where its target came from,** for example "The encoder follows the source's 128 kbps (measured).", "The source's bitrate is unknown, so the encoder uses 510 kbps.", that the re-encode floor applies, or that `balanced` or the installation's limit applies. `/radio quality` shows it.
 - **Quality changes apply while playing.** If an admin changes the quality mode or the manual bitrate in `/radio config`, resets the settings there, or imports settings, and the target changes, the bot rebuilds the encoder at the new target. That causes a brief re-buffer on the same source, and the reply to the admin says so ("The station restarts for a moment to use the new quality."). A change to the channel's own bitrate setting doesn't change the target. Asking for the station that is already playing in the same channel doesn't restart it.
 
 Other encoder settings: 48 kHz, 2 channels, `application=audio` (music mode), 20 ms frames, variable bitrate (VBR) on, and `compression_level 10` (the encoder's most thorough setting).
+
+### The re-encode floor
+
+In `maximum` mode (and `manual` before a value is set), a source below 128 kbps is encoded at 128 kbps, and a mono source below 96 kbps at 96. `MAX_OPUS_BITRATE_KBPS` still wins if it is lower. `balanced` and a manual value are unchanged.
+
+Why: the bot's encode is a second lossy generation, and the last encode's bitrate largely decides what listeners hear (EBU and ITU studies of cascaded codecs). At low bitrates, libopus codes the stereo of every band above a fixed frequency as one shared signal with only each side's level (intensity stereo): above 3.2 kHz at 48 kbps, 5.6 kHz at 64 kbps, 12 kHz at 96 kbps, and only the top band (15.6–20 kHz) at 128 kbps (`intensity_thresholds` in libopus's `celt/celt_encoder.c`). It also stops coding the fine detail of the top bands. A 64 kbps MP3 stream still carries real stereo well above 5.6 kHz, and an HE-AAC stream's treble and stereo image, which its decoder rebuilds from a few bits of side data, reach Opus as real audio that it must code in full. Following such a source's own low rate would throw that away. At 128 kbps Opus is near-transparent for music on its own. A mono source has no stereo image to keep, so 96 kbps is enough, and VBR spends little on the empty side channel.
+
+The plan says so: "The source is 48 kbps (measured); the encoder uses 128 kbps, the minimum for a re-encode, so Opus keeps the stereo image and treble the source has. This adds no detail the source lacks." The floor is a reasoned choice, not a measured one: no published listening test covers HE-AAC or low-rate MP3 re-encoded to Opus. It costs about 36 MB per hour more per listener for a 48 kbps station.
 
 ### Mono and sample rate
 
@@ -209,7 +217,7 @@ Each source change, stop, leave, server removal and shutdown closes the old pipe
 
 ## Honest limits
 
-- **The station's own stream is the ceiling.** No Opus target can restore detail the station's encoder removed, which is why `maximum` matches the source's bitrate instead of padding it. Re-encoding is still a second lossy step: Opus is the more efficient codec at the same bitrate, so the added loss is small, but it is not zero. An admin who wants more headroom on a server can choose `manual` with a higher bitrate.
+- **The station's own stream is the ceiling.** No Opus target can restore detail the station's encoder removed, which is why `maximum` matches the source's bitrate instead of padding it, from 128 kbps up. Re-encoding is still a second lossy step: at 128 kbps and above Opus is near-transparent, so the added loss is small, but it is not zero. Below 128 kbps the re-encode floor keeps it small (see [The re-encode floor](#the-re-encode-floor)). An admin who wants more headroom on a server can choose `manual` with a higher bitrate.
 - **Bitrate is not the same as sound quality.** The bot never ranks sources of different codecs by bitrate. AAC at 128 kbps against MP3 at 128 kbps is reported as "not conclusively determined". See [station-verification.md](station-verification.md#ranking-sources).
 - **HLS is not "HD", and it is a last resort.** HLS is only a way of delivering audio. Segmented delivery makes live playback start more slowly and recover less smoothly, so the bot plays HLS only when no direct stream of the station is eligible, even if the HLS version measures higher. On the streams of the first library pack (the pack that shipped with the bot up to 1.1.0), measured on 31 October 2026, the direct streams were MP3 at 128 kbps (and AAC-LC at 128 kbps for one station's extra stream), and the HLS versions were AAC-LC at 128 kbps. Each check reports what a source carries.
 - **Above-channel bitrates are not verified.** The encoder target is what the bot sends. Whether Discord passes a bot's stream on above the channel's bitrate setting, and what each listener's app actually receives, has **not** been measured.
