@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-07
+
+A new settings card for `/radio config`, and live means live: streams start about 1 s behind live instead of about 4 s, never fall further behind, and stay live through Discord voice resumes.
+
 ### Changed
 
 - **`/radio config` is a new settings card.** It opens on an overview of every setting in five groups (Who can use it, Playing, Sound and empty channel, Notices, Control panel), each with a **Change** button that opens that group's page. Each setting says what it does for listeners, and its menu marks the default choice. The card uses Discord's newer message layout and is still shown only to the admin who opened it.
@@ -428,7 +432,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.4...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.1...v1.2.2

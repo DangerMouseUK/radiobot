@@ -239,7 +239,7 @@ A `/radio stop`, a `/radio leave` or a moderator disconnecting the bot always pr
 | `Couldn't tell Radio Bot to load the change. It loads it at its next restart: radio-bot restart` (from `packs`) | The pack was changed, but the running bot couldn't be told. Run `radio-bot restart` to load it now. |
 | `… isn't installed. See the installed packs with: radio-bot packs` or `"…" isn't a pack name.` (from `packs remove`) | Nothing was changed, and the name isn't remembered as removed. Check the name against the list `radio-bot packs` shows. |
 | `Couldn't check the bot's station packs just now. To add stations later, run: radio-bot packs browse` (during `install`) | The installer couldn't ask the bot which packs it has. Add packs later with `radio-bot packs browse` and `radio-bot packs add <pack>`. |
-| `Version … was not found.` (from `update`) | The version you named doesn't exist. Release names start with `v`, as in `radio-bot update v1.2.4`. |
+| `Version … was not found.` (from `update`) | The version you named doesn't exist. Release names start with `v`, as in `radio-bot update v1.3.0`. |
 | `Couldn't switch to the newest …; nothing was restarted.` (from `update`) | The update couldn't change to the new version's files, so the bot kept running the old one. The lines above say why; fix that and try again. |
 | `Docker Compose v2 is missing.` | Install the Docker Compose plugin (it comes with Docker Desktop), then try again. |
 | `There is no terminal to ask … in.` | The command needs to ask a question, but wasn't run in a terminal (for example from a script). Run it in a terminal window. |
