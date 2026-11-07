@@ -4,7 +4,7 @@
  * the stream's ID, so anything still in flight for a link or stream that has gone is dropped.
  */
 import { RadioError, type ReasonCode } from '../../shared/errors.ts';
-import type { VoiceLinkStats } from '../link.ts';
+import type { VoiceInterruption, VoiceLinkStats, VoiceRestore } from '../link.ts';
 
 export interface SerializedError {
   name: string;
@@ -91,6 +91,8 @@ export type FromWorker =
   | { t: 'audioEnded'; linkId: number; streamId: number; error: SerializedError | null }
   | { t: 'reconnected'; linkId: number }
   | { t: 'connectionError'; linkId: number; error: SerializedError }
+  | { t: 'interrupted'; linkId: number; info: VoiceInterruption }
+  | { t: 'restored'; linkId: number; info: VoiceRestore }
   | { t: 'flow'; linkId: number; streamId: number; paused: boolean }
   | { t: 'adapterOpen'; adapterId: number; guildId: string }
   | { t: 'send'; adapterId: number; payload: unknown }

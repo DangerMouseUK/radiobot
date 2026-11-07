@@ -486,6 +486,21 @@ describe('VoiceThread: audio', () => {
     h.links[0]!.emit('reconnected');
     await vi.waitFor(() => expect(seen).toEqual(['udp socket closed', 'reconnected']));
   });
+
+  it('passes on a brief interruption and its recovery, as the link in the worker saw them', async () => {
+    const h = harness();
+    const t = thread(h);
+    await t.start();
+    const link = await t.factory()(channel().channel);
+    const seen: unknown[] = [];
+    link.on('interrupted', (info) => seen.push(info));
+    link.on('restored', (info) => seen.push(info));
+    const interruption = { status: 'connecting', resuming: true, closeCode: 1006, held: true };
+    const restore = { afterMs: 140, heldMs: 140, skippedMs: 0 };
+    h.links[0]!.emit('interrupted', interruption);
+    h.links[0]!.emit('restored', restore);
+    await vi.waitFor(() => expect(seen).toEqual([interruption, restore]));
+  });
 });
 
 describe('VoiceThread: losing and letting go', () => {

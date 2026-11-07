@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **No music is skipped while Discord's voice connection resumes.** Every so often Discord closes the bot's voice WebSocket and the bot resumes it, usually within a fraction of a second. Nothing can be sent meanwhile, and the voice player used to read on and throw that audio away, so listeners heard a short jump in the music. The player now holds its place and plays on from where it stopped, so only the short pause remains. It holds for at most 1 s; a longer outage plays on as before, so playback can't fall far behind live.
+
+### Added
+
+- Info-level log lines when the voice connection is interrupted ("voice connection resuming", with the WebSocket's close code) and when it is ready again (how long it took, and how much audio was held or skipped). Every Stop and Leave is now logged too, with why: a listener's command, a removed station or pack, an empty channel, a deleted channel or a move to a channel that isn't allowed.
+
 ## [1.2.4] - 2026-11-04
 
 A performance and quality pass. The stream comes first: everything else the bot does now does less on the thread that sends voice packets, and does it later.

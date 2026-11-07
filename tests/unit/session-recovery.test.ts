@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import pino from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EncoderPlan } from '../../src/audio/encoder.ts';
 import type { PipelineStats } from '../../src/audio/pipeline.ts';
@@ -132,6 +133,8 @@ interface Options {
   connect?: (channelId: string, n: number) => Promise<void> | void;
   openInput?: (n: number) => Promise<void> | void;
   pipeline?: (n: number) => 'ok' | 'audio-already' | 'throws';
+  /** Receives every info-level log line, parsed. */
+  logs?: Array<Record<string, unknown>>;
 }
 
 function setup(opts: Options = {}) {
@@ -209,7 +212,9 @@ function setup(opts: Options = {}) {
     },
     channelBitrate: () => 96_000,
     notify: (n) => notices.push(n),
-    logger: silentLogger(),
+    logger: opts.logs
+      ? pino({ level: 'info' }, { write: (line: string) => opts.logs!.push(JSON.parse(line)) })
+      : silentLogger(),
     metrics,
     timings: { ...FAST, ...opts.timings },
     random: () => 0.5,
@@ -252,6 +257,40 @@ describe('GuildSession: connection state', () => {
     // Connection errors are logged and recovered from by the link itself.
     t.links[0]!.emit('connectionError', new Error('udp socket closed'));
     expect(t.session.state).toBe('PLAYING');
+  });
+
+  it('logs a voice interruption and its recovery at info level, and counts it', async () => {
+    const logs: Array<Record<string, unknown>> = [];
+    const t = setup({ logs });
+    await t.session.play('mypack:my-station', 'voice-1', 'u1');
+    t.links[0]!.emit('interrupted', { status: 'connecting', resuming: true, closeCode: 1006, held: true });
+    t.links[0]!.emit('restored', { afterMs: 120, heldMs: 120, skippedMs: 0 });
+    t.links[0]!.emit('interrupted', { status: 'signalling', resuming: false, closeCode: 4006, held: false });
+    const voice = logs.filter((l) => String(l.msg).startsWith('voice connection'));
+    expect(voice).toMatchObject([
+      { level: 30, msg: 'voice connection resuming', closeCode: 1006, held: true, guildId: 'g1' },
+      { level: 30, msg: 'voice connection ready again', afterMs: 120, heldMs: 120, skippedMs: 0 },
+      { level: 30, msg: 'voice connection interrupted; reconnecting', closeCode: 4006, resuming: false },
+    ]);
+    expect(t.metrics.get('voice.interrupted')).toBe(2);
+    // Brief interruptions are the link's to ride out: playback carries on.
+    expect(t.session.state).toBe('PLAYING');
+  });
+
+  it('logs a listener’s Stop and Leave, and why the bot left by itself', async () => {
+    const logs: Array<Record<string, unknown>> = [];
+    const t = setup({ logs });
+    await t.session.play('mypack:my-station', 'voice-1', 'u1');
+    t.session.stop();
+    t.session.leave();
+    t.session.leave('idle', 'channel_deleted');
+    expect(logs.filter((l) => l.msg === 'stopping playback')).toMatchObject([
+      { reason: 'command', state: 'PLAYING', stationId: 'mypack:my-station' },
+    ]);
+    expect(logs.filter((l) => l.msg === 'leaving the voice channel')).toMatchObject([
+      { reason: 'command', desired: 'left', state: 'CONNECTED', channelId: 'voice-1' },
+      { reason: 'channel_deleted', desired: 'idle', state: 'IDLE' },
+    ]);
   });
 
   it('releases a connection that arrives after the session was destroyed', async () => {
