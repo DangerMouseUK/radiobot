@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-07
+
+A small fix to the order of background work, and to the test that caught it.
+
 ### Fixed
 
 - Scheduled background work (a catalogue sync, the daily pack check) waiting for a stream to settle could, now and then, lose its turn to work queued after it, when the system timer fired a moment before the clock said the wait was over. It now keeps its order. A test of this used to fail on busy CI machines, and stopped the 1.3.0 release from publishing until it was run again.
@@ -436,7 +440,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/DangerMouseUK/radiobot/compare/v1.2.2...v1.2.3
