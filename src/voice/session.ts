@@ -12,7 +12,8 @@ import { backoffDelayMs } from '../shared/backoff.ts';
 import { errorCode, isRadioError, type RadioError, type ReasonCode } from '../shared/errors.ts';
 import type { NowPlayingMeta, SourceInput } from '../streams/input.ts';
 import { compareFidelity, type SelectionResult, transportTier } from '../streams/ranking.ts';
-import type { VoiceLink } from './link.ts';
+import type { PlayOptions, VoiceLink, VoiceLinkStats } from './link.ts';
+import type { LiveQueueStats } from './live-queue.ts';
 import type { PacketTimingSummary } from './packet-timing.ts';
 import { canTransition, isAudioActive, type PlaybackState } from './state-machine.ts';
 
@@ -179,7 +180,7 @@ export interface SessionLiveStats {
   output: null | {
     targetKbps: number;
     channelBitrateKbps: number | null;
-    /** Ogg Opus pulled by the voice player, i.e. what is being sent on, rolling 10 s. */
+    /** Ogg Opus read from the encoder (before the live queue drops any), rolling 10 s. */
     kbps10s: number | null;
     kbps60s: number | null;
     bytes: number;
@@ -204,6 +205,8 @@ export interface SessionLiveStats {
      */
     silenceMs: number | null;
     recentSilenceMs: number | null;
+    /** The live queue of the stream playing: delay, cushion, catch-ups, drift (null when idle). */
+    live: LiveQueueStats | null;
     ws: LatencySummary | null;
   };
 }
@@ -277,6 +280,19 @@ export function withOpenedBitrate(source: StationSource, input: Pick<SourceInput
     advertisedBitrateKbps: declared,
     bitrateConfidence: 'manifest',
   };
+}
+
+/**
+ * How a stream is played: how much audio arrives in one go. A direct stream arrives as the station
+ * sends it (no chunk). HLS arrives a segment at a time: the reader polls the playlist at half the
+ * target duration and fetches each new segment whole, so the queue gets a segment's worth of audio
+ * about once per target duration, and nothing in between. The live queue keeps that chunk plus its
+ * own safety margin as the cushion, and clamps the chunk itself.
+ */
+export function playOptionsFor(input: Pick<SourceInput, 'info'>): PlayOptions {
+  const targetDuration = input.info.hls?.targetDuration;
+  if (typeof targetDuration !== 'number' || !(targetDuration > 0)) return {};
+  return { chunkMs: Math.round(targetDuration * 1000) };
 }
 
 /**
@@ -726,7 +742,22 @@ export class GuildSession {
         info.resuming ? 'voice connection resuming' : 'voice connection interrupted; reconnecting',
       );
     });
+    // `skippedMs`: audio the player dropped while the connection was down (playback stays live);
+    // `caughtUpMs`: the backlog the live queue dropped at the same moment, back to its cushion.
     link.on('restored', (info) => this.#log.info(info, 'voice connection ready again'));
+    // At most a few per stream (the start and its settle, then network gaps, resumes, a fast station clock),
+    // never per packet. Each one is a moment the listener skipped ahead, so worth seeing at info.
+    link.on('caughtUp', (e) => {
+      this.#d.metrics.inc('playback.caught_up');
+      // A resume's catch-up is in the 'voice connection ready again' line (`caughtUpMs`): once is enough.
+      if (e.reason === 'resume') return;
+      this.#log.info(
+        { reason: e.reason, droppedMs: e.droppedMs, cushionMs: e.cushionMs },
+        e.reason === 'start'
+          ? 'started behind live by the cushion; dropped the connect burst'
+          : 'caught up with live',
+      );
+    });
     link.on('audioEnded', (err) => {
       if (link !== this.#link) return;
       const code: ReasonCode = err ? 'FFMPEG_EXIT' : 'STREAM_EOF';
@@ -822,7 +853,7 @@ export class GuildSession {
           this.#log.debug({ title: m?.title ?? null }, 'stream title');
         this.#nowPlaying = m;
       });
-      this.#link!.play(pipeline.output);
+      this.#link!.play(pipeline.output, playOptionsFor(input));
       this.#startedAt = Date.now();
       const firstAudio = await this.#waitFirstAudio(pipeline, abort.signal);
       if (gen !== this.#gen || runId !== this.#runId) {
@@ -1186,9 +1217,12 @@ export class GuildSession {
   }
 
   /** Stall detection from encoder output progress (PRD §9.2 / NFR-03) and live-lag resync (§8.4). */
-  /** Samples voice ping and packet counters for live stats (every watchdog tick). */
-  #sampleVoice(): void {
-    if (!this.#link) return;
+  /**
+   * Samples voice ping and packet counters for live stats (every watchdog tick), and returns the
+   * stats it read, so the live-lag check needs no second read.
+   */
+  #sampleVoice(): VoiceLinkStats | null {
+    if (!this.#link) return null;
     const v = this.#link.stats();
     this.#wsPing.add(v.wsPingMs);
     if (v.packetsPlayed !== null) {
@@ -1203,10 +1237,11 @@ export class GuildSession {
       });
       if (this.#packetSamples.length > 13) this.#packetSamples.shift();
     }
+    return v;
   }
 
   #checkProgress(): void {
-    this.#sampleVoice();
+    const voice = this.#sampleVoice();
     const p = this.#pipeline;
     if (!p || this.#state !== 'PLAYING') return;
     const now = Date.now();
@@ -1216,7 +1251,17 @@ export class GuildSession {
       return;
     }
     if (this.#link && p.stats.firstOutputAt !== null) {
-      const behind = now - p.stats.firstOutputAt - this.#link.playbackMs();
+      // Wall-clock time since the encoder's first audio, less the audio the player has sent: how
+      // far playback has fallen behind the stream since it started. The live queue keeps this
+      // small by dropping backlog (after a network gap the server sends what it held back; after
+      // a voice resume; at its limit). Those packets were never played, so `playbackMs` didn't
+      // advance for them, yet dropping them brought playback that much closer to live: they are
+      // taken off. The burst trimmed at the start (`startDroppedMs`) is not: it arrived with the
+      // first audio, before playback began, so it never added to `behind` in the first place.
+      // The queue's figures come from the stats the voice sample just read (in worker mode, the
+      // snapshot pushed each second, as is `playbackMs`), so this costs a subtraction.
+      const caughtUpMs = voice?.live?.caughtUpMs ?? 0;
+      const behind = now - p.stats.firstOutputAt - this.#link.playbackMs() - caughtUpMs;
       // When the HLS reader skips forward it is back at the live edge, so the gap it left
       // (time that passed without audio to play) no longer means playback is behind live.
       const skips = p.input.stats.liveEdgeSkips ?? 0;
@@ -1224,6 +1269,12 @@ export class GuildSession {
         this.#lagSkips = skips;
         this.#lagCaughtUpMs = behind;
       }
+      // With the live queue holding the delay to a few seconds, this is a last-resort safety net
+      // for lag building up where the queue can't see it, or a fault in its accounting. `lagMs`
+      // stays at 45 s, because the figure also counts gaps whose audio the server never resent
+      // (lost, not held back): those leave nothing for the queue to drop and add no delay, yet
+      // still add to `behind`. Lower, and a run of such gaps (each up to the 15 s stall limit)
+      // would force a restart, an audible cut, for no gain.
       const lag = behind - this.#lagCaughtUpMs;
       if (lag > this.#t.lagMs && this.#source) {
         this.#log.info({ lagMs: lag }, 'playback drifted behind live; resynchronising');
@@ -1431,6 +1482,7 @@ export class GuildSession {
               recentLatePackets: v.packetTiming.recent,
               silenceMs: v.silenceMs,
               recentSilenceMs,
+              live: v.live,
               ws: this.#wsPing.summary(),
             }
           : null,

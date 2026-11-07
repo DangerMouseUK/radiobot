@@ -9,10 +9,11 @@ import { RadioError } from '../../src/shared/errors.ts';
 import type { SourceInput } from '../../src/streams/input.ts';
 import { selectSource } from '../../src/streams/ranking.ts';
 import { CIRCUIT_BREAK_FAILURES } from '../../src/streams/source-service.ts';
-import type { VoiceLink, VoiceLinkEvents } from '../../src/voice/link.ts';
+import type { PlayOptions, VoiceLink, VoiceLinkEvents } from '../../src/voice/link.ts';
 import {
   DEFAULT_TIMINGS,
   GuildSession,
+  playOptionsFor,
   type SessionNotice,
   type SessionTimings,
   withOpenedBitrate,
@@ -22,14 +23,16 @@ import { makeSource, memoryDb, silentLogger } from '../helpers.ts';
 class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
   ready = true;
   played: unknown[] = [];
+  playOptions: Array<PlayOptions | undefined> = [];
   destroyed = false;
   readonly channelId: string;
   constructor(channelId: string) {
     super();
     this.channelId = channelId;
   }
-  play(stream: unknown): void {
+  play(stream: unknown, options?: PlayOptions): void {
     this.played.push(stream);
+    this.playOptions.push(options);
   }
   stopAudio(): void {}
   playbackMs(): number {
@@ -50,6 +53,16 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
       silenceMs: 40,
       encryptionMode: 'aead',
       status: 'ready',
+      live: {
+        depthMs: 1_040,
+        floorMs: 980,
+        cushionMs: 1_000,
+        startDroppedMs: 3_200,
+        caughtUpMs: 0,
+        catchUps: 0,
+        gaps: 0,
+        driftPpm: null,
+      },
     };
   }
   detached = false;
@@ -215,7 +228,7 @@ function setup(
           remoteAddress: '203.0.113.10',
           remotePort: 443,
           redirects: ['n01-eu1.example.com'],
-          hls: null,
+          hls: source.transport === 'hls' ? { playlistHost: 'b.example.com', targetDuration: 6 } : null,
         },
         stats: { segmentHost: null, segmentsFetched: 0, segmentFailures: 0, skippedSegments: 0 },
         close() {
@@ -453,6 +466,17 @@ describe('GuildSession', () => {
     expect(t.session.status().failovers).toBe(1);
   });
 
+  it('tells the live queue an HLS stream arrives a segment at a time, and a direct stream continuously', async () => {
+    const t = setup();
+    await t.session.play('demo:demo-radio', 'voice-1', null);
+    expect(t.links[0]!.playOptions).toEqual([{}]);
+    expect(t.links[0]!.playOptions[0]?.chunkMs).toBeUndefined();
+    t.pipelines[0]!.fail('ACCESS_DENIED');
+    await until(() => t.session.state === 'PLAYING' && t.session.status().source?.id === 'fallback');
+    // The fallback is HLS with a 6 s target duration.
+    expect(t.links[0]!.playOptions).toEqual([{}, { chunkMs: 6_000 }]);
+  });
+
   it('retries a 404 on the same source, as a station reconnecting its encoder sends for a moment', async () => {
     const t = setup();
     await t.session.play('demo:demo-radio', 'voice-1', null);
@@ -637,6 +661,7 @@ describe('GuildSession', () => {
       worstPacketGapMs: 57,
       recentLatePackets: [{ at: 1_700_000_000_000, gapMs: 57 }],
       silenceMs: 40,
+      live: { depthMs: 1_040, cushionMs: 1_000, startDroppedMs: 3_200, driftPpm: null },
     });
     await wait(60);
     expect(t.session.liveStats().voice?.ws?.samples).toBeGreaterThan(0);
@@ -984,6 +1009,19 @@ describe('GuildSession: back to the best quality', () => {
     await until(() => t.pipelines.length === 2 && t.session.state === 'PLAYING');
     expect(t.pipelines[1]!.plan.targetKbps).toBe(192);
     expect(t.session.status().source?.id).toBe('primary');
+  });
+});
+
+describe('playOptionsFor', () => {
+  const opened = (hls: unknown) => ({ info: { hls } }) as never;
+  it('passes an HLS segment’s length as the chunk, and nothing for a continuous stream', () => {
+    expect(playOptionsFor(opened(null))).toEqual({});
+    expect(playOptionsFor(opened({ targetDuration: 2 }))).toEqual({ chunkMs: 2_000 });
+    expect(playOptionsFor(opened({ targetDuration: 10 }))).toEqual({ chunkMs: 10_000 });
+    expect(playOptionsFor(opened({ targetDuration: 4.5 }))).toEqual({ chunkMs: 4_500 });
+    // The live queue clamps an absurd target duration itself.
+    expect(playOptionsFor(opened({ targetDuration: 60 }))).toEqual({ chunkMs: 60_000 });
+    expect(playOptionsFor(opened({ targetDuration: 0 }))).toEqual({});
   });
 });
 

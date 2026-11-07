@@ -71,6 +71,7 @@ import {
   errorEmbed,
   infoEmbed,
   latePacketsLine,
+  liveDelayLine,
   loopDelayLine,
   nowEmbed,
   processLoadLine,
@@ -1104,10 +1105,11 @@ export class RadioController {
           value: truncate(
             [
               `Opus target: ${out ? `${out.targetKbps} kbps (${status.plan?.qualityMode ?? '—'})` : '—'} · voice channel setting ${kbps(out?.channelBitrateKbps)} (not a cap)`,
-              `Sent to Discord: ${kbps(out?.kbps10s)} (10 s) · ${kbps(out?.kbps60s)} (60 s) · Ogg Opus pulled by the voice player`,
+              `Sent to Discord: ${kbps(out?.kbps10s)} (10 s) · ${kbps(out?.kbps60s)} (60 s) · Ogg Opus from the encoder`,
               `Packets to Discord: ${live.voice?.packetsPerSecond ?? '—'} per second (expect ~50) · ${live.voice?.packetsPlayed ?? '—'} sent on this connection`,
               latePacketsLine(live.voice?.latePackets, live.voice?.worstPacketGapMs),
               silenceLine(live.voice?.silenceMs, live.voice?.recentSilenceMs),
+              liveDelayLine(live.voice?.live),
             ].join('\n'),
             1024,
           ),

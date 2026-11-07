@@ -5,6 +5,7 @@
  */
 import { RadioError, type ReasonCode } from '../../shared/errors.ts';
 import type { VoiceInterruption, VoiceLinkStats, VoiceRestore } from '../link.ts';
+import type { LiveCatchUp } from '../live-queue.ts';
 
 export interface SerializedError {
   name: string;
@@ -24,6 +25,7 @@ export interface LinkSnapshot {
   /** The stream the two figures above belong to (0 when none is playing). */
   streamId: number;
   encryption: string;
+  /** The link's figures, including its live queue's (`stats.live`), pushed every second. */
   stats: VoiceLinkStats;
 }
 
@@ -68,7 +70,8 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export type ToWorker =
   | { t: 'join'; linkId: number; guildId: string; channelId: string; timeoutMs: number }
-  | { t: 'play'; linkId: number; streamId: number }
+  /** `chunkMs`: how much audio arrives in one go (an HLS segment); absent for a continuous stream. */
+  | { t: 'play'; linkId: number; streamId: number; chunkMs?: number }
   | { t: 'audio'; linkId: number; streamId: number; chunk: Uint8Array }
   | { t: 'audioEnd'; linkId: number; streamId: number; how: 'end' | 'error' | 'close'; message?: string }
   | { t: 'stopAudio'; linkId: number }
@@ -93,6 +96,8 @@ export type FromWorker =
   | { t: 'connectionError'; linkId: number; error: SerializedError }
   | { t: 'interrupted'; linkId: number; info: VoiceInterruption }
   | { t: 'restored'; linkId: number; info: VoiceRestore }
+  /** The live queue of stream `streamId` dropped audio to stay near live. */
+  | { t: 'caughtUp'; linkId: number; streamId: number; event: LiveCatchUp }
   | { t: 'flow'; linkId: number; streamId: number; paused: boolean }
   | { t: 'adapterOpen'; adapterId: number; guildId: string }
   | { t: 'send'; adapterId: number; payload: unknown }

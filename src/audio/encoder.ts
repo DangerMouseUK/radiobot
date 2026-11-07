@@ -140,6 +140,13 @@ export function planEncoder(i: EncoderInput): EncoderPlan {
  * FFmpeg arguments for the single lossy encode: stdin (already-fetched, policy-checked
  * bytes) → decode → 48 kHz stereo → libopus (music mode, 20 ms) → Ogg Opus on stdout.
  * No loudness normalisation, EQ, compression or limiter. FFmpeg may only read the pipe.
+ *
+ * Latency: the Ogg muxer closes a page once it spans `-page_duration`, then holds it until the
+ * next page closes (libavformat/oggenc.c, ogg_write_pages). With one 20 ms page per Opus packet,
+ * each packet leaves after one more frame (20 ms) instead of 100–180 ms with 100 ms pages, and
+ * `-flush_packets 1` writes it to the pipe at once. `+nobuffer` is deliberately not set: it only
+ * discards the packets read while probing the input, which the live queue trims anyway, and for
+ * HLS (MPEG-TS, probed up to `-analyzeduration`) it would throw away the queue's start cushion.
  */
 export function buildEncodeArgs(plan: EncoderPlan): string[] {
   return [
@@ -182,7 +189,7 @@ export function buildEncodeArgs(plan: EncoderPlan): string[] {
     '-f',
     'ogg',
     '-page_duration',
-    '100000',
+    '20000',
     '-flush_packets',
     '1',
     'pipe:1',

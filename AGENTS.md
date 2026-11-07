@@ -82,9 +82,10 @@ src/
                         "Check all sources again", through the background queue)
   audio/                ffmpeg.ts (process registry, version checks), encoder.ts (bitrate plan, args),
                         pipeline.ts (stdin → FFmpeg → Ogg Opus, rate meters)
-  voice/                link.ts (@discordjs/voice wrapper + stats), packet-timing.ts (late-packet count),
-                        state-machine.ts, session.ts (per-guild state machine, watchdog, recovery,
-                        failover), session-manager.ts (all guilds, boot/resume)
+  voice/                link.ts (@discordjs/voice wrapper + stats), live-queue.ts (the live edge: Ogg demux,
+                        cushion, catch-up, drift), packet-timing.ts (late-packet count), state-machine.ts,
+                        session.ts (per-guild state machine, watchdog, recovery, failover),
+                        session-manager.ts (all guilds, boot/resume)
   discord/              controller.ts (every interaction), commands/definitions.ts (/radio),
                         permissions/authorize.ts, components/custom-id.ts (signed IDs),
                         ui/ (views, format, packs-view, settings-view: the /radio config card),
@@ -137,10 +138,20 @@ These are coding rules. A change that breaks one is a bug, even if the tests pas
    - They back off when they fail.
    - Anything a listener is waiting for interrupts them.
    - When in doubt, do less and do it later.
-4. **The audio path stays minimal.** Code that runs for every packet (every 20 ms) is constant-time: no logging, I/O, `await` or per-packet allocation of its own. Add no buffering or latency beyond what the pipeline needs. Encode once, add no processing, and follow the source's bitrate (invariants 1–3).
+4. **The audio path stays minimal.** Code that runs for every packet (every 20 ms) is constant-time: no logging, I/O, `await` or per-packet allocation of its own. Add no buffering or latency beyond what the pipeline needs (see "Live means live"). Encode once, add no processing, and follow the source's bitrate (invariants 1–3).
 5. **Memory is bounded.** Caches, histories and queues have a limit. The bot and one FFmpeg encoder must fit comfortably in 1 GB alongside the operating system.
 6. **Measure, don't guess.** A change that adds work on the main thread says in its pull request what that work costs and how this was measured, for example a timing against a 2000-station pack. On a running bot, use the event-loop delay and the late-packet count in `/radio stats`. Profile before optimising: in 1.0.4 the cost of `/radio stats` turned out to be statement compilation, not the code that looked slow.
 7. **Logging costs nothing when it's off.** Never log per packet. When building a debug log entry costs anything, guard it with `logger.isLevelEnabled('debug')`.
+
+## Live means live
+
+Every station is live, so the delay from the station to the listener must be as small as possible, and it must never grow during a session. This rule ranks second only to "The stream comes first": a cushion that prevents audible cuts is part of playing the stream well, so never shrink a cushion below what the network needs just to make the delay look smaller.
+
+1. **Every buffer earns its place, sized in time.** Each buffer between the station and Discord has a stated reason and a size in milliseconds, not bytes. Today the only deliberate one is the cushion of the live queue (`src/voice/live-queue.ts`): the chunk plus a safety margin. The chunk is how much audio arrives in one go: nothing for a direct stream, a whole segment for HLS (the playlist's target duration, counted at up to 12 s). The margin is 1 s, as VLC's network cache; it grows by 0.5 s after each network gap, up to 3 s, and eases back by 0.5 s after 30 calm minutes, taking effect at the next catch-up (for example the next voice resume). So a direct stream keeps 1 s to 3 s, and HLS the segment length plus 1 s to 3 s (at most 15 s). After a gap, playback goes on once the margin is back in hand (for HLS, with the next segment), as at the start (VLC rebuffers the same way): listeners are already hearing the gap, and playing on from an empty queue would make every later hiccup audible. The delay comes back to the cushion, never more. Before the queue, nothing holds audio back for more than a packet or so: FFmpeg writes one 20 ms packet per Ogg page (`-page_duration 20000`; its Ogg muxer keeps a finished page until the next one begins, so longer pages add delay), and the queue takes each packet as soon as it is written.
+2. **No backlog builds up unseen.** Audio that waits, waits in the live queue, where it is measured: its depth, the cushion, what was dropped to stay live, the network gaps and the clock drift are shown in `/radio stats`, and every drop is logged (`started behind live by the cushion; dropped the connect burst`, then `caught up with live`). A new buffer, pipe or queue on the audio path must either be measured there too or be kept to a few packets.
+3. **Correct it in the least audible way.** The burst a station's server sends on connect is dropped before anything is heard, once it has landed (audio no longer arriving faster than real time), so a direct stream starts about 1 s behind live, plus Discord's own buffering (about 0.1 s). A second look shortly after the start (1 s for a direct stream, a segment plus 1 s for HLS, whose start fetches three segments one after another) is a backstop for any late part of that burst. A backlog past the cushion is dropped where the listener has just heard a break anyway: after a network gap and after a voice resume. Only when the queue's floor (its lowest point over a few seconds) stays 3 s above the margin with no such break (a station whose clock runs fast) is the backlog dropped on its own.
+4. **A break is never paid for again with lasting delay.** When something has already interrupted the sound (a network gap, a voice resume), don't hold the audio back to avoid skipping it: that leaves the stream behind live for the rest of the session. When Discord's voice connection resumes, the audio that can't be sent is dropped and playback stays at the live edge.
+5. **The audio is never altered to stay live.** No resampling, time-stretching, speeding up or slowing down. Clock drift between the station and the host is measured (in ppm) and reported, not corrected.
 
 ## Invariants: do not break these
 
@@ -148,7 +159,7 @@ These are product rules, not style preferences. A change that breaks one is wron
 
 **Audio**
 
-1. **Encode once.** FFmpeg decodes the source and encodes **once** with `libopus` into Ogg Opus. `@discordjs/voice` receives `StreamType.OggOpus` and only demuxes it. Never add a second lossy encode, and never add default EQ, AGC, loudness normalisation, compression or limiting.
+1. **Encode once.** FFmpeg decodes the source and encodes **once** with `libopus` into Ogg Opus. The live queue only demuxes it, and `@discordjs/voice` receives the Opus packets as `StreamType.Opus` and sends them as they are. Never add a second lossy encode, and never add default EQ, AGC, loudness normalisation, compression or limiting.
 2. **Follow the source, not the channel.** In `maximum` mode the Opus target is the source's own bitrate (measured, then codec metadata, then manifest or advertised), rounded up to a whole kbps, capped at `MAX_OPUS_BITRATE_KBPS` (default 510, range 32–510); the cap is the target only when the source's bitrate is unknown. Never encode below the source's rate, never pad above it (never under-encoding comes first), and never cap it at the voice channel's bitrate setting, which is reported only. The measured figure comes first because AAC codec metadata is an estimate that can be well off in either direction. `manual` is the admin's value capped at `MAX_OPUS_BITRATE_KBPS` (like `maximum` until one is set), and `balanced` is 128 kbps or the source's bitrate if lower. See `planEncoder()` in `src/audio/encoder.ts`.
 3. **FFmpeg reads stdin only** (`-protocol_whitelist pipe`). Never pass a URL, a user-supplied string or a new protocol into FFmpeg or FFprobe arguments. Bytes reach FFmpeg only from `SafeHttpClient`.
 
@@ -206,7 +217,7 @@ The docs describe what the code **actually does**. When you change behaviour, up
 |---|---|
 | an environment variable | `src/config/env.ts`, `.env.example`, the README configuration table, and install docs if relevant |
 | a command, option or button | `definitions.ts`, the help text (`#cmdHelp` in `src/discord/controller.ts`), README Commands, `docs/permissions.md` |
-| audio or encoder behaviour | `docs/audio-quality.md`, README |
+| audio, encoder or live-queue behaviour | `docs/audio-quality.md`, README |
 | ranking, identity or probing | `docs/station-verification.md`, `docs/architecture.md` |
 | the pack schema, adapters, the library format or the pack tools | `catalog/README.md`, `catalog/packs/_template/` |
 | reason codes (`src/shared/errors.ts`) | `docs/troubleshooting.md` |

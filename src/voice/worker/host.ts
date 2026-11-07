@@ -47,14 +47,20 @@ interface HostLink {
   snapshotQueued: boolean;
 }
 
-/** 256 KB: seconds of audio even at 510 kbps, so a busy main thread never starves the player. */
+/**
+ * 256 KB. The link's live queue reads each stream's PassThrough eagerly, so it stays all but empty
+ * and adds no delay: the backlog, if any, is in the queue, where it is measured and kept small.
+ * This limit is only a safety net (the encoder's output is paused if the worker ever stops reading),
+ * and is left large so a worker busy for a moment never pauses and resumes the encoder needlessly.
+ */
 export const DEFAULT_HIGH_WATER_MARK = 256 * 1024;
 
 const noop = () => {};
 
 /**
- * Runs every voice link in the voice worker: the connection, the player and the Ogg demuxer
- * (still demux only: the encoder on the main thread made the one and only Opus encode). The main
+ * Runs every voice link in the voice worker: the connection, the player and the live queue with
+ * its Ogg demuxer (demux only: the encoder on the main thread made the one and only Opus encode),
+ * so the queue sits right next to the 20 ms sender and measures the delay where it is. The main
  * thread's `WorkerVoiceLink` proxies talk to it by message. This thread does nothing else, so the
  * 20 ms packet timer is never held up by commands, database queries or the main heap's GC.
  */
@@ -120,7 +126,7 @@ export class VoiceHost {
         void this.#join(msg.linkId, { guildId: msg.guildId, channelId: msg.channelId }, msg.timeoutMs);
         return;
       case 'play':
-        this.#play(msg.linkId, msg.streamId);
+        this.#play(msg.linkId, msg.streamId, msg.chunkMs);
         return;
       case 'audio':
         this.#audio(msg.linkId, msg.streamId, msg.chunk);
@@ -206,11 +212,14 @@ export class VoiceHost {
     );
     link.on('interrupted', (info) => this.#post({ t: 'interrupted', linkId, info }));
     link.on('restored', (info) => this.#post({ t: 'restored', linkId, info }));
+    link.on('caughtUp', (event) =>
+      this.#post({ t: 'caughtUp', linkId, streamId: entry.stream?.id ?? 0, event }),
+    );
     link.on('changed', () => this.#queueSnapshot(entry));
     this.#post({ t: 'joined', linkId, snapshot: this.#snapshot(entry) });
   }
 
-  #play(linkId: number, streamId: number): void {
+  #play(linkId: number, streamId: number, chunkMs: number | undefined): void {
     const entry = this.#links.get(linkId);
     if (!entry) return;
     const previous = entry.stream;
@@ -224,7 +233,8 @@ export class VoiceHost {
       this.#post({ t: 'flow', linkId, streamId, paused: false });
     });
     entry.stream = stream;
-    entry.link.play(pass);
+    // The link's live queue reads `pass` eagerly, here in the worker, and keeps the backlog itself.
+    entry.link.play(pass, chunkMs === undefined ? undefined : { chunkMs });
     // Only now that the player has moved on to the new resource: the old one ending is no news.
     if (previous && !previous.pass.destroyed) previous.pass.destroy();
     this.#queueSnapshot(entry);

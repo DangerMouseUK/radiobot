@@ -19,10 +19,12 @@ class FakeLink extends EventEmitter {
   channelId = 'voice-1';
   ready = true;
   played: PassThrough[] = [];
+  playOptions: unknown[] = [];
   stopThrows = false;
   destroyed = false;
-  play(stream: PassThrough) {
+  play(stream: PassThrough, options?: unknown) {
     this.played.push(stream);
+    this.playOptions.push(options);
   }
   stopAudio() {
     if (this.stopThrows) throw new Error('player gone');
@@ -45,6 +47,7 @@ class FakeLink extends EventEmitter {
       silenceMs: null,
       encryptionMode: null,
       status: 'ready',
+      live: null,
     };
   }
   detach() {}
@@ -191,6 +194,27 @@ describe('VoiceHost', () => {
     await vi.waitFor(() => expect(third.destroyed).toBe(true));
     t.send({ t: 'audioEnd', linkId: 1, streamId: 4, how: 'error' });
     await vi.waitFor(() => expect(t.links[0]!.played[3]!.destroyed).toBe(true));
+  });
+
+  it('plays each stream through the link with the cushion asked for, and relays its catch-ups', async () => {
+    const t = host();
+    t.send({ t: 'join', linkId: 1, guildId: 'g1', channelId: 'voice-1', timeoutMs: 1 });
+    await t.waitFor((m) => m.t === 'joined');
+    const link = t.links[0]!;
+    const event = { reason: 'gap' as const, droppedMs: 400, cushionMs: 1_500 };
+    // Before any stream: reported as stream 0, which the main thread ignores.
+    link.emit('caughtUp', event);
+    await t.waitFor((m) => m.t === 'caughtUp' && m.streamId === 0);
+    t.send({ t: 'play', linkId: 1, streamId: 7, chunkMs: 6_000 });
+    t.send({ t: 'play', linkId: 1, streamId: 8 });
+    await vi.waitFor(() => expect(link.playOptions).toEqual([{ chunkMs: 6_000 }, undefined]));
+    link.emit('caughtUp', event);
+    expect(await t.waitFor((m) => m.t === 'caughtUp' && m.streamId === 8)).toEqual({
+      t: 'caughtUp',
+      linkId: 1,
+      streamId: 8,
+      event,
+    });
   });
 
   it('keeps going, and says so, when one message cannot be handled', async () => {

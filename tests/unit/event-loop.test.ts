@@ -1,6 +1,12 @@
 import { constants } from 'node:perf_hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loopDelayLine, processLoadLine, silenceLine, voiceThreadLine } from '../../src/discord/ui/format.ts';
+import {
+  liveDelayLine,
+  loopDelayLine,
+  processLoadLine,
+  silenceLine,
+  voiceThreadLine,
+} from '../../src/discord/ui/format.ts';
 import {
   type DelayHistogram,
   EventLoopMonitor,
@@ -366,5 +372,33 @@ describe('event-loop delay', () => {
     expect(silenceLine(120, 40)).toBe(
       'Silence filled in (no audio ready): 120 ms this stream · 40 ms in the last minute',
     );
+  });
+
+  it('shows how far behind live the stream plays, and what was dropped to keep it there', () => {
+    expect(liveDelayLine(undefined)).toBe('Live delay: —');
+    expect(liveDelayLine(null)).toBe('Live delay: —');
+    const live = {
+      depthMs: 1_040,
+      floorMs: null,
+      cushionMs: 1_000,
+      startDroppedMs: 3_220,
+      caughtUpMs: 0,
+      catchUps: 0,
+      gaps: 0,
+      driftPpm: null,
+    };
+    // The drift is left out until it is known.
+    expect(liveDelayLine(live)).toBe(
+      'Live delay: 1.0 s waiting (cushion 1.0 s) · dropped to stay live: 3.2 s at the start, none since · 0 network gaps',
+    );
+    expect(
+      liveDelayLine({ ...live, cushionMs: 1_500, caughtUpMs: 4_480, catchUps: 1, gaps: 1, driftPpm: 42 }),
+    ).toBe(
+      'Live delay: 1.0 s waiting (cushion 1.5 s) · dropped to stay live: 3.2 s at the start, 4.5 s since in 1 catch-up · 1 network gap · station clock 42 ppm fast',
+    );
+    expect(liveDelayLine({ ...live, caughtUpMs: 9_000, catchUps: 3, gaps: 2, driftPpm: -15 })).toBe(
+      'Live delay: 1.0 s waiting (cushion 1.0 s) · dropped to stay live: 3.2 s at the start, 9.0 s since in 3 catch-ups · 2 network gaps · station clock 15 ppm slow',
+    );
+    expect(liveDelayLine({ ...live, driftPpm: 0 })).toMatch(/ · station clock in step$/);
   });
 });
