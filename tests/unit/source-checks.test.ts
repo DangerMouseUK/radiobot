@@ -1,6 +1,37 @@
 import { spawn } from 'node:child_process';
 import { constants, getPriority } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
+
+// The background queue waits with `node:timers/promises`, which Vitest's fake timers don't reach.
+// The same wait on the global timers behaves the same (abort included) and lets tests fake the clock.
+vi.mock('node:timers/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:timers/promises')>();
+  const setTimeoutPromise = <T>(
+    ms?: number,
+    value?: T,
+    options: { signal?: AbortSignal; ref?: boolean } = {},
+  ): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const { signal, ref = true } = options;
+      const abortError = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+      if (signal?.aborted) {
+        reject(abortError());
+        return;
+      }
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(abortError());
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve(value as T);
+      }, ms);
+      if (!ref) timer.unref?.();
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  return { ...actual, setTimeout: setTimeoutPromise };
+});
+
 import { lowerPriority, ProcessRegistry } from '../../src/audio/ffmpeg.ts';
 import type { StationSource } from '../../src/catalogue/types.ts';
 import { failingLine, pausedLine } from '../../src/discord/ui/format.ts';
@@ -324,30 +355,83 @@ describe('background checks stay out of the way', () => {
   });
 
   it('waits out the settle period for automatic work only', async () => {
-    const t = harness([{ id: 'a', host: 'a.example.net' }], 1);
-    const t0 = Date.now();
-    t.service.settleBackground(200);
-    t.service.settleBackground(10); // a shorter one never cuts it short
-    t.service.refreshInBackground(['a']);
-    let userAt = 0;
-    await t.service.runInBackground(async () => {
-      userAt = Date.now();
-    });
-    // Work a user asked for (an install, say) goes at once, ahead of the waiting check.
-    expect(userAt - t0).toBeLessThan(150);
-    expect(t.log).toEqual([]);
-    let autoAt = 0;
-    await t.service.runInBackground(
-      async () => {
-        autoAt = Date.now();
-      },
-      { automatic: true },
-    );
-    expect(autoAt - t0).toBeGreaterThanOrEqual(190);
-    // The check that was queued first ran first.
-    expect(t.log).toHaveLength(1);
-    expect(t.log[0]!.start - t0).toBeGreaterThanOrEqual(190);
-    expect(autoAt).toBeGreaterThanOrEqual(t.log[0]!.end);
+    // A fake clock: on a busy CI machine the real one made this test's timings unreliable.
+    vi.useFakeTimers();
+    try {
+      const t = harness([{ id: 'a', host: 'a.example.net' }], 1);
+      const t0 = Date.now();
+      t.service.settleBackground(200);
+      t.service.settleBackground(10); // a shorter one never cuts it short
+      t.service.refreshInBackground(['a']);
+      let userAt = -1;
+      const user = t.service.runInBackground(async () => {
+        userAt = Date.now();
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await user;
+      // Work a user asked for (an install, say) goes at once, ahead of the waiting check.
+      expect(userAt).toBe(t0);
+      expect(t.log).toEqual([]);
+      let autoAt = -1;
+      let checksBeforeAuto = -1;
+      const auto = t.service.runInBackground(
+        async () => {
+          autoAt = Date.now();
+          checksBeforeAuto = t.log.length;
+        },
+        { automatic: true },
+      );
+      await vi.advanceTimersByTimeAsync(199);
+      expect(autoAt).toBe(-1);
+      expect(t.log).toEqual([]);
+      await vi.advanceTimersByTimeAsync(10);
+      await auto;
+      expect(autoAt - t0).toBeGreaterThanOrEqual(200);
+      // The check that was queued first ran first.
+      expect(checksBeforeAuto).toBe(1);
+      expect(t.log[0]!.start - t0).toBeGreaterThanOrEqual(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps automatic work in order when the settle timer fires a moment early by the clock', async () => {
+    // Timers are faked but the clock isn't: when the settle timer fires, the wall clock still says
+    // the deadline is ahead, as it can by a millisecond on a busy host. The first in line used to
+    // give its turn up then, and wait again, while the next went ahead.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const t = harness([{ id: 'a', host: 'a.example.net' }], 1);
+      t.service.settleBackground(60_000);
+      t.service.refreshInBackground(['a']);
+      let checksBeforeAuto = -1;
+      const auto = t.service.runInBackground(
+        async () => {
+          checksBeforeAuto = t.log.length;
+        },
+        { automatic: true },
+      );
+      await vi.advanceTimersByTimeAsync(60_000); // the settle timer fires; the clock barely moved
+      await vi.advanceTimersByTimeAsync(10); // the check's own 1 ms probe
+      expect(checksBeforeAuto).toBe(1);
+      await auto;
+      // A later stream start still makes automatic work wait again.
+      t.service.settleBackground(60_000);
+      let ran = false;
+      const later = t.service.runInBackground(
+        async () => {
+          ran = true;
+        },
+        { automatic: true },
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(ran).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await later;
+      expect(ran).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('lets user work go first when a stream starts while automatic work waits for its turn', async () => {

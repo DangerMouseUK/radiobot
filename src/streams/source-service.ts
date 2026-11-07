@@ -187,6 +187,12 @@ export class SourceService {
   #settleUntil = 0;
   /** One timer for all the work waiting out the settle period, so it resumes in the order it came. */
   #settleGate: { until: number; done: Promise<void> } | null = null;
+  /**
+   * The settle deadline whose timer has fired. A timer can fire a moment early by the wall clock;
+   * once it has fired, that deadline counts as passed, so every waiter agrees and the work keeps its
+   * order (otherwise the first in line could give its turn up while the next one went ahead).
+   */
+  #settledThrough = 0;
   /** `coverageByProvider()` results, per provider. */
   readonly #coverage = new Map<string, { key: string; at: number; counts: CoverageCounts }>();
   /** Per source with a playback failure streak: when the streak started and its last counted failure. */
@@ -707,11 +713,11 @@ export class SourceService {
   async #queue<T>(fn: () => Promise<T>, opts: { automatic: boolean; signal?: AbortSignal }): Promise<T> {
     for (;;) {
       // Checked before awaiting, so that without a settle period the queue keeps its order.
-      if (opts.automatic && this.#settleUntil > Date.now()) await this.#settled(opts.signal);
+      if (opts.automatic && this.#settling()) await this.#settled(opts.signal);
       const release = await this.#background.acquire(opts.signal);
       try {
         await this.#waitForHold(opts.signal);
-        if (opts.automatic && this.#settleUntil > Date.now()) continue;
+        if (opts.automatic && this.#settling()) continue;
         return await fn();
       } finally {
         release();
@@ -729,9 +735,14 @@ export class SourceService {
     }
   }
 
+  /** Whether automatic work must still wait: a settle deadline is ahead and its timer hasn't fired. */
+  #settling(): boolean {
+    return this.#settleUntil > this.#settledThrough && this.#settleUntil > Date.now();
+  }
+
   /** Waits out the settle period, on one shared timer (unreferenced: it never delays an exit). */
   async #settled(signal?: AbortSignal): Promise<void> {
-    while (this.#settleUntil > Date.now()) {
+    while (this.#settling()) {
       let gate = this.#settleGate;
       if (!gate || gate.until !== this.#settleUntil) {
         const until = this.#settleUntil;
@@ -743,7 +754,9 @@ export class SourceService {
       } catch {
         throw new RadioError('CANCELLED', 'The background check was stopped.');
       }
-      // The timer can fire a moment early by the wall clock: the next waiter then makes a new one.
+      // Fired: this deadline has passed for everyone, even if the wall clock says a moment short.
+      // Only a later deadline (a stream started meanwhile) makes the work wait again.
+      this.#settledThrough = Math.max(this.#settledThrough, gate.until);
       if (this.#settleGate === gate) this.#settleGate = null;
     }
   }
