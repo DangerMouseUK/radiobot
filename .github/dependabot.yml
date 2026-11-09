@@ -11,6 +11,16 @@ updates:
       dev-dependencies:
         dependency-type: development
         update-types: [minor, patch]
+    ignore:
+      # Node 24 only, as for the base image below: the type definitions follow the Node the bot
+      # runs on, and a new major version of Node is a deliberate change.
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
+      # @discordjs/voice does the DAVE work and still requires davey ^0.1, so a newer davey here
+      # would only reach the start-up self-test (src/voice/worker/self-test.ts), not voice. Move
+      # this and @discordjs/voice together, and drop this rule, once @discordjs/voice takes 0.2.
+      - dependency-name: '@snazzah/davey'
+        versions: ['>=0.2.0']
 
   - package-ecosystem: github-actions
     directory: /
