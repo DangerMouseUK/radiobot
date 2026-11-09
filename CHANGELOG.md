@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **The image's healthcheck is a small shell script, run every 2 minutes.** Docker used to start Node inside the container every minute to read the heartbeat file: tens of megabytes of memory and a few hundred milliseconds of CPU each time, on top of about a tenth of a second of CPU that Docker itself spends, at normal priority, starting any check. On a one-core host with 1 GB of memory, that is a burst the stream has to share the processor with. The check is now `scripts/healthcheck.sh`, which applies the same rules (heartbeat under 90 s old, database working, connected to Discord, FFmpeg with `libopus`) and starts only `find`. It runs every 2 minutes instead of every minute, and every 5 s at start-up until it first passes (Docker 25 and later), and 2 failures in a row (instead of 3) mean unhealthy. So a problem still has to last at least 2 minutes to be reported, and a hung bot shows as `unhealthy` within about 2 to 5.5 minutes, at most a minute later than before. Nothing that ships with Radio Bot acts on the health status, and `compose.override.yaml` can change the interval or turn the check off; see [install-docker.md](docs/install-docker.md#healthcheck).
+- `radio-bot status` (and `pnpm healthcheck`) no longer loads the logging library just to read the heartbeat file.
+
 ## [1.5.0] - 2026-11-09
 
 `/radio stats` shows how many of the bot's packets never reached Discord's voice server, from Discord's own report, so loss on the way to Discord can be told apart from loss on a listener's side.

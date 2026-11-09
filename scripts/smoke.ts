@@ -11,7 +11,8 @@
  * worker thread, parses a small synthetic station list on the parse worker, has the voice worker
  * load the voice libraries and make a DAVE session, checks both voice encryption modes and that
  * FFmpeg has libopus, encodes two seconds of a synthetic tone to Ogg Opus with the live encoder's
- * arguments, and checks a heartbeat with the healthcheck script. Prints one line per step; exits 1 at the first step that fails.
+ * arguments, and checks a heartbeat with the Node healthcheck and, on Linux, the image's shell
+ * healthcheck (scripts/healthcheck.sh). Prints one line per step; exits 1 at the first step that fails.
  */
 import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -56,12 +57,14 @@ async function step(name: string, fn: () => Promise<string> | string): Promise<v
   process.stdout.write(`ok   ${name}${detail ? ` (${detail})` : ''}\n`);
 }
 
-/** Runs the healthcheck script next to this one, as Docker's HEALTHCHECK does. */
-function healthcheck(): Promise<{ code: number; out: string }> {
+type CheckRun = () => Promise<{ code: number; out: string }>;
+
+/** Runs a healthcheck against this test's heartbeat file, as Docker's HEALTHCHECK does. */
+function healthcheck(file: string, args: string[]): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     execFile(
-      process.execPath,
-      [fileURLToPath(siblingModule(import.meta.url, 'healthcheck'))],
+      file,
+      args,
       { env: { ...process.env, DATABASE_PATH: dbPath }, timeout: 30_000, windowsHide: true },
       (err, stdout) => {
         const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
@@ -69,6 +72,35 @@ function healthcheck(): Promise<{ code: number; out: string }> {
       },
     );
   });
+}
+
+/** The Node healthcheck next to this script (`radio-bot status`, bare-metal installs). */
+const nodeHealthcheck: CheckRun = () =>
+  healthcheck(process.execPath, [fileURLToPath(siblingModule(import.meta.url, 'healthcheck'))]);
+/** The image's HEALTHCHECK, scripts/healthcheck.sh. */
+const shellHealthcheck: CheckRun = () => healthcheck('sh', [rootPath('scripts', 'healthcheck.sh')]);
+
+/** Writes a healthy heartbeat, then one from a bot that isn't connected: the check must tell them apart. */
+async function checkHeartbeatWith(run: CheckRun): Promise<string> {
+  const writer = new HeartbeatWriter(heartbeatPath(dbPath), (err) => {
+    throw err;
+  });
+  const snap: HealthSnapshot = {
+    at: new Date().toISOString(),
+    pid: process.pid,
+    discordReady: true,
+    activeStreams: 0,
+    ffmpegProcesses: registry.active,
+    dbOk: true,
+    ffmpegOk: true,
+  };
+  await writer.write(snap);
+  const healthy = await run();
+  check(healthy.code === 0, `the healthcheck failed: ${healthy.out}`);
+  await writer.write({ ...snap, discordReady: false });
+  const unhealthy = await run();
+  check(unhealthy.code === 1, `the healthcheck passed a bot that is not connected: ${unhealthy.out}`);
+  return healthy.out;
 }
 
 const RUN = { owner: 'smoke', kind: 'smoke', timeoutMs: 30_000 };
@@ -211,28 +243,12 @@ try {
     return `${plan.targetKbps} kbps, ${seconds.toFixed(2)} s, ${out.stdout.length} bytes`;
   });
 
-  await step('heartbeat and healthcheck', async () => {
-    const writer = new HeartbeatWriter(heartbeatPath(dbPath), (err) => {
-      throw err;
-    });
-    const snap: HealthSnapshot = {
-      at: new Date().toISOString(),
-      pid: process.pid,
-      discordReady: true,
-      activeStreams: 0,
-      ffmpegProcesses: registry.active,
-      dbOk: true,
-      ffmpegOk: true,
-    };
-    await writer.write(snap);
-    const healthy = await healthcheck();
-    check(healthy.code === 0, `the healthcheck failed: ${healthy.out}`);
-    // And it must notice a problem: a heartbeat from a bot that isn't connected.
-    await writer.write({ ...snap, discordReady: false });
-    const unhealthy = await healthcheck();
-    check(unhealthy.code === 1, `the healthcheck passed a bot that is not connected: ${unhealthy.out}`);
-    return healthy.out;
-  });
+  await step('heartbeat and healthcheck', () => checkHeartbeatWith(nodeHealthcheck));
+  // The image runs on Linux, and the script needs GNU find's fractional -mmin, so it is checked on
+  // Linux only (CI, and inside the image).
+  await step("the image's shell healthcheck", () =>
+    process.platform === 'linux' ? checkHeartbeatWith(shellHealthcheck) : 'skipped: Linux only',
+  );
 } catch (err) {
   process.stdout.write(`FAIL ${err instanceof Error ? err.message : String(err)}\n`);
   failed = true;

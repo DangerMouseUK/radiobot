@@ -56,6 +56,11 @@ describe('scripts/smoke', () => {
     expect(r.out).toMatch(/^ok {3}FFmpeg with libopus/m);
     expect(r.out).toMatch(/^ok {3}encode: .* \(128 kbps, 2\.\d\d s/m);
     expect(r.out).toMatch(/^ok {3}heartbeat and healthcheck \(healthy: ok\)/m);
+    expect(r.out).toMatch(
+      process.platform === 'linux'
+        ? /^ok {3}the image's shell healthcheck \(healthy: ok\)/m
+        : /^ok {3}the image's shell healthcheck \(skipped: Linux only\)/m,
+    );
   }, 60_000);
 
   it('stops at the first step that fails and exits 1', async () => {

@@ -188,10 +188,10 @@ docker compose logs -f --tail=200 radio-bot
 
 ## Healthcheck
 
-The bot writes `/app/data/health.json` every 30 s. The image's `HEALTHCHECK` runs the following every 60 s, with a 10 s timeout, a 120 s start period and 3 retries. It runs at the lowest CPU priority (`nice -n 19`), so on a one-core host it can't delay the stream:
+The bot writes `/app/data/health.json` every 30 s. The image's `HEALTHCHECK` reads it with a small shell script, at the lowest CPU priority (`nice -n 19`):
 
 ```sh
-nice -n 19 node dist/scripts/healthcheck.js
+nice -n 19 sh /app/scripts/healthcheck.sh
 ```
 
 The container is **unhealthy** when any of these is true:
@@ -201,12 +201,25 @@ The container is **unhealthy** when any of these is true:
 - the bot isn't connected to Discord;
 - FFmpeg is missing or has no `libopus` encoder, so nothing could play.
 
-It is normal for the container to report unhealthy for a short time after starting, until the bot has logged in.
+**Timing.** For the first 2 minutes (the start period) Docker shows the container as `starting` and checks every 5 s until a check passes. After that it checks every **2 minutes**, with a 10 s timeout, and shows `unhealthy` after 2 failed checks in a row. So a problem has to last at least 2 minutes to be reported, and a hung bot shows as `unhealthy` within about 2 to 5.5 minutes (its heartbeat first has to go 90 s without an update). Once the bot has logged in, it stays "connected" through Discord's own brief reconnects, so those never make it unhealthy. Docker Engine 24 doesn't support the 5 s start-up checks, so there the first check, and `healthy`, comes 2 minutes after the start.
 
-You can run the check by hand:
+**Why it's light and infrequent.** Every check makes Docker start a process inside the container, which costs about a tenth of a second of CPU in Docker itself, at normal priority, however small the check is. On a one-core host, that work competes with the stream, so the check runs every 2 minutes rather than every minute and is a shell script rather than Node (a Node start would add tens of megabytes of memory and a few hundred milliseconds of CPU each time).
+
+Nothing that ships with Radio Bot acts on the health status: `radio-bot` reads `health.json` itself, and Docker doesn't restart a container for being unhealthy (only Docker Swarm and add-ons such as autoheal do). It is there for `docker ps`, `docker inspect` and any monitoring you add. To check more or less often, put a `healthcheck` section in `compose.override.yaml` (see [Customising `compose.yaml`](#customising-composeyaml)), then run `radio-bot restart`:
+
+```yaml
+services:
+  radio-bot:
+    healthcheck:
+      interval: 10m
+```
+
+To turn the check off altogether, use `disable: true` in place of `interval: 10m`.
+
+You can run the check by hand (`radio-bot status` runs the same checks with Node):
 
 ```sh
-docker compose exec radio-bot nice -n 19 node dist/scripts/healthcheck.js
+docker compose exec radio-bot nice -n 19 sh /app/scripts/healthcheck.sh
 ```
 
 ### Optional diagnostics endpoint
