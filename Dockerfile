@@ -64,6 +64,7 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY migrations ./migrations
 COPY catalog ./catalog
+COPY scripts/healthcheck.sh ./scripts/healthcheck.sh
 # The bot runs only `node`. npm comes with the base image, unused, and carries its own dependencies
 # (with their own security advisories), so it is removed.
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
@@ -73,8 +74,14 @@ VOLUME ["/app/data"]
 LABEL org.opencontainers.image.title="Radio Bot" \
       org.opencontainers.image.description="Unofficial, self-hosted Discord internet-radio bot" \
       org.opencontainers.image.licenses="MIT"
-# At the lowest CPU priority, so the check can't delay voice packets on a one-core host.
-HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
-  CMD ["nice", "-n", "19", "node", "dist/scripts/healthcheck.js"]
+# A shell check of the heartbeat, at the lowest CPU priority, so it can't delay voice packets on a
+# one-core host: it starts no Node (tens of MB and a few hundred ms of CPU each time). Docker's own
+# work to run any check costs about 0.1 s of CPU at normal priority, so it runs every 2 minutes and
+# 2 failures in a row (a fault seen 2 minutes apart, as 3 a minute apart did before) mean unhealthy:
+# a hung bot shows within about 2 to 5.5 minutes. In the start period, until a check passes, it runs
+# every 5 s (Docker 25 and later; older engines ignore --start-interval, so "healthy" first shows
+# after 2 minutes there). Nothing in compose.yaml or radio-bot.sh depends on the health status.
+HEALTHCHECK --interval=2m --timeout=10s --start-period=120s --start-interval=5s --retries=2 \
+  CMD ["nice", "-n", "19", "sh", "/app/scripts/healthcheck.sh"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist/src/index.js"]

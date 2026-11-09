@@ -1,8 +1,9 @@
-import { readFileSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { dirname, join } from 'node:path';
 import { type Logger, safeErr } from './logger.ts';
+
+export { checkHeartbeat } from './heartbeat-check.ts';
 
 export interface HealthSnapshot {
   at: string;
@@ -68,21 +69,6 @@ export class HeartbeatWriter {
       // Cleared in the same step as the last look at #next, so no heartbeat is ever left unwritten.
       this.#writing = null;
     }
-  }
-}
-
-export function checkHeartbeat(path: string, maxAgeMs = 90_000): { healthy: boolean; reason: string } {
-  try {
-    const snap = JSON.parse(readFileSync(path, 'utf8')) as HealthSnapshot;
-    const age = Date.now() - Date.parse(snap.at);
-    if (!(age >= 0 && age <= maxAgeMs))
-      return { healthy: false, reason: `heartbeat is ${Math.round(age / 1000)} s old` };
-    if (!snap.dbOk) return { healthy: false, reason: 'database check failed' };
-    if (!snap.discordReady) return { healthy: false, reason: 'not connected to Discord' };
-    if (snap.ffmpegOk === false) return { healthy: false, reason: 'ffmpeg unavailable or missing libopus' };
-    return { healthy: true, reason: 'ok' };
-  } catch {
-    return { healthy: false, reason: 'no heartbeat file' };
   }
 }
 

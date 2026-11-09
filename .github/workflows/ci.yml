@@ -62,8 +62,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Shellcheck the installer and manager
-        run: shellcheck -x install.sh scripts/radio-bot.sh tests/lifecycle/run.sh tests/lifecycle/fake-docker
+      - name: Shellcheck the installer, the manager and the image's healthcheck
+        run: shellcheck -x install.sh scripts/radio-bot.sh scripts/healthcheck.sh tests/lifecycle/run.sh tests/lifecycle/fake-docker
       - name: Install, update, back up and uninstall against a fake Docker
         run: bash tests/lifecycle/run.sh
 

@@ -36,7 +36,7 @@ docker build --target test -t radio-bot:test . && docker run --rm --network none
                                    # integration tests on the image's own Node and FFmpeg
 ```
 
-**Definition of done** for any change: `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` and then `pnpm smoke` succeed. If you touch `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` must pass too. If you touch the `Dockerfile`, the test stage above must pass.
+**Definition of done** for any change: `pnpm typecheck`, `pnpm lint`, `node scripts/validate-catalogue.ts` and `pnpm test` all pass, and `pnpm build` and then `pnpm smoke` succeed. If you touch `install.sh`, `scripts/radio-bot.sh` or `tests/lifecycle/`, `shellcheck -x` on them and `pnpm test:lifecycle` must pass too; `scripts/healthcheck.sh` must pass `shellcheck` too. If you touch the `Dockerfile`, the test stage above must pass.
 
 CI (`.github/workflows/ci.yml`) runs all of these, and also:
 
@@ -110,6 +110,7 @@ src/
                         workers (one-off worker threads), lower-thread-priority (worker threads at the
                         lowest CPU priority, Linux), version (the bot's version, for minBotVersion)
 scripts/                validate-catalogue, register-commands, healthcheck, backup, smoke (CLI entry points);
+                        healthcheck.sh, the image's HEALTHCHECK (the same rules as healthcheck.ts, no Node);
                         packs (installed packs: list, browse, info, add, update, remove);
                         pack-author (new, export, generate, build-library, diff-check; strictProblems(), strictWarnings());
                         radio-bot.sh, the bash manager behind the `radio-bot` command (install, update,
