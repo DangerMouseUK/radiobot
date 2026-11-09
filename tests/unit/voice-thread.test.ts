@@ -58,6 +58,19 @@ class FakeLink extends EventEmitter {
   stats() {
     return this.statsValue;
   }
+  /** Arm and disarm calls, in order, and what a read answers (a function, so a test can make it hang or throw). */
+  reportCalls: string[] = [];
+  readReport: () => Promise<unknown> = async () => ({ state: 'waiting' });
+  armReports() {
+    this.reportCalls.push('arm');
+  }
+  disarmReports() {
+    this.reportCalls.push('disarm');
+  }
+  receiverReport() {
+    return this.readReport();
+  }
+
   detach() {
     this.detached = true;
   }
@@ -565,6 +578,51 @@ describe('VoiceThread: audio', () => {
     link.play(new PassThrough());
     expect(link.stats().live).toBeNull();
     expect(link.stats().wsPingMs).toBe(5);
+  });
+});
+
+describe('VoiceThread: Discord receiver reports', () => {
+  it('arms, reads and disarms the reader in the worker; only figures come back', async () => {
+    const h = harness();
+    const t = thread(h);
+    await t.start();
+    const link = await t.factory()(channel().channel);
+    const report = { lost: 3, expected: 1000, fractionLost: 0, jitterMs: 1.5, ageMs: 200 };
+    h.links[0]!.readReport = async () => ({ state: 'ok', report });
+    link.armReports();
+    expect(await link.receiverReport()).toEqual({ state: 'ok', report });
+    link.disarmReports();
+    await vi.waitFor(() => expect(h.links[0]!.reportCalls).toEqual(['arm', 'disarm']));
+  });
+
+  it('gives up on a read the worker never answers, without keeping it', async () => {
+    const h = harness();
+    const t = thread(h);
+    await t.start();
+    const link = await t.factory()(channel().channel);
+    h.links[0]!.readReport = () => new Promise(() => {});
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const reading = link.receiverReport();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await reading).toEqual({ state: 'unreadable', reason: 'the voice worker did not answer in time' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('answers a waiting read at once when the link goes, and sends nothing for a link that has gone', async () => {
+    const h = harness();
+    const t = thread(h);
+    await t.start();
+    const link = await t.factory()(channel().channel);
+    h.links[0]!.readReport = () => new Promise(() => {});
+    const reading = link.receiverReport();
+    await vi.waitFor(() => expect(h.workers[0]!.host.links).toBe(1));
+    link.destroy();
+    expect(await reading).toEqual({ state: 'off' });
+    expect(await link.receiverReport()).toEqual({ state: 'off' });
+    link.armReports();
+    link.disarmReports();
+    await vi.waitFor(() => expect(h.links[0]!.destroyed).toBe(true));
+    expect(h.links[0]!.reportCalls).toEqual([]);
   });
 });
 

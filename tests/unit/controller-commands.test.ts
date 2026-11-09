@@ -668,10 +668,16 @@ describe('/radio stats', () => {
         ws,
       },
     };
+    s.report = {
+      state: 'ok',
+      report: { lost: 9, expected: 210_000, fractionLost: 0, jitterMs: 1.3, ageMs: 600 },
+    };
     t.clientChannels.set(V1, { rtcRegion: null });
     (t.ctx.client as unknown as { ws: { ping: number } }).ws.ping = 42;
     const i = await t.command(t.people.admin, { sub: 'stats' });
     expect(i.violations).toEqual([]);
+    // Opening the stats starts reading Discord's receiver reports, for this admin.
+    expect(s.reportOpens).toEqual([t.people.admin.id]);
     const live = i.calls[1]!.payload.embeds![0]!.toJSON();
     expect(live.title).toBe('Live stats: My Station');
     expect(live.color).toBe(COLOR.ok);
@@ -688,6 +694,7 @@ describe('/radio stats', () => {
       'Opus target: 128 kbps (maximum) · voice channel setting 64 kbps (not a cap)',
       'Sent to Discord: 130 kbps (10 s) · 129 kbps (60 s)',
       'Packets to Discord: 50 per second (expect ~50) · 3000 sent on this connection',
+      'Lost on the way to Discord: 9 packets (0.0043% of 210,000) since the voice connection began · jitter 1.3 ms (Discord’s voice server report, 1 s ago; loss from there to each listener isn’t included)',
       'Live delay: 1.1 s waiting (cushion 1.0 s) · dropped to stay live: 3.0 s at the start, none since · 0 network gaps',
       'Voice server: `192.0.2.10` · `192.0.2.10` · channel region: automatic',
       'Voice WebSocket ping: 20 ms (avg 21, min 19, max 25, jitter 2 ms, 5 samples)',

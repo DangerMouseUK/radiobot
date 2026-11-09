@@ -1,3 +1,4 @@
+import { createCipheriv, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough, type Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -735,5 +736,131 @@ describe('connection guards', () => {
     timePackets(real as never);
     expect(real.dispatchAudio).toBe(wrapped);
     expect(real.dispatchAudio()).toBe(true);
+  });
+});
+
+describe('DiscordVoiceLink: Discord receiver reports', () => {
+  const SSRC = 4242;
+
+  /** A ready connection whose networking has a voice UDP socket, a key and sequence counters. */
+  async function armedReady() {
+    const { connection, link } = await connect();
+    const udp = new EventEmitter();
+    const key = randomBytes(32);
+    const data = {
+      ssrc: SSRC,
+      encryptionMode: 'aead_aes256_gcm_rtpsize',
+      secretKey: new Uint8Array(key),
+      sequence: 1_000,
+      packetsPlayed: 1_000,
+    };
+    connection.state = {
+      status: 'ready',
+      networking: { state: { code: NetworkingStatusCode.Ready, udp, connectionData: data } },
+    };
+    return { connection, link, udp, key };
+  }
+
+  /** A Receiver Report as Discord's server sends it: 8 clear bytes, AES-256-GCM, the nonce counter last. */
+  function sealedReport(key: Buffer, lost: number, highest: number, jitter: number) {
+    const clear = Buffer.from([0x81, 0xc9, 0x00, 0x07, 0, 0, 0x10, 0x92]);
+    const body = Buffer.alloc(48);
+    body.writeUInt32BE(SSRC, 0);
+    body.writeUIntBE(lost, 5, 3);
+    body.writeUInt32BE(highest, 8);
+    body.writeUInt32BE(jitter, 12);
+    const nonce = Buffer.alloc(12);
+    nonce.writeUInt32BE(9, 0);
+    const cipher = createCipheriv('aes-256-gcm', key, nonce);
+    cipher.setAAD(clear);
+    return Buffer.concat([
+      clear,
+      cipher.update(body),
+      cipher.final(),
+      cipher.getAuthTag(),
+      nonce.subarray(0, 4),
+    ]);
+  }
+
+  it('attaches nothing until armed, then reads the latest report on demand', async () => {
+    const { link, udp, key } = await armedReady();
+    expect(udp.listenerCount('message')).toBe(0);
+    expect(await link.receiverReport()).toEqual({ state: 'off' });
+    link.armReports();
+    link.armReports();
+    expect(udp.listenerCount('message')).toBe(1);
+    expect(await link.receiverReport()).toEqual({ state: 'waiting' });
+    udp.emit('message', sealedReport(key, 2, 989, 144));
+    const reading = await link.receiverReport();
+    expect(reading).toMatchObject({
+      state: 'ok',
+      report: { lost: 2, expected: 990, fractionLost: 0, jitterMs: 3 },
+    });
+    // A report sealed with another key is reported as unreadable, not as figures.
+    udp.emit('message', sealedReport(randomBytes(32), 5, 990, 0));
+    expect(await link.receiverReport()).toMatchObject({ state: 'unreadable' });
+    link.disarmReports();
+    link.disarmReports();
+    expect(udp.listenerCount('message')).toBe(0);
+    expect(await link.receiverReport()).toEqual({ state: 'off' });
+  });
+
+  it('does not arm while the connection is not ready', async () => {
+    const { connection, link } = await connect();
+    const udp = new EventEmitter();
+    connection.state = {
+      status: 'ready',
+      networking: { state: { code: NetworkingStatusCode.Resuming, udp } },
+    };
+    link.armReports();
+    expect(udp.listenerCount('message')).toBe(0);
+    connection.state = { status: 'connecting' };
+    link.armReports();
+    expect(await link.receiverReport()).toEqual({ state: 'off' });
+  });
+
+  it('disarms when the connection resumes or reconnects', async () => {
+    const { connection, link, udp } = await armedReady();
+    link.armReports();
+    expect(udp.listenerCount('message')).toBe(1);
+    connection.setState({ status: 'connecting' });
+    expect(udp.listenerCount('message')).toBe(0);
+    expect(await link.receiverReport()).toEqual({ state: 'off' });
+  });
+
+  it('disarms when the bot is moved to another channel', async () => {
+    const { connection, link, udp } = await armedReady();
+    link.armReports();
+    connection.joinConfig.channelId = 'voice-2';
+    // Read before any state change: the reader notices the move itself.
+    expect(await link.receiverReport()).toEqual({ state: 'off' });
+    expect(udp.listenerCount('message')).toBe(0);
+    link.armReports();
+    expect(udp.listenerCount('message')).toBe(1);
+    connection.joinConfig.channelId = 'voice-3';
+    connection.emit('stateChange', connection.state, connection.state);
+    expect(udp.listenerCount('message')).toBe(0);
+  });
+
+  it('stops reading on a new voice socket (the reports of the old one no longer apply)', async () => {
+    const { connection, link, udp } = await armedReady();
+    link.armReports();
+    const state = connection.state.networking!.state as { udp: EventEmitter };
+    state.udp = new EventEmitter();
+    expect(await link.receiverReport()).toEqual({ state: 'off' });
+    expect(udp.listenerCount('message')).toBe(0);
+  });
+
+  it('disarms on detach and on destroy', async () => {
+    const first = await armedReady();
+    first.link.armReports();
+    first.link.detach();
+    expect(first.udp.listenerCount('message')).toBe(0);
+    first.link.armReports(); // after detach: nothing
+    expect(first.udp.listenerCount('message')).toBe(0);
+    const second = await armedReady();
+    second.link.armReports();
+    second.link.destroy();
+    expect(second.udp.listenerCount('message')).toBe(0);
   });
 });

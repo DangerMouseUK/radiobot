@@ -23,6 +23,13 @@ import { delay } from '../shared/async.ts';
 import { RadioError } from '../shared/errors.ts';
 import { type LiveCatchUp, type LiveQueue, type LiveQueueStats, liveQueueFrom } from './live-queue.ts';
 import { PacketTiming, type PacketTimingSummary } from './packet-timing.ts';
+import {
+  openReceiverReport,
+  type ReceiverReportReading,
+  ReceiverReportTap,
+  type ReportSocket,
+  summarise,
+} from './receiver-report.ts';
 
 export interface VoiceLinkEvents {
   /** The connection is gone for good (destroyed, kicked, or reconnects exhausted). */
@@ -106,6 +113,15 @@ export interface VoiceLink extends EventEmitter<VoiceLinkEvents> {
   /** Debug information about the encryption/DAVE state where exposed. */
   encryption(): string;
   stats(): VoiceLinkStats;
+  /**
+   * Starts keeping the latest RTCP Receiver Report from Discord's voice server (one slot,
+   * src/voice/receiver-report.ts). Idempotent. Only while `/radio stats` is open.
+   */
+  armReports(): void;
+  /** Stops listening and forgets the report. Idempotent. */
+  disarmReports(): void;
+  /** Decrypts and reads the latest report, now. */
+  receiverReport(): Promise<ReceiverReportReading>;
   /** Stops using this link without destroying the shared guild voice connection. */
   detach(): void;
   destroy(): void;
@@ -214,6 +230,11 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
   /** The voice WebSocket in use; a close from one the library has already replaced is ignored. */
   #socket: object | null = null;
   readonly #watchedSockets = new WeakSet<object>();
+  /**
+   * Discord's receiver reports, while `/radio stats` is open: the voice socket's listener and its
+   * one slot, and the channel it was armed in. Null (no listener at all) the rest of the time.
+   */
+  #reports: { tap: ReceiverReportTap; channelId: string } | null = null;
 
   private constructor(connection: VoiceConnection, channelId: string) {
     super();
@@ -253,6 +274,8 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       this.#watchSocket(state);
       const ready = state.status === VoiceConnectionStatus.Ready;
       if (!ready) this.#timing.pause();
+      // A resume, a reconnect or a move: the report reader stops; the next Refresh starts it again.
+      if (this.#reports && (!ready || this.channelId !== this.#reports.channelId)) this.disarmReports();
       if (
         old.status === VoiceConnectionStatus.Ready &&
         !ready &&
@@ -285,6 +308,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       /* ignore */
     }
     this.#endQueue();
+    this.disarmReports();
     this.#subscription?.unsubscribe();
     this.#releaseTiming();
     if (this.#onConnectionState) this.connection.off('stateChange', this.#onConnectionState);
@@ -521,6 +545,64 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     return Math.max(0, state.playbackDuration - state.resource.playbackDuration);
   }
 
+  /** The voice UDP socket while the connection is ready, else null. */
+  #readySocket(): ReportSocket | null {
+    const state = this.connection.state;
+    if (state.status !== VoiceConnectionStatus.Ready) return null;
+    const net = state.networking.state;
+    if (net.code !== NetworkingStatusCode.Ready) return null;
+    const udp = 'udp' in net ? (net.udp as unknown) : undefined;
+    return udp instanceof EventEmitter ? (udp as ReportSocket) : null;
+  }
+
+  armReports(): void {
+    if (this.#destroyed) return;
+    const socket = this.#readySocket();
+    if (!socket) return;
+    const current = this.#reports;
+    if (current?.tap.socket === socket && current.channelId === this.channelId) return;
+    this.disarmReports();
+    this.#reports = { tap: new ReceiverReportTap(socket), channelId: this.channelId };
+  }
+
+  disarmReports(): void {
+    this.#reports?.tap.close();
+    this.#reports = null;
+  }
+
+  async receiverReport(): Promise<ReceiverReportReading> {
+    const armed = this.#reports;
+    if (!armed) return { state: 'off' };
+    // Moved on since it was armed (resumed, reconnected, moved): that socket's reports no longer apply.
+    if (this.#readySocket() !== armed.tap.socket || this.channelId !== armed.channelId) {
+      this.disarmReports();
+      return { state: 'off' };
+    }
+    const latest = armed.tap.latest();
+    if (!latest) return { state: 'waiting' };
+    const state = this.connection.state;
+    const net = state.status === VoiceConnectionStatus.Ready ? state.networking.state : null;
+    const data = (net && 'connectionData' in net ? net.connectionData : null) as {
+      encryptionMode?: string;
+      secretKey?: Uint8Array;
+      ssrc?: number;
+      sequence?: number;
+      packetsPlayed?: number;
+    } | null;
+    if (!data?.encryptionMode || !data.secretKey) {
+      return { state: 'unreadable', reason: 'the connection has no encryption key yet' };
+    }
+    const block = await openReceiverReport(latest.packet, data.encryptionMode, data.secretKey, data.ssrc);
+    if (!block) {
+      return { state: 'unreadable', reason: `it could not be decrypted (${data.encryptionMode})` };
+    }
+    const sequence =
+      typeof data.sequence === 'number' && typeof data.packetsPlayed === 'number'
+        ? { next: data.sequence, sent: data.packetsPlayed }
+        : null;
+    return { state: 'ok', report: summarise(block, latest.ageMs, sequence) };
+  }
+
   #releaseTiming(): void {
     if (packetTimings.get(this.connection) === this.#timing) packetTimings.delete(this.connection);
   }
@@ -542,6 +624,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       /* ignore */
     }
     this.#endQueue();
+    this.disarmReports();
     this.#releaseTiming();
     if (this.connection.state.status !== VoiceConnectionStatus.Destroyed) this.connection.destroy();
     if (this.#onConnectionError) this.connection.off('error', this.#onConnectionError);

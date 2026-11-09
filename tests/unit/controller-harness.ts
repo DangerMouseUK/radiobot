@@ -114,6 +114,20 @@ export class FakeSession {
   liveStats() {
     return this.live;
   }
+  /** Admins who opened `/radio stats` (each open or Refresh), and who pressed its Close. */
+  readonly reportOpens: string[] = [];
+  readonly reportCloses: string[] = [];
+  /** What receiverReport() answers. */
+  report: unknown = { state: 'waiting' };
+  openReports(viewer: string) {
+    this.reportOpens.push(viewer);
+  }
+  closeReports(viewer: string) {
+    this.reportCloses.push(viewer);
+  }
+  async receiverReport() {
+    return this.report;
+  }
   stop() {
     this.stops++;
   }

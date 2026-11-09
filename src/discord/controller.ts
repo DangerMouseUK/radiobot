@@ -76,6 +76,7 @@ import {
   nowEmbed,
   processLoadLine,
   qualityEmbed,
+  receiverReportLine,
   silenceLine,
   sourceFormat,
   sourcesEmbed,
@@ -1028,6 +1029,8 @@ export class RadioController {
     const a = this.#auth(i, 'admin');
     if (!a.ok) return this.#deny(i, a.reason);
     await i.deferReply({ flags: EPHEMERAL });
+    // Starts reading Discord's receiver reports for this admin, until Close or 15 minutes.
+    this.#ctx.sessions.get(i.guildId)?.openReports(i.user.id);
     await i.editReply(await this.#statsView(i.guildId));
   }
 
@@ -1064,6 +1067,8 @@ export class RadioController {
     if (endpointHost) endpointIp = (await dnsLookup(endpointHost).catch(() => null))?.address ?? null;
     const channel = status?.channelId ? ctx.client.channels.cache.get(status.channelId) : null;
     const rtcRegion = channel && 'rtcRegion' in channel ? (channel.rtcRegion ?? 'automatic') : 'unknown';
+    // Read last, so a report that arrived while the round trips above were measured is shown.
+    const report = live?.voice ? ((await session?.receiverReport()) ?? null) : null;
 
     const liveEmbed = new EmbedBuilder()
       .setTitle(st ? `Live stats: ${st.displayName}` : 'Live stats')
@@ -1108,6 +1113,7 @@ export class RadioController {
               `Sent to Discord: ${kbps(out?.kbps10s)} (10 s) · ${kbps(out?.kbps60s)} (60 s) · Ogg Opus from the encoder`,
               `Packets to Discord: ${live.voice?.packetsPerSecond ?? '—'} per second (expect ~50) · ${live.voice?.packetsPlayed ?? '—'} sent on this connection`,
               latePacketsLine(live.voice?.latePackets, live.voice?.worstPacketGapMs),
+              receiverReportLine(report),
               silenceLine(live.voice?.silenceMs, live.voice?.recentSilenceMs),
               liveDelayLine(live.voice?.live),
             ].join('\n'),
@@ -1212,7 +1218,8 @@ export class RadioController {
         .setLabel('Refresh')
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
-        .setCustomId(ctx.ids.make(guildId, 'close', '', 30 * 60_000))
+        // 'stats': this Close also stops reading Discord's receiver reports for this admin.
+        .setCustomId(ctx.ids.make(guildId, 'close', 'stats', 30 * 60_000))
         .setLabel('Close')
         .setStyle(ButtonStyle.Secondary),
     );
@@ -2365,6 +2372,7 @@ export class RadioController {
           const a = this.#auth(i, 'admin');
           if (!a.ok) return this.#deny(i, a.reason);
           await i.deferUpdate();
+          this.#ctx.sessions.get(i.guildId)?.openReports(i.user.id);
           await i.editReply(await this.#statsView(i.guildId));
           return;
         }
@@ -2380,6 +2388,7 @@ export class RadioController {
         case 'close': {
           const a = this.#auth(i, 'read');
           if (!a.ok) return this.#deny(i, a.reason);
+          if (arg === 'stats') this.#ctx.sessions.get(i.guildId)?.closeReports(i.user.id);
           await i.deferUpdate();
           await i.deleteReply().catch(() => {});
           return;

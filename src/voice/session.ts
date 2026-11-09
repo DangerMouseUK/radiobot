@@ -15,6 +15,7 @@ import { compareFidelity, type SelectionResult, transportTier } from '../streams
 import type { PlayOptions, VoiceLink, VoiceLinkStats } from './link.ts';
 import type { LiveQueueStats } from './live-queue.ts';
 import type { PacketTimingSummary } from './packet-timing.ts';
+import { type ReceiverReportReading, ReportWatch } from './receiver-report.ts';
 import { canTransition, isAudioActive, type PlaybackState } from './state-machine.ts';
 
 /** What a session needs from an audio pipeline (AudioPipeline in production, fakes in tests). */
@@ -317,6 +318,15 @@ export class GuildSession {
   #runId = 0;
   #runAbort: AbortController | null = null;
   #link: VoiceLink | null = null;
+  /**
+   * Discord's receiver reports for this server's link, read only while an admin has `/radio stats`
+   * open (src/voice/receiver-report.ts). Stopped whenever the link goes, resumes or reconnects,
+   * and when playback stops or the bot leaves.
+   */
+  readonly #reports = new ReportWatch({
+    arm: () => this.#link?.armReports(),
+    disarm: () => this.#link?.disarmReports(),
+  });
   #pipeline: PipelineLike | null = null;
   #source: StationSource | null = null;
   #selection: SelectionResult | null = null;
@@ -532,6 +542,7 @@ export class GuildSession {
     this.#clearTimer('retry');
     this.#clearTimer('empty'); // a pending pause would otherwise overwrite 'stopped'
     if (this.#pipeline || isAudioActive(this.#state)) this.#setState('STOPPING');
+    this.#reports.stop();
     this.#teardownAudio();
     this.#setState(this.#link ? 'CONNECTED' : 'IDLE');
     this.#armStoppedIdleLeave();
@@ -549,6 +560,7 @@ export class GuildSession {
     this.#persist(desired);
     this.#clearAllTimers();
     if (this.#state !== 'IDLE') this.#setState('LEAVING');
+    this.#reports.stop();
     this.#teardownAudio();
     const link = this.#link;
     const pending = link ? this.#d.onLeaving?.(link.channelId) : undefined;
@@ -728,6 +740,7 @@ export class GuildSession {
     this.#packetSamples = [];
     link.on('lost', (reason) => this.#onLinkLost(link, reason));
     link.on('reconnected', () => {
+      this.#reports.stop();
       this.#reconnects++;
       this.#d.metrics.inc('voice.reconnected');
       // A new voice connection counts its packets from zero: rates start again from its samples.
@@ -736,6 +749,8 @@ export class GuildSession {
     link.on('connectionError', (err) => this.#log.warn({ err: safeErr(err) }, 'voice connection error'));
     // Rare, and each one a brief gap in the audio, so worth seeing at info level.
     link.on('interrupted', (info) => {
+      // The link has already stopped reading reports; this lets go of the admins and the timeout too.
+      this.#reports.stop();
       this.#d.metrics.inc('voice.interrupted');
       this.#log.info(
         info,
@@ -1146,6 +1161,7 @@ export class GuildSession {
 
   #onLinkLost(link: VoiceLink, reason: 'kicked' | 'destroyed' | 'reconnect_failed'): void {
     if (link !== this.#link) return;
+    this.#reports.stop();
     this.#link = null;
     this.#stopWatchdog();
     this.#teardownAudio();
@@ -1371,6 +1387,7 @@ export class GuildSession {
   }
 
   #teardownLink(): void {
+    this.#reports.stop();
     this.#stopWatchdog();
     const link = this.#link;
     this.#link = null;
@@ -1419,6 +1436,25 @@ export class GuildSession {
   }
 
   // ------------------------------------------------------------------ status
+
+  /**
+   * An admin opened or refreshed `/radio stats`: read Discord's receiver reports until they press
+   * Close, or for 15 minutes from now. Nothing to read without a voice link.
+   */
+  openReports(viewer: string): void {
+    if (this.#link) this.#reports.open(viewer);
+  }
+
+  /** An admin pressed Close on `/radio stats`. The last one out stops the reading. */
+  closeReports(viewer: string): void {
+    this.#reports.close(viewer);
+  }
+
+  /** Discord's latest receiver report, decrypted now (only while `/radio stats` is open). */
+  receiverReport(): Promise<ReceiverReportReading> {
+    if (!this.#link || !this.#reports.armed) return Promise.resolve({ state: 'off' });
+    return this.#link.receiverReport();
+  }
 
   liveStats(): SessionLiveStats {
     const p = this.#pipeline;

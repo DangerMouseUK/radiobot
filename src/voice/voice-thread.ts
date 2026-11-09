@@ -8,6 +8,7 @@ import { backoffDelayMs } from '../shared/backoff.ts';
 import { RadioError } from '../shared/errors.ts';
 import { ownBuffer, siblingModule } from '../shared/workers.ts';
 import type { PlayOptions, VoiceLink, VoiceLinkEvents, VoiceLinkFactory, VoiceLinkStats } from './link.ts';
+import type { ReceiverReportReading } from './receiver-report.ts';
 import {
   deserializeError,
   type FromWorker,
@@ -444,6 +445,7 @@ export class VoiceThread {
       case 'restored':
       case 'caughtUp':
       case 'flow':
+      case 'report':
         gen.links.get(msg.linkId)?.receive(msg);
         return;
       case 'adapterOpen':
@@ -535,9 +537,13 @@ type LinkMessage = Extract<
       | 'interrupted'
       | 'restored'
       | 'caughtUp'
-      | 'flow';
+      | 'flow'
+      | 'report';
   }
 >;
+
+/** How long the stats view waits for the worker to read a receiver report. */
+export const REPORT_READ_TIMEOUT_MS = 1_000;
 
 const noop = () => {};
 
@@ -558,6 +564,9 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
   #endedStreamId = 0;
   #hook: { streamId: number; stream: Readable; off: () => void } | null = null;
   #done = false;
+  /** Receiver report reads waiting for the worker's answer (one per stats render, each with a timeout). */
+  readonly #reportReads = new Map<number, (reading: ReceiverReportReading) => void>();
+  #nextReportRead = 0;
 
   constructor(linkId: number, snapshot: LinkSnapshot, channel: LinkChannel) {
     super();
@@ -644,6 +653,39 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
     return { ...this.#snap.stats, live: null };
   }
 
+  armReports(): void {
+    if (!this.#done) this.#ch.post({ t: 'reports', linkId: this.linkId, on: true });
+  }
+
+  disarmReports(): void {
+    if (!this.#done) this.#ch.post({ t: 'reports', linkId: this.linkId, on: false });
+  }
+
+  /** Asks the worker, which holds the report and the key, to read it now. */
+  receiverReport(): Promise<ReceiverReportReading> {
+    if (this.#done) return Promise.resolve({ state: 'off' });
+    const requestId = ++this.#nextReportRead;
+    return new Promise((resolve) => {
+      const timer = setTimeout(
+        () => settle({ state: 'unreadable', reason: 'the voice worker did not answer in time' }),
+        REPORT_READ_TIMEOUT_MS,
+      );
+      timer.unref?.();
+      const settle = (reading: ReceiverReportReading) => {
+        clearTimeout(timer);
+        this.#reportReads.delete(requestId);
+        resolve(reading);
+      };
+      this.#reportReads.set(requestId, settle);
+      this.#ch.post({ t: 'readReport', linkId: this.linkId, requestId });
+    });
+  }
+
+  /** The link is done: any read still waiting is answered at once. */
+  #settleReportReads(): void {
+    for (const settle of [...this.#reportReads.values()]) settle({ state: 'off' });
+  }
+
   /** A newer snapshot from the worker. */
   update(snapshot: LinkSnapshot): void {
     this.#snap = snapshot;
@@ -683,6 +725,9 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
         if (msg.paused) this.#hook.stream.pause();
         else this.#hook.stream.resume();
         return;
+      case 'report':
+        this.#reportReads.get(msg.requestId)?.(msg.reading);
+        return;
     }
   }
 
@@ -694,6 +739,7 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
   #gone(reason: 'kicked' | 'destroyed' | 'reconnect_failed'): void {
     this.#done = true;
     this.#unhook();
+    this.#settleReportReads();
     this.#ch.forget(this.linkId);
     this.#markLost(reason);
   }
@@ -708,6 +754,7 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
     if (this.#done) return;
     this.#done = true;
     this.#unhook();
+    this.#settleReportReads();
     this.#ch.post({ t: 'detach', linkId: this.linkId });
     this.#ch.forget(this.linkId);
     this.removeAllListeners();
@@ -717,6 +764,7 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
     if (this.#done) return;
     this.#done = true;
     this.#unhook();
+    this.#settleReportReads();
     this.#ch.post({ t: 'destroy', linkId: this.linkId });
     this.#ch.forget(this.linkId);
     this.#markLost('destroyed');

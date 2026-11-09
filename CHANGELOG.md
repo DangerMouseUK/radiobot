@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`/radio stats` shows the packets lost on the way to Discord**, from Discord's own report. Discord's voice server reports about once a second what it received of the bot's audio (an RTCP receiver report), which the voice library ignored. A new line under Output to Discord gives the packets that never reached Discord's voice server since the voice connection began, as a share of those it expected, and the jitter it measured, and says plainly that loss from there on to each listener isn't included. It tells loss between the host and Discord apart from loss on a listener's side; see [troubleshooting](docs/troubleshooting.md). The report is read only while an admin has the panel open: opening it or pressing Refresh starts the reader (one listener and one fixed slot per voice connection, decrypted only when the panel is drawn), and Close, 15 minutes without a Refresh, any change of voice connection, a stop, a leave or shutdown stops it. With the panel closed nothing is attached. It works the same with `VOICE_THREAD=worker`, where the report and the key stay in the voice worker.
+
 ## [1.4.0] - 2026-11-07
 
 Low-bitrate stations keep their stereo and treble, voice works whichever encryption Discord's voice server offers, and every source reaches the encoder as float samples.

@@ -184,12 +184,31 @@ The plan says so: "The source is 48 kbps (measured); the encoder uses 128 kbps, 
 - for HLS, how many segments were fetched, failed and skipped;
 - packets per second to Discord, which should be about 50 with 20 ms frames (silence the player fills in counts too, so the rate stays at 50 when no audio is ready; the silence line below tells them apart);
 - late packets: how many left more than 40 ms after the one before since the bot joined, and the longest gap (about 55 ms or more is enough to hear);
+- **lost on the way to Discord**, from Discord's own report (see [Discord's receiver report](#discords-receiver-report) below): how many of the bot's packets never reached Discord's voice server since the voice connection began, as a share of those it expected, and the jitter it measured;
 - silence the voice player filled in because no audio was ready, for this stream and in the last minute;
 - the live delay: how much audio is waiting in the live queue, the cushion it keeps, how much it has dropped to stay live (the connect burst, then catch-ups), how many network gaps there were, and how fast or slow the station's clock runs once that is known (see [Staying live](#staying-live));
 - the round trip to the stream's server, the voice connection's WebSocket ping and the gateway ping;
 - source failovers, voice reconnects, the encoder's process ID and the last FFmpeg warnings;
 - the main thread's event-loop delay, with its garbage-collection pauses, CPU use and (on Linux) host steal over the same minute, memory use and the number of FFmpeg processes;
 - with `VOICE_THREAD=worker`, the voice worker's own event-loop delay, longest garbage-collection pause, heap and restarts. The worker's event loop is the one that sends the packets then, so its delay is the one that matters.
+
+### Discord's receiver report
+
+While the bot plays, Discord's voice server sends it a short report about once a second: an RTCP Receiver Report (RFC 3550), encrypted with the voice connection's own key. It says what the server received of the bot's audio: the packets lost since the connection began, the share lost since its previous report, the highest packet number it has seen, and the interarrival jitter. `/radio stats` shows it as one line, for example:
+
+```text
+Lost on the way to Discord: 9 packets (0.0043% of 210,000) since the voice connection began · jitter 1.3 ms (Discord’s voice server report, 1 s ago; loss from there to each listener isn’t included)
+```
+
+This is the loss between the bot's host and Discord's voice server only. Each listener's Discord app receives the call from that server over its own connection, and loss there is not in the report: a listener can hear cuts while this line says 0. The share is counted from packet numbers (Discord's highest one less the first the bot sent), and is left out when the two don't fit together. The jitter is in RTP time units of 48 kHz, divided by 48 for milliseconds.
+
+The report is read only on demand, so nothing runs while nobody is looking:
+
+- **Start.** Opening `/radio stats` or pressing Refresh arms the reader for that server's voice connection: one listener on the voice UDP socket and one fixed 256-byte slot, overwritten in place by each new report. Nothing is decrypted, logged or kept beyond that slot. The report is decrypted and read when the panel is drawn, as the last thing before it is sent, so a report that arrives while the round trips are measured is shown; a panel opened before the first report says so, and Refresh shows it. The counters are cumulative, so reading now and then loses nothing.
+- **Stop.** The reader stops, removing the listener and the slot, when the last admin who opened the panel presses **Close**; 15 minutes after the last open or Refresh (Discord's "Dismiss message" never tells the bot, and the buttons of a private message stop working after 15 minutes); when the voice connection resumes, reconnects, moves to another channel or another voice socket, or ends; when playback stops or the bot leaves; and at shutdown. Several admins share one reader. Opening twice or closing twice changes nothing.
+- **Cost.** With the reader off, no listener is attached at all. Armed, each datagram that reaches the voice socket (about one report a second, and a keep-alive reply every few seconds) costs four byte comparisons, and a report also a 76-byte copy and a clock read; nothing is allocated and nothing runs on the send path. Reading it costs one AES-256-GCM or XChaCha20-Poly1305 decryption of 48 bytes. With `VOICE_THREAD=worker` the socket, the slot and the key stay in the voice worker: the main thread asks for the figures when it draws the panel (giving up after 1 s), and only the figures come back.
+
+The bytes are decrypted as the voice library seals its own packets: the 8-byte header and the reporter's ID in the clear, as the additional data, then the encrypted part and its 16-byte tag, then the 4-byte nonce counter, placed at the start of an otherwise empty 12-byte (AES-256-GCM) or 24-byte (XChaCha20-Poly1305) nonce. If the tag doesn't verify that way, a 12-byte clear part is tried; a report that verifies neither way is shown as unreadable, never as figures. This layout has been checked against the library's own encryption code, not yet against a live Discord call.
 
 ## Recovery and continuity
 
