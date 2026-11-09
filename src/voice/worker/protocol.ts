@@ -6,6 +6,7 @@
 import { RadioError, type ReasonCode } from '../../shared/errors.ts';
 import type { VoiceInterruption, VoiceLinkStats, VoiceRestore } from '../link.ts';
 import type { LiveCatchUp } from '../live-queue.ts';
+import type { ReceiverReportReading } from '../receiver-report.ts';
 
 export interface SerializedError {
   name: string;
@@ -77,6 +78,10 @@ export type ToWorker =
   | { t: 'stopAudio'; linkId: number }
   | { t: 'detach'; linkId: number }
   | { t: 'destroy'; linkId: number }
+  /** Arm or disarm the link's reader of Discord's receiver reports (only while `/radio stats` is open). */
+  | { t: 'reports'; linkId: number; on: boolean }
+  /** Read the latest receiver report now; answered with `report` and the same `requestId`. */
+  | { t: 'readReport'; linkId: number; requestId: number }
   | { t: 'gateway'; adapterId: number; kind: 'server' | 'state'; data: unknown }
   | { t: 'adapterDestroy'; adapterId: number }
   | { t: 'sendFailed'; adapterId: number }
@@ -99,6 +104,7 @@ export type FromWorker =
   /** The live queue of stream `streamId` dropped audio to stay near live. */
   | { t: 'caughtUp'; linkId: number; streamId: number; event: LiveCatchUp }
   | { t: 'flow'; linkId: number; streamId: number; paused: boolean }
+  | { t: 'report'; linkId: number; requestId: number; reading: ReceiverReportReading }
   | { t: 'adapterOpen'; adapterId: number; guildId: string }
   | { t: 'send'; adapterId: number; payload: unknown }
   | { t: 'adapterClose'; adapterId: number }

@@ -6,14 +6,16 @@
  * install of a second pack of the largest size from a local pack library, an update of it that
  * drops thousands of sources, /radio list, station suggestions, the hourly clean-up of tens of
  * thousands of old check results and the bot owner's "Check all sources again" over every source, with
- * a large synthetic pack loaded next to the bundled one, and measures the event-loop delay and the
+ * a large synthetic pack loaded next to the bundled one, with Discord's receiver reports armed and read
+ * as `/radio stats` reads them, and measures the event-loop delay and the
  * longest stretch of synchronous work (between two turns of the event loop) in each step.
  *
  * The bound is generous on purpose (CI runners are shared and noisy): the target is under 10 ms per
  * stretch of work, and this only fails on a stall that would cut the audio. Vitest runs this file
  * on its own, after every other (vitest.config.ts), so other test processes don't count as delay.
  */
-import { createHash } from 'node:crypto';
+import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -28,6 +30,7 @@ import {
   NoSubscriberBehavior,
   StreamType,
 } from '@discordjs/voice';
+import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { planEncoder } from '../../src/audio/encoder.ts';
 import { ProcessRegistry } from '../../src/audio/ffmpeg.ts';
@@ -38,12 +41,14 @@ import { PackStore } from '../../src/catalogue/pack-store.ts';
 import { prepareStations } from '../../src/catalogue/search.ts';
 import { CatalogueSync } from '../../src/catalogue/sync.ts';
 import { visibleStations } from '../../src/discord/context.ts';
+import { receiverReportLine } from '../../src/discord/ui/format.ts';
 import { yieldToEventLoop } from '../../src/shared/async.ts';
 import { openSourceInput } from '../../src/streams/input.ts';
 import { emptyOutcome } from '../../src/streams/probe.ts';
 import { selectSource } from '../../src/streams/ranking.ts';
 import { SafeHttpClient } from '../../src/streams/safe-fetch.ts';
 import { UrlPolicy } from '../../src/streams/url-policy.ts';
+import { openReceiverReport, ReceiverReportTap, summarise } from '../../src/voice/receiver-report.ts';
 import { silentLogger } from '../helpers.ts';
 import { GUILD, setup, suggest, V1 } from '../unit/controller-harness.ts';
 import { binaries, generateFixtures, startTestRadio, type TestRadio } from './fixture-server.ts';
@@ -286,6 +291,36 @@ describe('main-thread budget while a stream plays', () => {
     player.play(resource);
     await new Promise<void>((resolve) => player.once(AudioPlayerStatus.Playing, () => resolve()));
 
+    // Discord's receiver reports, armed as while an admin has /radio stats open: a report arrives
+    // once a second on the voice socket and goes into the tap's one slot, as from Discord's server.
+    const reportKey = randomBytes(32);
+    const reportSocket = new EventEmitter();
+    const tap = new ReceiverReportTap(reportSocket);
+    const sealReport = (mode: 'aes' | 'xchacha', counter: number) => {
+      const clear = Buffer.from([0x81, 0xc9, 0x00, 0x07, 0, 0, 0, 1]);
+      const body = Buffer.alloc(48);
+      body.writeUInt32BE(1, 0);
+      body.writeUIntBE(counter % 7, 5, 3);
+      body.writeUInt32BE(counter * 50, 8);
+      const nonce = Buffer.alloc(mode === 'aes' ? 12 : 24);
+      nonce.writeUInt32BE(counter, 0);
+      let sealed: Uint8Array;
+      if (mode === 'aes') {
+        const cipher = createCipheriv('aes-256-gcm', reportKey, nonce);
+        cipher.setAAD(clear);
+        sealed = Buffer.concat([cipher.update(body), cipher.final(), cipher.getAuthTag()]);
+      } else sealed = xchacha20poly1305(reportKey, nonce, clear).encrypt(body);
+      return Buffer.concat([clear, sealed, nonce.subarray(0, 4)]);
+    };
+    // Odd reports in XChaCha20-Poly1305, even ones in AES-256-GCM: the nonce counter says which.
+    let reportsSent = 0;
+    const sendReport = () => {
+      const n = ++reportsSent;
+      reportSocket.emit('message', sealReport(n % 2 === 0 ? 'aes' : 'xchacha', n));
+    };
+    const reportTimer = setInterval(sendReport, 1_000);
+    sendReport();
+
     // The longest stretch of synchronous work in each step: the time between two turns of the event
     // loop, seen from a callback that runs once a turn. It also keeps the loop from sleeping, so a
     // coarse system timer (15.6 ms on Windows) isn't counted as delay.
@@ -320,6 +355,23 @@ describe('main-thread budget while a stream plays', () => {
     };
     try {
       for (let round = 0; round < 3; round++) {
+        // What the stats view does with the slot: decrypt and parse it (the first XChaCha20 read
+        // also loads its module), then format the line.
+        await time(round === 0 ? 'receiver report: first read' : 'receiver report read', async () => {
+          const latest = tap.latest()!;
+          const mode = latest.packet.readUInt32BE(latest.packet.length - 4) % 2 === 0 ? 'aes' : 'xchacha';
+          const block = await openReceiverReport(
+            latest.packet,
+            mode === 'aes' ? 'aead_aes256_gcm_rtpsize' : 'aead_xchacha20_poly1305_rtpsize',
+            reportKey,
+          );
+          expect(block).not.toBeNull();
+          const line = receiverReportLine({
+            state: 'ok',
+            report: summarise(block!, latest.ageMs, { next: 0, sent: 1 }),
+          });
+          expect(line).toMatch(/^Lost on the way to Discord: /);
+        });
         await time('stats', async () => {
           const i = await t.command(t.people.admin, { sub: 'stats' });
           expect(i.violations).toEqual([]);
@@ -423,6 +475,8 @@ describe('main-thread budget while a stream plays', () => {
     } finally {
       delay.disable();
       tracing = false;
+      clearInterval(reportTimer);
+      tap.close();
       played = resource.playbackDuration - playedBefore;
       elapsed = performance.now() - startedAt;
       player.stop(true);
@@ -442,6 +496,7 @@ describe('main-thread budget while a stream plays', () => {
     );
     // The audio kept flowing the whole time: the player sent (nearly) a packet per 20 ms throughout.
     expect(played).toBeGreaterThan(0.8 * elapsed);
+    expect(reportSocket.listenerCount('message')).toBe(0);
     expect(maxMs).toBeLessThan(MAX_DELAY_MS);
     expect(Math.max(...Object.values(stretches))).toBeLessThan(MAX_DELAY_MS);
   }, 120_000);

@@ -54,6 +54,18 @@ class FakeLink extends EventEmitter {
   destroy() {
     this.destroyed = true;
   }
+  /** Arm and disarm calls, in order, and what a read answers (a function, so a test can make it hang or throw). */
+  reportCalls: string[] = [];
+  readReport: () => Promise<unknown> = async () => ({ state: 'waiting' });
+  armReports() {
+    this.reportCalls.push('arm');
+  }
+  disarmReports() {
+    this.reportCalls.push('disarm');
+  }
+  receiverReport() {
+    return this.readReport();
+  }
 }
 
 const open: Array<{ host: VoiceHost; ports: MessagePort[] }> = [];
@@ -90,6 +102,32 @@ afterEach(() => {
 });
 
 describe('VoiceHost', () => {
+  it('arms and disarms a link’s receiver report reader, and reads it only when asked', async () => {
+    const t = host();
+    t.send({ t: 'join', linkId: 1, guildId: 'g1', channelId: 'voice-1', timeoutMs: 1 });
+    await t.waitFor((m) => m.t === 'joined');
+    const link = t.links[0]!;
+    t.send({ t: 'reports', linkId: 1, on: true });
+    t.send({ t: 'reports', linkId: 9, on: true }); // a link it doesn't have: dropped
+    t.send({ t: 'readReport', linkId: 1, requestId: 7 });
+    const answer = await t.waitFor((m) => m.t === 'report' && m.requestId === 7);
+    expect(answer).toEqual({ t: 'report', linkId: 1, requestId: 7, reading: { state: 'waiting' } });
+    // A link it doesn't have reads as off; a read that fails is reported, never thrown.
+    t.send({ t: 'readReport', linkId: 9, requestId: 8 });
+    expect(await t.waitFor((m) => m.t === 'report' && m.requestId === 8)).toMatchObject({
+      reading: { state: 'off' },
+    });
+    link.readReport = async () => {
+      throw new Error('cipher gone');
+    };
+    t.send({ t: 'readReport', linkId: 1, requestId: 9 });
+    expect(await t.waitFor((m) => m.t === 'report' && m.requestId === 9)).toMatchObject({
+      reading: { state: 'unreadable', reason: 'cipher gone' },
+    });
+    t.send({ t: 'reports', linkId: 1, on: false });
+    await vi.waitFor(() => expect(link.reportCalls).toEqual(['arm', 'disarm']));
+  });
+
   it('says it is ready, and joins with an adapter of its own for the guild', async () => {
     const targets: unknown[] = [];
     const t = host({

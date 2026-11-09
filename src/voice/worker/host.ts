@@ -1,5 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { DiscordVoiceLink, type VoiceJoinTarget, type VoiceLink } from '../link.ts';
+import type { ReceiverReportReading } from '../receiver-report.ts';
 import { AdapterRelay } from './adapter-relay.ts';
 import {
   type FromWorker,
@@ -146,6 +147,15 @@ export class VoiceHost {
       case 'destroy':
         this.#release(msg.linkId, msg.t);
         return;
+      case 'reports': {
+        const link = this.#links.get(msg.linkId)?.link;
+        if (msg.on) link?.armReports();
+        else link?.disarmReports();
+        return;
+      }
+      case 'readReport':
+        void this.#readReport(msg.linkId, msg.requestId);
+        return;
       case 'gateway':
         this.#relay.gateway(msg.adapterId, msg.kind, msg.data);
         return;
@@ -256,6 +266,18 @@ export class VoiceHost {
     if (how === 'end') stream.pass.end();
     else if (how === 'error') stream.pass.destroy(new Error(message ?? 'The audio stream failed.'));
     else stream.pass.destroy();
+  }
+
+  /** Decrypts the link's latest receiver report here, where its key is, and sends back only the figures. */
+  async #readReport(linkId: number, requestId: number): Promise<void> {
+    const link = this.#links.get(linkId)?.link;
+    let reading: ReceiverReportReading = { state: 'off' };
+    try {
+      if (link) reading = await link.receiverReport();
+    } catch (err) {
+      reading = { state: 'unreadable', reason: serializeError(err).message };
+    }
+    this.#post({ t: 'report', linkId, requestId, reading });
   }
 
   #endStream(entry: HostLink): void {

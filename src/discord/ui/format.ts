@@ -20,6 +20,7 @@ import {
 } from '../../streams/ranking.ts';
 import { isPaused, nextAutomaticCheck } from '../../streams/source-service.ts';
 import type { LiveQueueStats } from '../../voice/live-queue.ts';
+import type { ReceiverReportReading } from '../../voice/receiver-report.ts';
 import type { SessionStatus } from '../../voice/session.ts';
 import { isAudioActive, type PlaybackState, STATE_LABEL } from '../../voice/state-machine.ts';
 import type { VoiceThreadStats } from '../../voice/voice-thread.ts';
@@ -545,6 +546,52 @@ export function liveDelayLine(live: LiveQueueStats | null | undefined): string {
         ? ' · station clock in step'
         : ` · station clock ${Math.abs(ppm)} ppm ${ppm > 0 ? 'fast' : 'slow'}`;
   return `Live delay: ${s(live.depthMs)} waiting (cushion ${s(live.cushionMs)}) · dropped to stay live: ${s(live.startDroppedMs)} at the start, ${since} · ${gaps}${clock}`;
+}
+
+/**
+ * A share as a percentage to about two significant digits, never in exponent form (9 in 210,000 is
+ * 0.0043%). Plain arithmetic: the first use of the locale formatters loads ICU data, which takes
+ * milliseconds on the main thread (src/shared/text.ts).
+ */
+function percent(share: number): string {
+  const pct = share * 100;
+  if (!(pct > 0)) return '0%';
+  if (pct >= 10) return `${Math.round(pct)}%`;
+  const decimals = Math.min(12, 1 - Math.floor(Math.log10(pct)));
+  return `${pct.toFixed(decimals).replace(/\.?0+$/, '')}%`;
+}
+
+/** A whole number with thousands separators (210,000). */
+function grouped(n: number): string {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * One stats line from Discord's own receiver report: the packets that left the bot but never
+ * reached Discord's voice server, and the jitter it measured. It says nothing about the way on from
+ * that server to each listener, and the line says so.
+ */
+export function receiverReportLine(reading: ReceiverReportReading | null | undefined): string {
+  const label = 'Lost on the way to Discord';
+  if (!reading || reading.state === 'off') {
+    return `${label}: — (press Refresh to read Discord’s voice server report)`;
+  }
+  if (reading.state === 'waiting') {
+    return `${label}: waiting for Discord’s voice server report (one comes about every second); press Refresh`;
+  }
+  if (reading.state === 'unreadable') {
+    return `${label}: Discord’s voice server report couldn’t be read: ${reading.reason}`;
+  }
+  const r = reading.report;
+  // RFC 3550 lets the count go below zero when packets arrive twice: that is no loss.
+  const lost = Math.max(0, r.lost);
+  const share = r.expected !== null ? ` (${percent(lost / r.expected)} of ${grouped(r.expected)})` : '';
+  const recent = r.fractionLost > 0 ? ` · ${percent(r.fractionLost)} since its previous report` : '';
+  return (
+    `${label}: ${grouped(lost)} packet${lost === 1 ? '' : 's'}${share} since the voice connection began${recent}` +
+    ` · jitter ${r.jitterMs} ms (Discord’s voice server report, ${Math.round(r.ageMs / 1000)} s ago;` +
+    ' loss from there to each listener isn’t included)'
+  );
 }
 
 /** One stats line for voice packets that went out late (more than 40 ms after the one before). */

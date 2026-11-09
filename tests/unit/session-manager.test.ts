@@ -130,6 +130,16 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
     this.channelId = channelId;
   }
   play(): void {}
+  reportsArmed = false;
+  armReports(): void {
+    this.reportsArmed = true;
+  }
+  disarmReports(): void {
+    this.reportsArmed = false;
+  }
+  async receiverReport() {
+    return this.reportsArmed ? ({ state: 'waiting' } as const) : ({ state: 'off' } as const);
+  }
   stopAudio(): void {}
   playbackMs(): number {
     return 0;

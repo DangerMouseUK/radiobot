@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EncoderPlan } from '../../src/audio/encoder.ts';
 import type { PipelineStats } from '../../src/audio/pipeline.ts';
 import type { StationSource } from '../../src/catalogue/types.ts';
@@ -10,6 +10,7 @@ import type { SourceInput } from '../../src/streams/input.ts';
 import { selectSource } from '../../src/streams/ranking.ts';
 import { CIRCUIT_BREAK_FAILURES } from '../../src/streams/source-service.ts';
 import type { PlayOptions, VoiceLink, VoiceLinkEvents } from '../../src/voice/link.ts';
+import { REPORT_WATCH_MS } from '../../src/voice/receiver-report.ts';
 import {
   DEFAULT_TIMINGS,
   GuildSession,
@@ -33,6 +34,16 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
   play(stream: unknown, options?: PlayOptions): void {
     this.played.push(stream);
     this.playOptions.push(options);
+  }
+  reportsArmed = false;
+  armReports(): void {
+    this.reportsArmed = true;
+  }
+  disarmReports(): void {
+    this.reportsArmed = false;
+  }
+  async receiverReport() {
+    return this.reportsArmed ? ({ state: 'waiting' } as const) : ({ state: 'off' } as const);
   }
   stopAudio(): void {}
   playbackMs(): number {
@@ -281,6 +292,76 @@ function setup(
 }
 
 const active = (ps: FakePipeline[]) => ps.filter((p) => !p.stopped);
+
+describe('GuildSession: Discord receiver reports', () => {
+  it('reads them only while an admin has the stats open, and not without a voice link', async () => {
+    const t = setup();
+    t.session.openReports('admin-1');
+    expect(await t.session.receiverReport()).toEqual({ state: 'off' });
+    await t.session.play('demo:demo-radio', 'voice-1', null);
+    const link = t.links[0]!;
+    expect(link.reportsArmed).toBe(false);
+    t.session.openReports('admin-1');
+    t.session.openReports('admin-2');
+    expect(link.reportsArmed).toBe(true);
+    expect(await t.session.receiverReport()).toEqual({ state: 'waiting' });
+    t.session.closeReports('admin-1');
+    expect(link.reportsArmed).toBe(true);
+    t.session.closeReports('admin-2');
+    expect(link.reportsArmed).toBe(false);
+    expect(await t.session.receiverReport()).toEqual({ state: 'off' });
+  });
+
+  it('stops reading on an interruption, a reconnect, a stop, a leave, a lost link and shutdown', async () => {
+    const t = setup();
+    await t.session.play('demo:demo-radio', 'voice-1', null);
+    const link = t.links[0]!;
+    const cases: Array<() => void> = [
+      () => link.emit('interrupted', { status: 'connecting', resuming: true, closeCode: 1006 }),
+      () => link.emit('reconnected'),
+      () => t.session.stop(),
+    ];
+    for (const end of cases) {
+      t.session.openReports('admin-1');
+      expect(link.reportsArmed).toBe(true);
+      end();
+      expect(link.reportsArmed).toBe(false);
+      // The admin and the timeout went too: opening again arms again.
+      expect(await t.session.receiverReport()).toEqual({ state: 'off' });
+    }
+    t.session.openReports('admin-1');
+    t.session.leave();
+    expect(link.reportsArmed).toBe(false);
+
+    const lost = setup();
+    await lost.session.play('demo:demo-radio', 'voice-1', null);
+    lost.session.openReports('admin-1');
+    lost.links[0]!.emit('lost', 'destroyed');
+    expect(lost.links[0]!.reportsArmed).toBe(false);
+    expect(await lost.session.receiverReport()).toEqual({ state: 'off' });
+
+    const shut = setup();
+    await shut.session.play('demo:demo-radio', 'voice-1', null);
+    shut.session.openReports('admin-1');
+    shut.session.destroy();
+    expect(shut.links[0]!.reportsArmed).toBe(false);
+  });
+
+  it('stops reading by itself 15 minutes after the last open or Refresh', async () => {
+    const t = setup();
+    await t.session.play('demo:demo-radio', 'voice-1', null);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      t.session.openReports('admin-1');
+      vi.advanceTimersByTime(REPORT_WATCH_MS - 1);
+      expect(t.links[0]!.reportsArmed).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(t.links[0]!.reportsArmed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('GuildSession', () => {
   it('plays a station and persists desired state', async () => {

@@ -261,6 +261,19 @@ describe('now-playing buttons', () => {
     expect(methods(i)).toEqual(['deferUpdate', 'deleteReply']);
   });
 
+  it('Close on the stats stops reading receiver reports for that admin; other Close buttons do not', async () => {
+    const { t, st } = customServer();
+    const s = playingIn(t, V1, st.id);
+    const refresh = await t.click(t.people.admin, t.ids.make(GUILD, 'stats'));
+    expect(refresh.violations).toEqual([]);
+    expect(s.reportOpens).toEqual([t.people.admin.id]);
+    await t.click(t.people.admin, t.ids.make(GUILD, 'close'));
+    expect(s.reportCloses).toEqual([]);
+    const close = await t.click(t.people.admin, t.ids.make(GUILD, 'close', 'stats'));
+    expect(methods(close)).toEqual(['deferUpdate', 'deleteReply']);
+    expect(s.reportCloses).toEqual([t.people.admin.id]);
+  });
+
   it('Stop and Leave act on the session', async () => {
     const { t, st } = customServer();
     const s = playingIn(t, V1, st.id);
