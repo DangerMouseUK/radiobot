@@ -8,9 +8,10 @@
  * Opens a temporary database (migrations run) and seeds the template pack (the bot ships no
  * station packs; catalog/packs/_template is a complete example), loads it again on the pack worker
  * thread as an installed pack would be, checkpoints the database on the
- * worker thread, parses a small synthetic station list on the parse worker, encodes two seconds of
- * a synthetic tone to Ogg Opus with the live encoder's arguments, and checks a heartbeat with the
- * healthcheck script. Prints one line per step; exits 1 at the first step that fails.
+ * worker thread, parses a small synthetic station list on the parse worker, has the voice worker
+ * load the voice libraries and make a DAVE session, checks both voice encryption modes and that
+ * FFmpeg has libopus, encodes two seconds of a synthetic tone to Ogg Opus with the live encoder's
+ * arguments, and checks a heartbeat with the healthcheck script. Prints one line per step; exits 1 at the first step that fails.
  */
 import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';

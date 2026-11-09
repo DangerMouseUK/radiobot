@@ -30,7 +30,7 @@ pnpm typecheck      # tsc --noEmit (strict)
 pnpm lint           # biome check .
 pnpm test           # vitest run (unit + integration)
 pnpm build          # compile to dist/
-pnpm smoke          # check the build: database, the template pack, worker threads, an encode, the healthcheck
+pnpm smoke          # check the build: database, the template pack, worker threads, voice encryption, an encode, the healthcheck
 ```
 
 Other scripts:
@@ -46,11 +46,11 @@ Other scripts:
 | `node scripts/pack-author.ts …` | The pack and library authoring tools, run straight from source: `new` (start a pack from the template), `export` and `generate` (round-trip a pack through `intake.csv`), `build-library` (write a library's `index.json` and bundles) and `diff-check` (check a change to a published pack). The pack library's CI runs them; see [catalog/README.md](catalog/README.md#tools-for-writing-packs). |
 | `pnpm register-commands` | Register `/radio` now, even if nothing has changed, without starting the bot: in the servers whose IDs you pass, or else in `DISCORD_DEV_GUILD_ID` or every server the bot is in. Needs a build. |
 | `pnpm healthcheck` / `pnpm backup` | Check the heartbeat file / write a manual database backup. Need a build. |
-| `pnpm smoke` | After `pnpm build`: runs the compiled code with no network and no Discord. It opens a temporary database (migrations run), seeds the template pack and loads it again on the pack worker thread, checkpoints the database on the worker thread, parses a station list on the parse worker, encodes two seconds of a synthetic tone to Ogg Opus with the live encoder's arguments and checks a heartbeat with the healthcheck. Uses `FFMPEG_PATH` / `FFPROBE_PATH`, or `ffmpeg` / `ffprobe` on the `PATH`. CI also runs it inside the Docker image. |
+| `pnpm smoke` | After `pnpm build`: runs the compiled code with no network and no Discord. It opens a temporary database (migrations run), seeds the template pack and loads it again on the pack worker thread, checkpoints the database on the worker thread, parses a station list on the parse worker, starts the voice worker and has it load the voice libraries and make a DAVE session, checks both voice encryption modes (AES-256-GCM and XChaCha20-Poly1305), checks FFmpeg has `libopus`, encodes two seconds of a synthetic tone to Ogg Opus with the live encoder's arguments and checks a heartbeat with the healthcheck. Uses `FFMPEG_PATH` / `FFPROBE_PATH`, or `ffmpeg` / `ffprobe` on the `PATH`. CI also runs it inside the Docker image. |
 | `pnpm test:lifecycle` | Linux or macOS (where it needs `python3`): runs `install.sh` and `scripts/radio-bot.sh` (install, status, update, backup, restore, uninstall) against a throwaway Git origin and a fake `docker`. CI runs it on Linux, plus `shellcheck`, and on macOS with the system's bash 3.2. |
 | `docker build --target test -t radio-bot:test .` then `docker run --rm --network none radio-bot:test` | The integration tests on the Docker image's own Node and FFmpeg (the `test` stage shares the image's base; the published image is built without it). CI runs this. |
 
-Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`). `tests/integration/main-thread-budget.test.ts` plays a stream through the real pipeline while the heaviest commands, a large catalogue sync and a live install of a 2000-station pack run, and fails if the event loop stalls for 50 ms or more; if it fails, make the slow step cheaper rather than raising the bound. It prints each step's longest stretch of synchronous work, and Vitest runs it on its own, after every other test file, so the rest of the suite isn't measured with it.
+Tests live in `tests/unit/` (fast; no FFmpeg, and only loopback sockets) and `tests/integration/` (real FFmpeg against a local fixture server, `tests/integration/fixture-server.ts`). `tests/integration/main-thread-budget.test.ts` plays a stream through the real pipeline while the heaviest commands (with Discord's receiver reports read), a large catalogue sync, a live install and update of a 2000-station pack, the hourly clean-up and **Check all sources again** run, and fails if the event loop stalls for 50 ms or more; if it fails, make the slow step cheaper rather than raising the bound. It prints each step's longest stretch of synchronous work, and Vitest runs it on its own, after every other test file, so the rest of the suite isn't measured with it.
 
 CI also runs the typecheck and tests on the oldest supported Node (24.17.0), checks the relative links and anchors in the docs without going online, and scans the Docker image for high and critical vulnerabilities that have a fix (with Trivy, also weekly). Dependabot proposes dependency, action and base-image updates weekly.
 
@@ -79,19 +79,20 @@ Use a separate Discord application and a private test server for development. Ne
 
 This rule outranks every other rule and every feature. The live stream must play at the best quality the station offers, from the station through to Discord, with no audible hiccup, on a host with 1 vCPU and 1 GB of memory. Everything else must be written so that it cannot disturb the stream. If it runs cleanly on one core, it runs cleanly anywhere.
 
-Voice packets go out every 20 ms from Node's main thread. That's the same thread that runs every command, button, autocomplete, database query (`node:sqlite` is synchronous) and log call. While it is busy, packets leave late, and a gap of about 55 ms or more is heard as a small cut. So, in any code that runs in the bot process:
+Voice packets go out every 20 ms from Node's main thread. That's the same thread that runs every command, button, autocomplete, database query (`node:sqlite` is synchronous) and log call. While it is busy, packets leave late, and a gap of about 55 ms or more is heard as a small cut. The optional `VOICE_THREAD=worker` moves the voice connections and their packet timer to a worker thread of their own (falling back to the main thread if it can't start), but the default is still the main thread, and on one core the worker shares the CPU with it, so code must be correct in both modes. So, in any code that runs in the bot process:
 
 1. **Budget the main thread.** Keep each synchronous stretch of work under 10 ms on a 1-vCPU host; 20 ms or more is a bug. Batch, cache, page or cap anything that grows with the number of stations, sources, servers or stored history.
-2. **Move heavy work off it.** Run CPU-bound work in a child process at the lowest priority (`lowerPriority()` in `src/audio/ffmpeg.ts`), or split it into slices that yield to the event loop. Only the live encoder runs at normal priority. While streams play, do no large synchronous file I/O, compression, hashing or JSON work on the main thread.
+2. **Move heavy work off it.** Run CPU-bound work in a child process at the lowest priority (`lowerPriority()` in `src/audio/ffmpeg.ts`), or split it into slices that yield to the event loop. Only the live encoder runs at normal priority. Work that has to run in Node (checking a pack, parsing a station list, a database checkpoint) goes on a worker thread that lowers its own priority first (`lowerThreadPriority()`, Linux only). While streams play, do no large synchronous file I/O, compression, hashing or JSON work on the main thread.
 3. **Background work yields.**
-   - Run background jobs one at a time.
-   - Don't start them during a stream's first 30 s.
+   - Run background jobs one at a time, in the one background queue, in order.
+   - Don't start any during a stream's first 30 s. Automatic work nobody is waiting for (checks of other sources, scheduled syncs, the daily pack check, the hourly clean-up) waits until the newest stream has played for 3 minutes.
+   - A stream that starts stops any background check nobody is waiting for; it runs again later.
    - Back off when they fail.
    - Let anything a listener is waiting for interrupt them.
    - When in doubt, do less and do it later.
 4. **Keep the audio path minimal.** Per-packet code is constant-time, with no logging, I/O, `await` or per-packet allocation of its own. Add no buffering, no extra latency, no second encode and no processing (see [Live means live](#live-means-live)).
 5. **Bound memory.** Every cache, history and queue has a limit. The bot and one FFmpeg encoder must fit comfortably in 1 GB alongside the operating system.
-6. **Measure, don't guess.** Say in the pull request what new main-thread work costs and how you measured it. On a running bot, the event-loop delay and the late-packet count in `/radio stats` show the effect.
+6. **Measure, don't guess.** Say in the pull request what new main-thread work costs and how you measured it. On a running bot, the event-loop delay (the voice worker's own with `VOICE_THREAD=worker`), the late-packet count, memory clean-up, silence filled in and the packets lost on the way to Discord in `/radio stats` show the effect.
 7. **Logging costs nothing when it's off.** Never log per packet, and guard costly debug entries with `logger.isLevelEnabled('debug')`.
 
 ## Live means live
@@ -101,7 +102,7 @@ Every station is live, so the delay from the station to the listener must be as 
 1. **Every buffer earns its place, sized in time.** Give each buffer on the audio path a reason and a size in milliseconds. Today the only deliberate one is the cushion of the live queue (`src/voice/live-queue.ts`): a 1 s safety margin (for HLS, the segment length plus that margin, with segments counted at up to 12 s). The margin grows by 0.5 s after each network gap up to 3 s, and eases back after 30 calm minutes, at the next catch-up (for example the next voice resume). After a gap, playback goes on once the margin is back in hand (for HLS, with the next segment), as at the start. FFmpeg writes one 20 ms packet per Ogg page, and the queue takes each one as soon as it is written.
 2. **No hidden backlog.** Audio may only wait where it is measured. The live queue's depth, cushion, catch-ups, network gaps and drift are shown in `/radio stats`, and each drop is logged (`caught up with live`, or at the start, `started behind live by the cushion; dropped the connect burst`). A new buffer on the audio path is either measured there too or kept to a few packets.
 3. **Correct it as quietly as possible.** The station's connect burst is dropped before anything is heard, once it has landed, so a direct stream starts about 1 s behind live, plus Discord's own buffering (about 0.1 s), and a second look shortly after the start is a backstop for any late part of it. A backlog is dropped where listeners have just heard a break anyway (after a network gap or a voice resume), or, with no such break, once the queue's lowest point stays 3 s above the margin.
-4. **Never pay for a break twice.** Don't hold audio back to avoid skipping it after an interruption: the stream would stay behind live for the rest of the session. When Discord's voice connection resumes, the audio that couldn't be sent is dropped.
+4. **Never pay for a break twice.** Don't hold audio back to avoid skipping it after an interruption: the stream would stay behind live for the rest of the session. When Discord's voice connection resumes, the audio that couldn't be sent is dropped; nothing is paused or held. Each interruption and its end are logged at info level, as is every stop and leave, with its reason.
 5. **Never alter the audio to stay live.** No resampling or time-stretching. Clock drift is measured and reported, not corrected.
 
 ## Rules for particular areas
@@ -140,13 +141,13 @@ In the description, explain the effect on:
 
 In particular:
 
-- **No second lossy encode, and no default EQ, AGC, normalisation or limiting.** FFmpeg reads **stdin only** (`-protocol_whitelist pipe`). Never pass a URL, a user string or a new protocol to FFmpeg arguments.
+- **No second lossy encode, and no default EQ, AGC, normalisation or limiting.** Every source reaches `libopus` as float samples (`-sample_fmt flt`). FFmpeg reads **stdin only** (`-protocol_whitelist pipe`). Never pass a URL, a user string or a new protocol to FFmpeg arguments.
 - **Follow the source's bitrate, not the channel's.** In `maximum` mode the Opus target is the source's own bitrate (the measured figure first, then codec metadata, then the manifest or advertised one), rounded up to a whole kbps and capped at `MAX_OPUS_BITRATE_KBPS`; the cap is the target only when the source's bitrate is unknown. Below the re-encode floor of 128 kbps (96 kbps for mono), the floor is the target, because a second encode at a low rate throws away stereo and treble the source still has. Never encode below the source's rate or the floor, never pad a source above the floor beyond its own rate, and never cap it at the voice channel's bitrate setting (see `planEncoder()` and [docs/audio-quality.md](docs/audio-quality.md)).
 - **All network access goes through `SafeHttpClient`.** Don't add `fetch()`, `http.get()` or `net.connect()` calls that bypass the URL policy. The one exception is `tcpPing()` in `src/observability/netstats.ts`, which only connects to an address the policy has already checked.
 - **Identify truthfully.** Stream requests use FFmpeg's `Lavf/<version>` User-Agent. Don't add a browser User-Agent, a `Referer`, cookies or anything else meant to get past a host's access control; HTTP 401, 403 and 451 are reported as `ACCESS_DENIED`.
 - **Don't relax the identity or eligibility gates** without a discussion in an issue first. The correct station beats the best bitrate, and direct streams come before HLS whatever their bitrate. Bitrates of different codecs are never compared, except the one narrow case of measured AAC-LC (at least 96 kbps, and at least twice the rate) against HE-AAC; don't widen it without an issue first.
 - **No claim without evidence.** User-facing text says which kind of bitrate evidence it shows (`measured`, `codec-metadata`, `manifest`, `advertised` or `unknown`), and never claims "HD" or "lossless".
-- **No recording.** Probe samples are held in memory and then discarded. The bot is self-deafened and never receives voice audio.
+- **No recording.** Probe samples are held in memory and then discarded. The bot is self-deafened and never receives voice audio. The only thing it reads from the voice socket is Discord's report on the bot's own packets (an RTCP receiver report), and only while an admin has `/radio stats` open; it is never logged or stored.
 
 ### Tests and fixtures
 
@@ -166,7 +167,7 @@ In particular:
 - **Check permissions on the server side.** Every new command, component or form (modal) must call `authorize()` with the right capability (`read`, `control` or `admin`). Components and forms must use `ComponentIds`. Add a new action to `COMPONENT_ACTIONS` in `src/discord/components/custom-id.ts` (at most 7 characters); its argument can be at most 65 characters, which is the longest station ID, so every ID fits Discord's 100-character limit.
 - **Statistics stay private.** `/radio stats` and other diagnostics are ephemeral and admin-only; never post them publicly.
 - **`/radio` is full.** It uses all 25 top-level options Discord allows. A new command has to go into a subcommand group (as `queue`, `source` and `packs` do), or replace an existing subcommand.
-- **Admin means owner or Administrator.** Don't reintroduce admin roles or Manage Server checks without an issue first. Installation-wide decisions (identity reviews of pack sources, installing or updating packs) also need the user to be an operator: in `OPERATOR_USER_IDS`, or the application owner or a member of its team. The admin check still applies first.
+- **Admin means owner or Administrator.** Don't reintroduce admin roles or Manage Server checks without an issue first. Installation-wide decisions (identity reviews of pack sources; installing, updating or removing packs; **Check all sources again**) also need the user to be an operator: in `OPERATOR_USER_IDS`, or the application owner or a member of its team. The admin check still applies first.
 - **No telemetry.** `TELEMETRY_ENABLED=true` is refused at start-up; keep it that way.
 
 ### Installer and release changes

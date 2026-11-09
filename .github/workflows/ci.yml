@@ -31,7 +31,8 @@ jobs:
           FFMPEG_PATH: /usr/bin/ffmpeg
           FFPROBE_PATH: /usr/bin/ffprobe
       - run: pnpm build
-      # The compiled code: migrations, both worker threads, the encoder and the healthcheck, from dist/.
+      # The compiled code: migrations, the worker threads (voice included), voice encryption, the encoder
+      # and the healthcheck, from dist/.
       - name: Smoke test the build
         run: pnpm smoke
         env:
