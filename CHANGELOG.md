@@ -6,10 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-09
+
+The image's healthcheck no longer starts Node, and runs half as often, so it takes far less from the stream on a one-core host.
+
 ### Changed
 
 - **The image's healthcheck is a small shell script, run every 2 minutes.** Docker used to start Node inside the container every minute to read the heartbeat file: tens of megabytes of memory and a few hundred milliseconds of CPU each time, on top of about a tenth of a second of CPU that Docker itself spends, at normal priority, starting any check. On a one-core host with 1 GB of memory, that is a burst the stream has to share the processor with. The check is now `scripts/healthcheck.sh`, which applies the same rules (heartbeat under 90 s old, database working, connected to Discord, FFmpeg with `libopus`) and starts only `find`. It runs every 2 minutes instead of every minute, and every 5 s at start-up until it first passes (Docker 25 and later), and 2 failures in a row (instead of 3) mean unhealthy. So a problem still has to last at least 2 minutes to be reported, and a hung bot shows as `unhealthy` within about 2 to 5.5 minutes, at most a minute later than before. Nothing that ships with Radio Bot acts on the health status, and `compose.override.yaml` can change the interval or turn the check off; see [install-docker.md](docs/install-docker.md#healthcheck).
 - `radio-bot status` (and `pnpm healthcheck`) no longer loads the logging library just to read the heartbeat file.
+- discord.js is updated to 14.28.1, a bug-fix release: a channel's permissions worked out during an interaction now take that interaction into account.
 
 ## [1.5.0] - 2026-11-09
 
@@ -469,7 +474,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.0...v1.3.1
