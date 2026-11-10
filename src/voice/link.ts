@@ -44,6 +44,8 @@ export interface VoiceLinkEvents {
   interrupted: [info: VoiceInterruption];
   /** The voice connection is ready again after an interruption. */
   restored: [info: VoiceRestore];
+  /** The connection has not been ready for `VOICE_STUCK_MS` and the link is acting on it. */
+  recovering: [info: VoiceRecovery];
   /** The live queue dropped audio to stay near live (the connect burst, or a backlog after a break). */
   caughtUp: [event: LiveCatchUp];
   /**
@@ -73,6 +75,32 @@ export interface VoiceRestore {
   /** Audio the live queue dropped at the same moment, to get back to its cushion, ms. */
   caughtUpMs: number;
 }
+
+export interface VoiceRecovery {
+  /**
+   * `rejoin`: asks Discord again for a voice server on the same connection. `fresh`: the rejoin
+   * didn't bring it back either, so the link gives the connection up and the session joins from
+   * scratch (a new voice session, so a new voice server).
+   */
+  step: 'rejoin' | 'fresh';
+  /** The connection's status when the link acted (`signalling`, `connecting` …). */
+  status: string;
+  /** How long the connection had not been ready, ms. */
+  afterMs: number;
+}
+
+/**
+ * How long the voice connection may stay not ready after an interruption before the link steps in.
+ * The library's own resume is back within a second or two; a reconnect after a disconnect is
+ * given 2 s plus 15 s for Ready (`#onDisconnected`), and a first join 20 s (`connect`). 30 s lets
+ * all of those finish and still bounds the silence: without it, a resume whose rejoin Discord never
+ * answers (the library re-sends the gateway's voice join once and then waits in `signalling`
+ * with no timeout of its own) stays silent until something else happens, which can be hours.
+ */
+export const VOICE_STUCK_MS = 30_000;
+
+/** How long a rejoin is given to make the connection ready, ms. */
+const REJOIN_WAIT_MS = 15_000;
 
 /** How a stream is to be played. */
 export interface PlayOptions {
@@ -213,6 +241,8 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
   #expectingAudio = false;
   #reconnecting = false;
   #destroyed = false;
+  /** Fires `VOICE_STUCK_MS` into an interruption (and every `VOICE_STUCK_MS` after) while not ready. */
+  #stuckTimer: ReturnType<typeof setTimeout> | null = null;
   readonly #timing = new PacketTiming();
   /**
    * The interruption in progress. `skippedMs` adds up the time the player actually spent playing
@@ -284,8 +314,9 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
         this.#interrupted(state);
       } else if (ready && this.#outage) this.#restored();
       this.emit('changed');
-      if (state.status === VoiceConnectionStatus.Disconnected) void this.#reconnect(state);
-      else if (state.status === VoiceConnectionStatus.Destroyed) this.#markLost('destroyed');
+      if (state.status === VoiceConnectionStatus.Disconnected) {
+        void this.#reconnect(() => this.#onDisconnected(state));
+      } else if (state.status === VoiceConnectionStatus.Destroyed) this.#markLost('destroyed');
     };
     connection.on('stateChange', this.#onConnectionState);
     this.#onConnectionError = (error) => this.emit('connectionError', error);
@@ -302,6 +333,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     if (this.#destroyed) return;
     this.#destroyed = true;
     this.#expectingAudio = false;
+    this.#clearStuckTimer();
     try {
       this.player.stop(true);
     } catch {
@@ -339,16 +371,64 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
 
   /**
    * Single-flight: a failed rejoin sets Disconnected again, and every such transition during an
-   * outage would otherwise start another loop of its own.
+   * outage would otherwise start another loop of its own. The stuck-connection recovery runs
+   * through here too, so it never overlaps the reconnect loop.
    */
-  async #reconnect(state: { reason?: VoiceConnectionDisconnectReason; closeCode?: number }): Promise<void> {
+  async #reconnect(recover: () => Promise<void>): Promise<void> {
     if (this.#reconnecting || this.#destroyed) return;
     this.#reconnecting = true;
     try {
-      await this.#onDisconnected(state);
+      await recover();
     } finally {
       this.#reconnecting = false;
     }
+  }
+
+  /**
+   * Checks on the connection `VOICE_STUCK_MS` after it stopped being ready, then every
+   * `VOICE_STUCK_MS` while it still isn't. One timer per interruption, nothing per packet.
+   */
+  #armStuckTimer(): void {
+    this.#clearStuckTimer();
+    const timer = setTimeout(() => {
+      this.#stuckTimer = null;
+      if (this.#destroyed || this.ready || !this.#outage) return;
+      this.#armStuckTimer();
+      // A recovery already under way (the reconnect loop after a disconnect) is bounded: look again later.
+      if (this.#reconnecting) return;
+      void this.#reconnect(() => this.#onStuck());
+    }, VOICE_STUCK_MS);
+    timer.unref?.();
+    this.#stuckTimer = timer;
+  }
+
+  #clearStuckTimer(): void {
+    if (this.#stuckTimer) clearTimeout(this.#stuckTimer);
+    this.#stuckTimer = null;
+  }
+
+  /**
+   * The connection has been not ready for `VOICE_STUCK_MS` and nothing else is recovering it: it
+   * is waiting on Discord for something that isn't coming (typically a voice server after a
+   * failed resume). First a rejoin on the same connection; if that isn't ready within
+   * `REJOIN_WAIT_MS`, the link gives the connection up, and the session's handling of a lost link
+   * joins again from scratch, with its own backoff and notice if Discord's voice service is down.
+   */
+  async #onStuck(): Promise<void> {
+    const afterMs = () => Math.max(0, Date.now() - (this.#outage?.since ?? Date.now()));
+    this.emit('recovering', { step: 'rejoin', status: this.connection.state.status, afterMs: afterMs() });
+    this.connection.rejoin();
+    try {
+      await entersState(this.connection, VoiceConnectionStatus.Ready, REJOIN_WAIT_MS);
+      this.emit('reconnected');
+      return;
+    } catch {
+      /* still not ready */
+    }
+    if (this.#destroyed || this.connection.state.status === VoiceConnectionStatus.Destroyed) return;
+    this.emit('recovering', { step: 'fresh', status: this.connection.state.status, afterMs: afterMs() });
+    this.#markLost('reconnect_failed');
+    this.destroy();
   }
 
   async #onDisconnected(state: {
@@ -372,7 +452,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       if (this.#destroyed || this.connection.state.status === VoiceConnectionStatus.Destroyed) return;
       if (this.connection.state.status !== VoiceConnectionStatus.Disconnected) {
         try {
-          await entersState(this.connection, VoiceConnectionStatus.Ready, 15_000);
+          await entersState(this.connection, VoiceConnectionStatus.Ready, REJOIN_WAIT_MS);
           this.emit('reconnected');
           return;
         } catch {
@@ -383,7 +463,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
       }
       this.connection.rejoin();
       try {
-        await entersState(this.connection, VoiceConnectionStatus.Ready, 15_000);
+        await entersState(this.connection, VoiceConnectionStatus.Ready, REJOIN_WAIT_MS);
         this.emit('reconnected');
         return;
       } catch {
@@ -422,6 +502,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     this.#closeCode = null;
     const now = Date.now();
     this.#outage = { since: now, skippedMs: 0, mark: now };
+    this.#armStuckTimer();
     this.emit('interrupted', { status: state.status, resuming, closeCode });
   }
 
@@ -430,6 +511,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
    * past its cushion now, where the cut is hidden, rather than as a cut of its own later.
    */
   #restored(): void {
+    this.#clearStuckTimer();
     this.#account(this.player.state.status);
     const outage = this.#outage!;
     this.#outage = null;
@@ -618,6 +700,7 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
     if (this.#destroyed) return;
     this.#destroyed = true;
     this.#expectingAudio = false;
+    this.#clearStuckTimer();
     try {
       this.player.stop(true);
     } catch {

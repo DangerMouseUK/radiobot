@@ -89,8 +89,14 @@ vi.mock('@discordjs/voice', async (importOriginal) => {
 // The reconnect loop waits between attempts; tests don't need the real delays.
 vi.mock('../../src/shared/async.ts', () => ({ delay: () => Promise.resolve() }));
 
-const { DiscordVoiceLink, MAX_MISSED_FRAMES, discordVoiceLinkFactory, guardConnection, timePackets } =
-  await import('../../src/voice/link.ts');
+const {
+  DiscordVoiceLink,
+  MAX_MISSED_FRAMES,
+  VOICE_STUCK_MS,
+  discordVoiceLinkFactory,
+  guardConnection,
+  timePackets,
+} = await import('../../src/voice/link.ts');
 const { NetworkingStatusCode } = await import('@discordjs/voice');
 const { DEFAULT_TIMINGS } = await import('../../src/voice/session.ts');
 const { LiveQueue } = await import('../../src/voice/live-queue.ts');
@@ -457,12 +463,17 @@ describe('DiscordVoiceLink: losing the connection', () => {
       connection.setState({ status: 'signalling' });
     };
     const lost: string[] = [];
+    const recovering: unknown[] = [];
     link.on('lost', (reason) => lost.push(reason));
+    link.on('recovering', (info) => recovering.push(info));
     connection.setState({ status: 'disconnected', reason: 0 });
     for (let i = 0; i < 12 && lost.length === 0; i++) await vi.advanceTimersByTimeAsync(15_000);
     expect(lost).toEqual(['reconnect_failed']);
     expect(connection.rejoins).toBe(5);
     expect(connection.state.status).toBe('destroyed');
+    // The loop outlasts VOICE_STUCK_MS; the stuck-connection check leaves it alone rather than fight it.
+    expect(recovering).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('stops trying once the connection is destroyed elsewhere', async () => {
@@ -517,15 +528,16 @@ describe('DiscordVoiceLink: brief interruptions', () => {
     // The library hears the close first and moves the connection on from inside it.
     ws.once('close', () => connection.setState(resuming()));
     ws.emit('close', { code: 1006 });
-    // Nothing is held: the player is never paused, and the link sets no timer of its own.
+    // Nothing is held: the player is never paused. The link's one timer looks for a stuck connection.
     expect(status(link)).toBe('playing');
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(1);
     expect(interrupted).toEqual([{ status: 'connecting', resuming: true, closeCode: 1006 }]);
     await vi.advanceTimersByTimeAsync(120);
     connection.setState({ status: 'ready', networking: { state: { code: NetworkingStatusCode.Ready } } });
     expect(status(link)).toBe('playing');
     // No stream through the link here, so no queue to catch up.
     expect(restored).toEqual([{ afterMs: 120, skippedMs: 120, caughtUpMs: 0 }]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('skips nothing when nothing is playing, and says why the connection went', async () => {
@@ -610,6 +622,146 @@ describe('DiscordVoiceLink: brief interruptions', () => {
     first.emit('close', { code: 1000 });
     connection.setState({ status: 'signalling' });
     expect(interrupted).toEqual([expect.objectContaining({ closeCode: null })]);
+  });
+});
+
+describe('DiscordVoiceLink: a connection that never becomes ready again', () => {
+  /**
+   * A voice WebSocket resume that fails as the library sees it: the resume's own socket closes
+   * (1006 during Resuming), so it re-sends the gateway's voice join and waits in `signalling`
+   * for a voice server that Discord never sends. It sets no timer of its own while it waits.
+   */
+  async function stuckAfterResume() {
+    vi.useFakeTimers();
+    const { connection, link } = await connect();
+    const ws = new EventEmitter();
+    connection.setState({ status: 'ready', networking: { state: { code: NetworkingStatusCode.Ready, ws } } });
+    const events = {
+      interrupted: [] as unknown[],
+      recovering: [] as unknown[],
+      restored: [] as unknown[],
+      reconnected: 0,
+      lost: [] as string[],
+    };
+    link.on('interrupted', (info) => events.interrupted.push(info));
+    link.on('recovering', (info) => events.recovering.push(info));
+    link.on('restored', (info) => events.restored.push(info));
+    link.on('reconnected', () => events.reconnected++);
+    link.on('lost', (reason) => events.lost.push(reason));
+    ws.once('close', () =>
+      connection.setState({
+        status: 'connecting',
+        networking: { state: { code: NetworkingStatusCode.Resuming, ws: new EventEmitter() } },
+      }),
+    );
+    ws.emit('close', { code: 1006 });
+    connection.setState({ status: 'signalling' });
+    return { connection, link, events };
+  }
+
+  /** Discord doesn't answer a rejoin either: the connection stays in signalling. */
+  const unanswered = (connection: FakeConnection) => {
+    connection.rejoin = () => {
+      connection.rejoins++;
+      connection.setState({ status: 'signalling' });
+    };
+  };
+
+  it(`rejoins after ${VOICE_STUCK_MS / 1000} s, then gives the connection up for a fresh join`, async () => {
+    const { connection, events } = await stuckAfterResume();
+    unanswered(connection);
+    expect(events.interrupted).toEqual([{ status: 'connecting', resuming: true, closeCode: 1006 }]);
+    await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS - 1);
+    expect(connection.rejoins).toBe(0);
+    expect(events.recovering).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events.recovering).toEqual([{ step: 'rejoin', status: 'signalling', afterMs: VOICE_STUCK_MS }]);
+    expect(connection.rejoins).toBe(1);
+    expect(events.lost).toEqual([]);
+    await vi.advanceTimersByTimeAsync(15_000);
+    // The session's handling of a lost link joins again from scratch: a new voice session and server.
+    expect(events.recovering).toEqual([
+      { step: 'rejoin', status: 'signalling', afterMs: VOICE_STUCK_MS },
+      { step: 'fresh', status: 'signalling', afterMs: VOICE_STUCK_MS + 15_000 },
+    ]);
+    expect(events.lost).toEqual(['reconnect_failed']);
+    expect(connection.state.status).toBe('destroyed');
+    expect(connection.rejoins).toBe(1);
+    expect(events.restored).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('is back as soon as the rejoin is answered, and reports the whole outage', async () => {
+    const { connection, link, events } = await stuckAfterResume();
+    (link.player as unknown as { state: { status: string } }).state = { status: 'playing' };
+    link.player.emit('stateChange', { status: 'buffering' }, { status: 'playing' });
+    await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS);
+    expect(connection.rejoins).toBe(1);
+    expect(connection.state.status).toBe('ready');
+    expect(events.reconnected).toBe(1);
+    expect(events.lost).toEqual([]);
+    expect(events.restored).toEqual([{ afterMs: VOICE_STUCK_MS, skippedMs: VOICE_STUCK_MS, caughtUpMs: 0 }]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('leaves a quick resume alone', async () => {
+    vi.useFakeTimers();
+    const { connection, link } = await connect();
+    const recovering: unknown[] = [];
+    link.on('recovering', (info) => recovering.push(info));
+    for (let i = 0; i < 3; i++) {
+      connection.setState({
+        status: 'connecting',
+        networking: { state: { code: NetworkingStatusCode.Resuming } },
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      connection.setState({ status: 'ready', networking: { state: { code: NetworkingStatusCode.Ready } } });
+      await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS - 5_000);
+    }
+    await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS * 4);
+    expect(recovering).toEqual([]);
+    expect(connection.rejoins).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('times the whole outage, not each state the connection passes through', async () => {
+    const { connection, events } = await stuckAfterResume();
+    unanswered(connection);
+    await vi.advanceTimersByTimeAsync(20_000);
+    connection.setState({ status: 'connecting' });
+    await vi.advanceTimersByTimeAsync(5_000);
+    connection.setState({ status: 'signalling' });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(events.recovering).toEqual([{ step: 'rejoin', status: 'signalling', afterMs: VOICE_STUCK_MS }]);
+  });
+
+  it('stops looking once the link is detached or destroyed', async () => {
+    for (const end of ['detach', 'destroy'] as const) {
+      const { connection, link, events } = await stuckAfterResume();
+      link[end]();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS * 3);
+      expect(events.recovering).toEqual([]);
+      expect(connection.rejoins).toBe(0);
+      vi.useRealTimers();
+    }
+  });
+
+  it('follows up a moved bot whose reconnect stalls after the move', async () => {
+    vi.useFakeTimers();
+    const { connection, link } = await connect();
+    unanswered(connection);
+    let reconnected = 0;
+    const recovering: unknown[] = [];
+    link.on('reconnected', () => reconnected++);
+    link.on('recovering', (info) => recovering.push(info));
+    // 4014 and then connecting: moved, as the library sees it. But it never becomes ready.
+    connection.setState({ status: 'disconnected', reason: 0, closeCode: 4014 });
+    connection.setState({ status: 'connecting' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reconnected).toBe(1);
+    await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS);
+    expect(recovering).toEqual([{ step: 'rejoin', status: 'connecting', afterMs: VOICE_STUCK_MS }]);
   });
 });
 

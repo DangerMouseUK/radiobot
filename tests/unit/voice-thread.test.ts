@@ -518,6 +518,20 @@ describe('VoiceThread: audio', () => {
     await vi.waitFor(() => expect(seen).toEqual([interruption, restore]));
   });
 
+  it('passes on the steps the link in the worker takes to recover a stuck connection', async () => {
+    const h = harness();
+    const t = thread(h);
+    await t.start();
+    const link = await t.factory()(channel().channel);
+    const seen: unknown[] = [];
+    link.on('recovering', (info) => seen.push(info));
+    const rejoin = { step: 'rejoin', status: 'signalling', afterMs: 30_000 } as const;
+    const fresh = { step: 'fresh', status: 'signalling', afterMs: 45_000 } as const;
+    h.links[0]!.emit('recovering', rejoin);
+    h.links[0]!.emit('recovering', fresh);
+    await vi.waitFor(() => expect(seen).toEqual([rejoin, fresh]));
+  });
+
   it('tells the worker’s live queue how much audio arrives in one go', async () => {
     const h = harness();
     const t = thread(h);

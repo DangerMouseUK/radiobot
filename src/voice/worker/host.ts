@@ -222,6 +222,7 @@ export class VoiceHost {
     );
     link.on('interrupted', (info) => this.#post({ t: 'interrupted', linkId, info }));
     link.on('restored', (info) => this.#post({ t: 'restored', linkId, info }));
+    link.on('recovering', (info) => this.#post({ t: 'recovering', linkId, info }));
     link.on('caughtUp', (event) =>
       this.#post({ t: 'caughtUp', linkId, streamId: entry.stream?.id ?? 0, event }),
     );

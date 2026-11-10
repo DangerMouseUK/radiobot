@@ -4,7 +4,7 @@
  * the stream's ID, so anything still in flight for a link or stream that has gone is dropped.
  */
 import { RadioError, type ReasonCode } from '../../shared/errors.ts';
-import type { VoiceInterruption, VoiceLinkStats, VoiceRestore } from '../link.ts';
+import type { VoiceInterruption, VoiceLinkStats, VoiceRecovery, VoiceRestore } from '../link.ts';
 import type { LiveCatchUp } from '../live-queue.ts';
 import type { ReceiverReportReading } from '../receiver-report.ts';
 
@@ -101,6 +101,7 @@ export type FromWorker =
   | { t: 'connectionError'; linkId: number; error: SerializedError }
   | { t: 'interrupted'; linkId: number; info: VoiceInterruption }
   | { t: 'restored'; linkId: number; info: VoiceRestore }
+  | { t: 'recovering'; linkId: number; info: VoiceRecovery }
   /** The live queue of stream `streamId` dropped audio to stay near live. */
   | { t: 'caughtUp'; linkId: number; streamId: number; event: LiveCatchUp }
   | { t: 'flow'; linkId: number; streamId: number; paused: boolean }

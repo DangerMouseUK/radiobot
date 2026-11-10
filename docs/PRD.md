@@ -461,6 +461,7 @@ Each server has at most one authoritative pipeline. A process registry owns ever
 - A source playing stably for 30 s resets its failure streak.
 - Voice reconnects at about 2, 5, 10, 30 and 60 s, then a visible error, then every 2 minutes while playback is wanted.
 - While the voice connection is briefly not ready (for example while Discord's voice WebSocket resumes), the audio that can't be sent is dropped, so playback stays at the live edge; when the connection is ready again, the live queue drops any backlog past its cushion (§8.4). Holding the audio instead would leave the stream behind live for the rest of the session.
+- A voice connection still not ready 30 s after an interruption, with no reconnect under way, is rejoined; if it isn't ready 15 s later, it is given up and the voice reconnects above join again from scratch (a new voice server).
 - With no eligible source, retry after 15, 30 and 60 s, then every 2 minutes while playback is wanted.
 - After `/radio stop`, leave the channel after 5 minutes unless the idle mode is 24/7.
 
