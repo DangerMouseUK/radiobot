@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **A voice connection that never became ready again after an interruption no longer stays silent.** When the voice WebSocket of a resume closed as well, the voice library asked Discord to rejoin and then waited for an answer with no time limit. If Discord never answered, the bot went on believing it was playing, with the station still running, and sent nothing until the connection came back by itself, which could take hours. Now, 30 s into any interruption, a connection that still isn't ready is rejoined; if that hasn't worked 15 s later, the bot gives the connection up and joins the voice channel again from scratch, so Discord assigns a new voice server, with the usual reconnect delays and notice if Discord's voice service is down. Each step is logged as a warning (`voice connection stuck; rejoining`, `voice connection still stuck; joining again from scratch`). A quick resume, a reconnect already under way and a move by a moderator are left to finish as before. It works the same with `VOICE_THREAD=worker`, and costs one timer per interruption, nothing per packet.
+
 ## [1.5.1] - 2026-11-09
 
 The image's healthcheck no longer starts Node, and runs half as often, so it takes far less from the stream on a one-core host.

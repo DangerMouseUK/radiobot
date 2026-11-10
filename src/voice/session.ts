@@ -760,6 +760,16 @@ export class GuildSession {
     // `skippedMs`: audio the player dropped while the connection was down (playback stays live);
     // `caughtUpMs`: the backlog the live queue dropped at the same moment, back to its cushion.
     link.on('restored', (info) => this.#log.info(info, 'voice connection ready again'));
+    // Not ready for VOICE_STUCK_MS (30 s) after an interruption: one line per step, at most two per outage.
+    link.on('recovering', (info) => {
+      this.#d.metrics.inc('voice.stuck');
+      this.#log.warn(
+        info,
+        info.step === 'rejoin'
+          ? 'voice connection stuck; rejoining'
+          : 'voice connection still stuck; joining again from scratch',
+      );
+    });
     // At most a few per stream (the start and its settle, then network gaps, resumes, a fast station clock),
     // never per packet. Each one is a moment the listener skipped ahead, so worth seeing at info.
     link.on('caughtUp', (e) => {

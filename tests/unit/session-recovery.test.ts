@@ -302,6 +302,21 @@ describe('GuildSession: connection state', () => {
     expect(t.session.state).toBe('PLAYING');
   });
 
+  it('warns once per step when the link recovers a voice connection that stays stuck', async () => {
+    const logs: Array<Record<string, unknown>> = [];
+    const t = setup({ logs });
+    await t.session.play('mypack:my-station', 'voice-1', 'u1');
+    t.links[0]!.emit('interrupted', { status: 'connecting', resuming: true, closeCode: 1006 });
+    t.links[0]!.emit('recovering', { step: 'rejoin', status: 'signalling', afterMs: 30_000 });
+    t.links[0]!.emit('recovering', { step: 'fresh', status: 'signalling', afterMs: 45_000 });
+    const stuck = logs.filter((l) => String(l.msg).includes('stuck'));
+    expect(stuck).toMatchObject([
+      { level: 40, msg: 'voice connection stuck; rejoining', status: 'signalling', afterMs: 30_000 },
+      { level: 40, msg: 'voice connection still stuck; joining again from scratch', afterMs: 45_000 },
+    ]);
+    expect(t.metrics.get('voice.stuck')).toBe(2);
+  });
+
   it('logs each catch-up with live at info level, and counts it', async () => {
     const logs: Array<Record<string, unknown>> = [];
     const t = setup({ logs });

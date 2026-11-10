@@ -443,6 +443,7 @@ export class VoiceThread {
       case 'connectionError':
       case 'interrupted':
       case 'restored':
+      case 'recovering':
       case 'caughtUp':
       case 'flow':
       case 'report':
@@ -536,6 +537,7 @@ type LinkMessage = Extract<
       | 'connectionError'
       | 'interrupted'
       | 'restored'
+      | 'recovering'
       | 'caughtUp'
       | 'flow'
       | 'report';
@@ -715,6 +717,9 @@ export class WorkerVoiceLink extends EventEmitter<VoiceLinkEvents> implements Vo
         return;
       case 'restored':
         this.emit('restored', msg.info);
+        return;
+      case 'recovering':
+        this.emit('recovering', msg.info);
         return;
       case 'caughtUp':
         // A catch-up of a stream the session has since replaced or stopped is old news.
