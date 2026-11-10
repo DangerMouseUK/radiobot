@@ -4,7 +4,7 @@
 name: radio-bot
 services:
   radio-bot:
-    image: ${RADIO_BOT_IMAGE:-ghcr.io/dangermouseuk/radio-bot:1.5.1}
+    image: ${RADIO_BOT_IMAGE:-ghcr.io/dangermouseuk/radio-bot:1.5.2}
     build: .
     container_name: radio-bot
     restart: unless-stopped
