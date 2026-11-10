@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-11-10
+
+A voice connection that never becomes ready again after an interruption is now recovered within about a minute, instead of leaving the bot silent while it believes it is playing.
+
 ### Fixed
 
 - **A voice connection that never became ready again after an interruption no longer stays silent.** When the voice WebSocket of a resume closed as well, the voice library asked Discord to rejoin and then waited for an answer with no time limit. If Discord never answered, the bot went on believing it was playing, with the station still running, and sent nothing until the connection came back by itself, which could take hours. Now, 30 s into any interruption, a connection that still isn't ready is rejoined; if that hasn't worked 15 s later, the bot gives the connection up and joins the voice channel again from scratch, so Discord assigns a new voice server, with the usual reconnect delays and notice if Discord's voice service is down. Each step is logged as a warning (`voice connection stuck; rejoining`, `voice connection still stuck; joining again from scratch`). A quick resume, a reconnect already under way and a move by a moderator are left to finish as before. It works the same with `VOICE_THREAD=worker`, and costs one timer per interruption, nothing per packet.
@@ -478,7 +482,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.3.1...v1.4.0
