@@ -6,9 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-11-20
+
+A voice connection stuck after a failed resume comes back about 15 s sooner, and the voice channel status is set again after Discord refuses a request.
+
 ### Changed
 
 - Tests and docs use made-up example names throughout: the demo pack's stations, a stream title and the voice-server example. The container platform guide describes kinds of platform instead of naming hosting providers.
+- The Docker image is built on Node 24.22.3 (was 24.22.2).
 
 ### Fixed
 
@@ -491,7 +496,8 @@ The following PRD acceptance items (§17, §20) are **open** for this release:
 - Encoding above the voice channel's bitrate setting (up to 510 kbps): the bitrate received by a listener's client has not been measured.
 - The rights and branding review (PRD §14) and the licence review of the redistributed image's binaries (FFmpeg) have not been done.
 
-[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.2...HEAD
+[Unreleased]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.3...HEAD
+[1.5.3]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.2...v1.5.3
 [1.5.2]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/DangerMouseUK/radiobot/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/DangerMouseUK/radiobot/compare/v1.4.0...v1.5.0
