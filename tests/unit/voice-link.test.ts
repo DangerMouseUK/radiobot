@@ -667,27 +667,41 @@ describe('DiscordVoiceLink: a connection that never becomes ready again', () => 
     };
   };
 
-  it(`rejoins after ${VOICE_STUCK_MS / 1000} s, then gives the connection up for a fresh join`, async () => {
+  it(`joins again from scratch at ${VOICE_STUCK_MS / 1000} s when stuck waiting for a voice server`, async () => {
     const { connection, events } = await stuckAfterResume();
-    unanswered(connection);
     expect(events.interrupted).toEqual([{ status: 'connecting', resuming: true, closeCode: 1006 }]);
     await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS - 1);
-    expect(connection.rejoins).toBe(0);
     expect(events.recovering).toEqual([]);
+    expect(events.lost).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);
-    expect(events.recovering).toEqual([{ step: 'rejoin', status: 'signalling', afterMs: VOICE_STUCK_MS }]);
+    // The library has already sent the voice join and Discord never answered it: re-sending the same
+    // join would only wait another 15 s. The session's handling of a lost link joins again from
+    // scratch: a new voice session and server.
+    expect(events.recovering).toEqual([{ step: 'fresh', status: 'signalling', afterMs: VOICE_STUCK_MS }]);
+    expect(events.lost).toEqual(['reconnect_failed']);
+    expect(connection.state.status).toBe('destroyed');
+    expect(connection.rejoins).toBe(0);
+    expect(events.restored).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejoins first when the library is not already waiting on Discord, then joins from scratch', async () => {
+    const { connection, events } = await stuckAfterResume();
+    unanswered(connection);
+    // A voice server came, but the new connection never became ready.
+    connection.setState({ status: 'connecting' });
+    await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS);
+    expect(events.recovering).toEqual([{ step: 'rejoin', status: 'connecting', afterMs: VOICE_STUCK_MS }]);
     expect(connection.rejoins).toBe(1);
     expect(events.lost).toEqual([]);
     await vi.advanceTimersByTimeAsync(15_000);
-    // The session's handling of a lost link joins again from scratch: a new voice session and server.
     expect(events.recovering).toEqual([
-      { step: 'rejoin', status: 'signalling', afterMs: VOICE_STUCK_MS },
+      { step: 'rejoin', status: 'connecting', afterMs: VOICE_STUCK_MS },
       { step: 'fresh', status: 'signalling', afterMs: VOICE_STUCK_MS + 15_000 },
     ]);
     expect(events.lost).toEqual(['reconnect_failed']);
     expect(connection.state.status).toBe('destroyed');
     expect(connection.rejoins).toBe(1);
-    expect(events.restored).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -695,6 +709,7 @@ describe('DiscordVoiceLink: a connection that never becomes ready again', () => 
     const { connection, link, events } = await stuckAfterResume();
     (link.player as unknown as { state: { status: string } }).state = { status: 'playing' };
     link.player.emit('stateChange', { status: 'buffering' }, { status: 'playing' });
+    connection.setState({ status: 'connecting' });
     await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS);
     expect(connection.rejoins).toBe(1);
     expect(connection.state.status).toBe('ready');
@@ -732,7 +747,11 @@ describe('DiscordVoiceLink: a connection that never becomes ready again', () => 
     await vi.advanceTimersByTimeAsync(5_000);
     connection.setState({ status: 'signalling' });
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(events.recovering).toEqual([{ step: 'rejoin', status: 'signalling', afterMs: VOICE_STUCK_MS }]);
+    expect(events.recovering).toEqual([{ step: 'fresh', status: 'signalling', afterMs: VOICE_STUCK_MS }]);
+    // One step, once: the link is gone, and so is its timer.
+    await vi.advanceTimersByTimeAsync(VOICE_STUCK_MS * 3);
+    expect(events.recovering).toHaveLength(1);
+    expect(connection.rejoins).toBe(0);
   });
 
   it('stops looking once the link is detached or destroyed', async () => {

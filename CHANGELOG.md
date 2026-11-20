@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **A voice connection stuck after a failed resume is back about 15 s sooner.** When Discord never answered the voice library's request to rejoin, the bot first sent the same request again and waited another 15 s before joining the voice channel again from scratch. It now joins again from scratch as soon as the connection has been stuck for 30 s: in one observed outage, the silence would have been about 33 s instead of 48 s. A connection stuck in any other way (for example after a moderator moved the bot) is still rejoined on the same connection first. The log line for that step is now `voice connection stuck; joining again from scratch`. It works the same with `VOICE_THREAD=worker`, and still costs one timer per interruption, nothing per packet.
+- **The voice channel status is set again after a failed request.** A request Discord refused (for example one sent while the bot was still joining the channel again after a voice outage) was remembered as sent, so the status stayed blank until the song or show changed. The bot now tries again at the next update, waiting longer each time if Discord keeps refusing (at most about 10 minutes), and logs only the first failure in a row as a warning (`could not set the voice channel status; will try again`).
+
 ## [1.5.2] - 2026-11-10
 
 A voice connection that never becomes ready again after an interruption is now recovered within about a minute, instead of leaving the bot silent while it believes it is playing.

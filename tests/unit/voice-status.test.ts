@@ -155,17 +155,75 @@ describe('voice channel status updater', () => {
     expect(t.sent).toEqual([['voice-1', '📻 Demo Radio']]);
   });
 
-  it('does not retry a failed request in a loop', async () => {
+  it('sets the status at the next update when the first request failed', async () => {
+    // For example, sent while the bot was still joining the channel again after a voice outage.
     const t = setup({ fail: true });
     t.set([status()]);
     await t.u.update();
-    await t.u.update();
+    expect(t.sent).toEqual([]);
     t.failing(false);
     await t.u.update();
-    expect(t.sent).toEqual([]);
+    expect(t.sent).toEqual([['voice-1', '📻 Demo Radio']]);
+    // Then only changes again.
+    await t.u.update();
+    expect(t.sent).toHaveLength(1);
+  });
+
+  it('backs off from a channel that keeps refusing, and starts afresh once one succeeds', async () => {
+    let tries = 0;
+    const tried: number[] = [];
+    const refuse = { on: true };
+    let track: string | null = null;
+    const u = new VoiceStatusUpdater({
+      sessions: () => [status({ nowPlaying: track ? meta(track) : null })],
+      station: () => station('Demo Radio'),
+      enabled: () => true,
+      allowed: () => true,
+      send: async () => {
+        tries++;
+        if (refuse.on) throw new Error('Missing Permissions');
+      },
+      logger: silentLogger(),
+    });
+    for (let update = 1; update <= 95; update++) {
+      const before = tries;
+      await u.update();
+      if (tries > before) tried.push(update);
+    }
+    // Next update, then waiting 1, 3, 7, 15 and at most 31 updates between tries.
+    expect(tried).toEqual([1, 2, 4, 8, 16, 32, 64]);
+    refuse.on = false;
+    await u.update();
+    expect(tries).toBe(8);
+    // Set: nothing more to send until something changes.
+    await u.update();
+    expect(tries).toBe(8);
+    // No wait is left over: after a new failure, the next update tries again.
+    refuse.on = true;
+    track = 'A';
+    await u.update();
+    await u.update();
+    expect(tries).toBe(10);
+  });
+
+  it('clears a channel whose last request failed when the bot leaves it', async () => {
+    const t = setup();
+    t.set([status()]);
+    await t.u.update();
+    t.failing(true);
     t.set([status({ nowPlaying: meta('A') })]);
     await t.u.update();
-    expect(t.sent).toEqual([['voice-1', '📻 Demo Radio · A']]);
+    // The channel may still show the earlier status: leaving clears it.
+    t.failing(false);
+    await t.u.clear('g1', 'voice-1');
+    expect(t.sent).toEqual([
+      ['voice-1', '📻 Demo Radio'],
+      ['voice-1', ''],
+    ]);
+    // A clear forgets the wait as well.
+    t.set([status({ channelId: 'voice-2' })]);
+    await t.u.update();
+    expect(t.sent.at(-1)).toEqual(['voice-2', '📻 Demo Radio']);
   });
 
   it('never sets a status for a server that left while an earlier request was waiting', async () => {

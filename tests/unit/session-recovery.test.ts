@@ -312,7 +312,7 @@ describe('GuildSession: connection state', () => {
     const stuck = logs.filter((l) => String(l.msg).includes('stuck'));
     expect(stuck).toMatchObject([
       { level: 40, msg: 'voice connection stuck; rejoining', status: 'signalling', afterMs: 30_000 },
-      { level: 40, msg: 'voice connection still stuck; joining again from scratch', afterMs: 45_000 },
+      { level: 40, msg: 'voice connection stuck; joining again from scratch', afterMs: 45_000 },
     ]);
     expect(t.metrics.get('voice.stuck')).toBe(2);
   });
