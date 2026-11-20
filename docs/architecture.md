@@ -204,7 +204,7 @@ There are no other services. State lives in one SQLite file, plus the installed 
 - `DiscordVoiceLink.stats()`: voice endpoint and WebSocket ping (the voice library no longer measures a UDP round trip), sampled every 5 s into a `LatencySeries` whose jitter is the mean absolute difference between neighbouring samples, and packets sent, with the late-packet count and longest gap from `PacketTiming`.
 - `netstats.ts` helpers:
   - `tcpPing()` makes 5 TCP handshakes to the exact stream IP, which is re-checked against the URL policy first. It sends no HTTP request.
-  - `regionHint()` turns host-name conventions (`n01-eu2.example.net` → Europe, `c-lhr05` → London) into a best-effort label, shown as "guessed from the host name".
+  - `regionHint()` turns host-name conventions (`n01-eu2.example.net` → Europe, `c-fra03` → Frankfurt) into a best-effort label, shown as "guessed from the host name".
 
 Each enabled pack's coverage counts (every station and source of the pack) come from `SourceService.coverageByProvider()`, kept for at most 60 s, and each pack is read in a turn of the event loop of its own, so the panel's cost doesn't add up into one stretch however many packs are installed. `/radio list` adds up the same per-pack counts and counts only the server's custom stations on the spot.
 

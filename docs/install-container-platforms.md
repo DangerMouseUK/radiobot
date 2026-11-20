@@ -2,7 +2,7 @@
 
 Radio Bot ships a standard `Dockerfile`, and every release publishes a ready-made image. Any hosting platform that can run a container *and* keep it running all the time can host it. This page lists what such a platform must provide, and how the common kinds of platform compare. For your own machine, use [install.md](install.md) (the beginner's installer), [install-docker.md](install-docker.md) (Docker Compose by hand) or [install-linux.md](install-linux.md) (no containers).
 
-> Status: none of the platforms named here have been tested with Radio Bot. The requirements below come from how the bot works, and the platform notes describe each platform's documented model. Check the current documentation of the platform you choose.
+> Status: no hosting platform has been tested with Radio Bot. The requirements below come from how the bot works, and the platform notes describe how each kind of platform commonly works. Check the current documentation of the platform you choose.
 
 ## What the platform must provide
 
@@ -24,16 +24,16 @@ The image runs as a non-root user and writes only to `/app/data` and `/tmp`.
 
 Any platform that runs a long-lived container **and** attaches a persistent volume meets every requirement. Deploy from the published image (or the repository's `Dockerfile`), mount a volume at `/app/data`, set the environment variables, and don't configure an HTTP port or HTTP health check.
 
-### DigitalOcean App Platform
+### App platforms without persistent volumes
 
-Deploy the repository as a **Worker** component built from the `Dockerfile`; a worker doesn't need an HTTP port. Two limits to know:
+Some app platforms run a container as a **worker** (or background) component built from the `Dockerfile`, with no HTTP port, but give it no persistent volume. Two limits to know:
 
-- **No persistent volumes.** App Platform's filesystem is temporary, so the SQLite database is lost whenever the app redeploys or restarts. Per-server settings made with `/radio config`, favourites, custom stations and installed station packs would all reset. That is fine for trying it out, but not for a server people rely on. For lasting settings, run the container on a Droplet with Docker ([install-docker.md](install-docker.md)) or directly on Linux ([install-linux.md](install-linux.md)).
+- **No persistent volumes.** The app's filesystem is temporary, so the SQLite database is lost whenever the app redeploys or restarts. Per-server settings made with `/radio config`, favourites, custom stations and installed station packs would all reset. That is fine for trying it out, but not for a server people rely on. For lasting settings, run the container on a virtual server with Docker ([install-docker.md](install-docker.md)) or directly on Linux ([install-linux.md](install-linux.md)).
 - **Confirm outbound UDP** for Discord voice on your plan before committing.
 
-### Vercel and other serverless or function platforms
+### Serverless and function platforms
 
-**Not supported.** Vercel runs serverless functions that start per request and have time limits. They can't keep a Discord connection or a voice connection open, or run FFmpeg continuously, and they have no persistent disk. The same applies to other function-as-a-service platforms, for example AWS Lambda or Cloudflare Workers.
+**Not supported.** A serverless function host runs functions that start per request and have time limits. They can't keep a Discord connection or a voice connection open, or run FFmpeg continuously, and they have no persistent disk. The same applies to every function-as-a-service platform, including edge-function hosts.
 
 ## Generic deployment steps
 

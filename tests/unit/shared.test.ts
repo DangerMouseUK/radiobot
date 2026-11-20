@@ -161,7 +161,7 @@ describe('errors', () => {
 describe('text helpers', () => {
   it('normalises names for matching (case, diacritics, ampersands, apostrophes, punctuation)', () => {
     expect(normalizeName('  Demo Chic & Chill ')).toBe('demo chic and chill');
-    expect(normalizeName("Maximum 90's")).toBe('maximum 90s');
+    expect(normalizeName("Peak 90's")).toBe('peak 90s');
     expect(normalizeName('Demo HÏ Island')).toBe('demo hi island');
     expect(normalizeName('R&B / Soul!')).toBe('r and b soul');
     expect(normalizeName('---')).toBe('');
