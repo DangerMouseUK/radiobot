@@ -38,7 +38,7 @@ Some app platforms run a container as a **worker** (or background) component bui
 ## Generic deployment steps
 
 1. Create your Discord application and bot token ([install.md → Create your Discord bot](install.md#1-create-your-discord-bot)).
-2. Create a **worker** or **background** service from the published image, `ghcr.io/dangermouseuk/radio-bot:<version>` (for example `1.5.2`), or from this repository's `Dockerfile`.
+2. Create a **worker** or **background** service from the published image, `ghcr.io/dangermouseuk/radio-bot:<version>` (for example `1.5.3`), or from this repository's `Dockerfile`.
 3. Attach a **persistent volume at `/app/data`**, if the platform has them.
 4. Set `DISCORD_TOKEN` (as a secret) and `DISCORD_APPLICATION_ID`. Leave `DATABASE_PATH`, `FFMPEG_PATH` and `FFPROBE_PATH` unset; the image's defaults are correct.
 5. Do **not** expose a port or configure an HTTP health check. The image has its own `HEALTHCHECK` for platforms that use Docker health checks: a small shell script (`sh /app/scripts/healthcheck.sh`) that reads the bot's heartbeat file every 2 minutes, at the lowest CPU priority so it can't delay the audio. If your platform asks for a command health check, use that one, and keep it as infrequent.
