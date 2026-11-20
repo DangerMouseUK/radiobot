@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Tests and docs use made-up example names throughout: the demo pack's stations, a stream title and the voice-server example. The container platform guide describes kinds of platform instead of naming hosting providers.
+
 ## [1.5.2] - 2026-11-10
 
 A voice connection that never becomes ready again after an interruption is now recovered within about a minute, instead of leaving the bot silent while it believes it is playing.

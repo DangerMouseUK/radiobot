@@ -198,7 +198,7 @@ const AREAS: Array<[RegExp, string]> = [
 
 /**
  * Best-effort location hint from a host name (e.g. "n04-eu1.stream.example.net" → Europe,
- * "c-lhr05-1a2b.discord.media" → London). Host names are a convention, not a guarantee.
+ * "c-fra03-1a2b.discord.media" → Frankfurt). Host names are a convention, not a guarantee.
  */
 export function regionHint(host: string | null | undefined): string | null {
   if (!host) return null;

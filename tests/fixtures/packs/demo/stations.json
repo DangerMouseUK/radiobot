@@ -38,10 +38,10 @@
       "catalogueLastSeen": "2026-11-03"
     },
     {
-      "slug": "maximum",
-      "displayName": "Maximum",
+      "slug": "peak",
+      "displayName": "Peak",
       "externalId": "D0004",
-      "aliases": ["Max Radio"],
+      "aliases": ["Peak Radio"],
       "category": "classics",
       "tags": ["dance", "eurodance"],
       "order": 4,
@@ -134,10 +134,10 @@
       "catalogueLastSeen": "2026-11-03"
     },
     {
-      "slug": "maximum-90s",
-      "displayName": "Maximum 90's",
+      "slug": "peak-90s",
+      "displayName": "Peak 90's",
       "externalId": "D0012",
-      "aliases": ["Maximum 90s", "Maximum Nineties"],
+      "aliases": ["Peak 90s", "Peak Nineties"],
       "category": "classics",
       "tags": ["90s", "eurodance"],
       "order": 12,

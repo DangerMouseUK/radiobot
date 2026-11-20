@@ -58,7 +58,7 @@ class FakeLink extends EventEmitter<VoiceLinkEvents> implements VoiceLink {
   stats() {
     return {
       wsPingMs: 20,
-      endpoint: 'c-lhr05-test.discord.media:443',
+      endpoint: 'c-fra03-test.discord.media:443',
       packetsPlayed: 0,
       packetTiming: { late: 2, worstGapMs: 57, recent: [{ at: 1_700_000_000_000, gapMs: 57 }] },
       silenceMs: 40,
@@ -732,7 +732,7 @@ describe('GuildSession', () => {
     const t = setup();
     await t.session.play('demo:demo-radio', 'voice-1', null);
     const live = t.session.liveStats();
-    expect(live.voice?.endpoint).toBe('c-lhr05-test.discord.media:443');
+    expect(live.voice?.endpoint).toBe('c-fra03-test.discord.media:443');
     expect(live.output?.targetKbps).toBe(128);
     expect(live.connectedSince).not.toBeNull();
     expect(live.input?.finalHost).toBe('n01-eu1.example.com');

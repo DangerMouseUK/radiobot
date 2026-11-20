@@ -161,7 +161,7 @@ describe('packed audio and ICY metadata', () => {
     expect(parseIcyStreamTitle("StreamTitle='Guns N' Roses - Paradise City';")).toBe(
       "Guns N' Roses - Paradise City",
     );
-    expect(parseIcyStreamTitle("StreamTitle='Hakimakli Live';")).toBe('Hakimakli Live');
+    expect(parseIcyStreamTitle("StreamTitle='My DJ Live';")).toBe('My DJ Live');
     expect(parseIcyStreamTitle("StreamTitle='The Killers - Mr. Brightside';")).toBe(
       'The Killers - Mr. Brightside',
     );

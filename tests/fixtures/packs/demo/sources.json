@@ -93,9 +93,9 @@
       "disabledReason": null
     },
     {
-      "id": "maximum-mp3",
-      "station": "maximum",
-      "url": "https://stream.example.org/maximum.mp3",
+      "id": "peak-mp3",
+      "station": "peak",
+      "url": "https://stream.example.org/peak.mp3",
       "label": "Direct MP3",
       "priority": 10,
       "transportHint": "http-continuous",
@@ -197,9 +197,9 @@
       "disabledReason": null
     },
     {
-      "id": "maximum-90s-mp3",
-      "station": "maximum-90s",
-      "url": "https://stream.example.org/maximum-90s.mp3",
+      "id": "peak-90s-mp3",
+      "station": "peak-90s",
+      "url": "https://stream.example.org/peak-90s.mp3",
       "label": "Direct MP3",
       "priority": 10,
       "transportHint": "http-continuous",
