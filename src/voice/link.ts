@@ -78,9 +78,10 @@ export interface VoiceRestore {
 
 export interface VoiceRecovery {
   /**
-   * `rejoin`: asks Discord again for a voice server on the same connection. `fresh`: the rejoin
-   * didn't bring it back either, so the link gives the connection up and the session joins from
-   * scratch (a new voice session, so a new voice server).
+   * `rejoin`: asks Discord for a voice server on the same connection (only when the library isn't
+   * already waiting for one). `fresh`: the link gives the connection up and the session joins from
+   * scratch (a new voice session, so a new voice server); straight away when the connection is
+   * stuck in `signalling`, or after a rejoin that didn't bring it back.
    */
   step: 'rejoin' | 'fresh';
   /** The connection's status when the link acted (`signalling`, `connecting` …). */
@@ -96,6 +97,7 @@ export interface VoiceRecovery {
  * all of those finish and still bounds the silence: without it, a resume whose rejoin Discord never
  * answers (the library re-sends the gateway's voice join once and then waits in `signalling`
  * with no timeout of its own) stays silent until something else happens, which can be hours.
+ * A resume that does get somewhere is back in well under a second, so 30 s never cuts across one.
  */
 export const VOICE_STUCK_MS = 30_000;
 
@@ -409,23 +411,34 @@ export class DiscordVoiceLink extends EventEmitter<VoiceLinkEvents> implements V
 
   /**
    * The connection has been not ready for `VOICE_STUCK_MS` and nothing else is recovering it: it
-   * is waiting on Discord for something that isn't coming (typically a voice server after a
-   * failed resume). First a rejoin on the same connection; if that isn't ready within
-   * `REJOIN_WAIT_MS`, the link gives the connection up, and the session's handling of a lost link
-   * joins again from scratch, with its own backoff and notice if Discord's voice service is down.
+   * is waiting on Discord for something that isn't coming.
+   *
+   * In `signalling` (the usual case: a resume whose own socket closed or was refused), the library
+   * has already sent the gateway's voice join and is waiting for a voice server. A `rejoin()` would
+   * only send the same join again, and Discord didn't answer the first, so the link gives the
+   * connection up at once and the session's handling of a lost link joins again from scratch (a new
+   * voice session, so a new voice server), with its own backoff and notice if Discord's voice
+   * service is down.
+   *
+   * In any other status (typically `connecting`: the library has a voice server, but its networking
+   * never became ready, as after a move whose reconnect stalls) the library hasn't asked Discord for
+   * anything, so a rejoin on the same connection is a real step and doesn't leave the channel. If
+   * that isn't ready within `REJOIN_WAIT_MS`, the link gives the connection up as above.
    */
   async #onStuck(): Promise<void> {
     const afterMs = () => Math.max(0, Date.now() - (this.#outage?.since ?? Date.now()));
-    this.emit('recovering', { step: 'rejoin', status: this.connection.state.status, afterMs: afterMs() });
-    this.connection.rejoin();
-    try {
-      await entersState(this.connection, VoiceConnectionStatus.Ready, REJOIN_WAIT_MS);
-      this.emit('reconnected');
-      return;
-    } catch {
-      /* still not ready */
+    if (this.connection.state.status !== VoiceConnectionStatus.Signalling) {
+      this.emit('recovering', { step: 'rejoin', status: this.connection.state.status, afterMs: afterMs() });
+      this.connection.rejoin();
+      try {
+        await entersState(this.connection, VoiceConnectionStatus.Ready, REJOIN_WAIT_MS);
+        this.emit('reconnected');
+        return;
+      } catch {
+        /* still not ready */
+      }
+      if (this.#destroyed || this.connection.state.status === VoiceConnectionStatus.Destroyed) return;
     }
-    if (this.#destroyed || this.connection.state.status === VoiceConnectionStatus.Destroyed) return;
     this.emit('recovering', { step: 'fresh', status: this.connection.state.status, afterMs: afterMs() });
     this.#markLost('reconnect_failed');
     this.destroy();

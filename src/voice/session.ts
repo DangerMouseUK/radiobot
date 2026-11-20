@@ -767,7 +767,7 @@ export class GuildSession {
         info,
         info.step === 'rejoin'
           ? 'voice connection stuck; rejoining'
-          : 'voice connection still stuck; joining again from scratch',
+          : 'voice connection stuck; joining again from scratch',
       );
     });
     // At most a few per stream (the start and its settle, then network gaps, resumes, a fast station clock),
