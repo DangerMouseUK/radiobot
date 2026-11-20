@@ -241,10 +241,10 @@ describe('search and resolution', () => {
     ['Radio Demo', 'demo:demo-radio'],
     ['demo-radio', 'demo:demo-radio'],
     ['Demo Chic', 'demo:demo-chic'],
-    ['maximum', 'demo:maximum'],
+    ['peak', 'demo:peak'],
     ['cafe ibiza', 'demo:demo-cafe-ibiza'],
     ['Demo Chic and Chill', 'demo:demo-chic-and-chill'],
-    ["maximum 90's", 'demo:maximum-90s'],
+    ["peak 90's", 'demo:peak-90s'],
   ])('resolves %s exactly', (q, id) => {
     const r = resolveStation(all, q);
     expect(r.kind).toBe('match');
@@ -262,7 +262,7 @@ describe('search and resolution', () => {
   });
 
   it('tolerates typos', () => {
-    expect(searchStations(all, 'maximun')[0]?.station.id).toBe('demo:maximum');
+    expect(searchStations(all, 'peek')[0]?.station.id).toBe('demo:peak');
     expect(searchStations(all, 'demo tehcno')[0]?.station.id).toBe('demo:demo-techno');
   });
 });

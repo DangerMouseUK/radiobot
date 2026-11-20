@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Tests and docs use made-up example names throughout: the demo pack's stations, a stream title and the voice-server example. The container platform guide describes kinds of platform instead of naming hosting providers.
+
 ### Fixed
 
 - **A voice connection stuck after a failed resume is back about 15 s sooner.** When Discord never answered the voice library's request to rejoin, the bot first sent the same request again and waited another 15 s before joining the voice channel again from scratch. It now joins again from scratch as soon as the connection has been stuck for 30 s: in one observed outage, the silence would have been about 33 s instead of 48 s. A connection stuck in any other way (for example after a moderator moved the bot) is still rejoined on the same connection first. The log line for that step is now `voice connection stuck; joining again from scratch`. It works the same with `VOICE_THREAD=worker`, and still costs one timer per interruption, nothing per packet.
